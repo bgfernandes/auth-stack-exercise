@@ -6,7 +6,7 @@
 
 ## 1. Problem
 
-Build a web application that authenticates users through a login page and, based on fine-grained permissions, lets them edit values on resources: some resources are editable, some are read-only, and some must not appear at all. The authentication must be secure, the authorization system must be scalable, and the whole thing must run from a single `docker compose up` so a reviewer can log in as different users and see different dashboards. The project is judged on production readiness and on the quality of its documentation, including an honest list of trade-offs, shortcuts, and gaps. The design must not limit how the system can be extended: the questions "how would you add X" are part of the evaluation.
+Build a web application that authenticates users through a login page and, based on fine-grained permissions, lets them edit values on resources: some resources are editable, some are read-only, and some must not appear at all. The authentication must be secure, the authorization system must be scalable, and the whole thing must run from a single `docker compose up` so a reviewer can log in as different users and see different dashboards. The project must be production-ready in its design and honest in its documentation, including a list of trade-offs, shortcuts, and gaps. The design must not limit how the system can be extended, and it must be able to answer extension questions of the form "how would you add X" (enterprise SSO, provisioning, machine clients, custom roles, multi-region, swapping a component); §10 collects those answers.
 
 ## 2. Approach in one sentence
 
