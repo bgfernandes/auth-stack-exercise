@@ -151,7 +151,7 @@ Only the IdP needs the shared hostname; the app's own origin stays `http://local
 
 ## 5. Resource domains and data model
 
-Two small domains, each owned by one service and one package. The first is deliberately simple yet hierarchical enough for relationship-based access control to earn its place: **organization → project → document**. Projects, not folders: folders imply arbitrary nesting, which needs a recursive schema and buys nothing here. The second, **comments on documents** (phase 5), exists to prove single sign-on, single sign-out, and access across domains.
+Two small domains, each owned by one service and one package. The first is deliberately simple yet hierarchical enough for relationship-based access control to earn its place: **organization → project → document**. The second, **comments on documents** (phase 5), exists to prove single sign-on, single sign-out, and access across domains.
 
 ### 5.1 Documents domain (`packages/documents`, database `documents`)
 
