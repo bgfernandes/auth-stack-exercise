@@ -8,7 +8,7 @@
 >
 > - Open the PR description with `Read first: docs/README.md` and name the ticket.
 > - Pass `pnpm lint`, `pnpm type-check`, and `pnpm test` before "done".
-> - Use conventional commits; one squash-merged PR per ticket; branch named `<nn>-<slug>`.
+> - Use conventional commits; one PR per ticket, merged with a merge commit (no squash); branch named `<nn>-<slug>`.
 > - Update its **Status** line here in the same PR.
 >
 > Tickets are listed in implementation order. Phases 0–2 are fully specified; later phases are stubs that get specified with a dated note when the phase starts. Estimates are working hours including review.

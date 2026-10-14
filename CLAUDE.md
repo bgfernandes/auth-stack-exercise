@@ -16,7 +16,7 @@ A reference IAM stack: OIDC login through a self-hosted Zitadel, fine-grained au
 
 ## Ticket workflow
 
-- One feature branch per ticket, named `<ticket-number>-<slug>` (e.g. `04-bootstrap-container`), branched from `main`. One PR per ticket, squash-merged on GitHub.
+- One feature branch per ticket, named `<ticket-number>-<slug>` (e.g. `04-bootstrap-container`), branched from `main`. One PR per ticket, merged on GitHub with a **merge commit** (never squash, never rebase-merge): the individual commits are the record of how the work was done and must survive in the clone, and the merge commit marks the ticket boundary, so `git log --first-parent` reads one line per ticket. Because nothing is folded away, every commit must stand on its own: one coherent step with a conventional-commit message, no "wip" or "fix lint" commits (amend or fix up before pushing instead).
 - Every PR description opens with `Read first: docs/README.md` and names the ticket.
 - Before a ticket is "done": `pnpm lint`, `pnpm type-check`, `pnpm test` pass; the ticket's acceptance criteria are met; the ticket's **Status** line in `docs/TICKETS.md` is updated in the same PR.
 - Corrections to the docs are appended as **dated notes** (`> **2026-10-15:** ...`) that win over the surrounding text; never silently rewrite a decision.
