@@ -43,7 +43,3 @@ A reference IAM stack: OIDC login through a self-hosted Zitadel, fine-grained au
 - Secrets: development defaults are committed on purpose so the stack starts with zero manual steps; they are labelled as insecure and listed in the trade-offs section of the root README. Never commit a real secret. Gitleaks runs in CI.
 - Every enforcement decision is made server-side, on the write path. UI affordances (an Edit button) are hints, never the control.
 - Logs and errors never include tokens, session identifiers, or passwords.
-
-## Out of scope for this repo
-
-The day-by-day working schedule is kept outside this repository. Do not add it here.
