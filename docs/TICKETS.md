@@ -172,13 +172,13 @@
 **Description:** The BFF half of the package (the bearer half is ticket 15; the back-channel logout sink and the policy helper are phase 5 and phase 4).
 
 - Framework-agnostic core on the Fetch API: `createOidcClient(config)` from discovery (`openid-client` v6), cached per process; `beginLogin()` → authorization URL plus the `state`, `nonce`, `code_verifier` to stash in a signed, short-lived (10 min) `HttpOnly` cookie; `completeLogin(callbackUrl, stash)` → validated tokens and claims (including `auth_time`, `amr`, `sid`); failures map to typed errors (state mismatch, nonce mismatch, token invalid) that the route turns into a generic "login failed" page without leaking which check failed; `endSessionUrl(idToken, postLogoutRedirect)`.
-- `SessionStore` interface: `create`, `get` (applies idle `30 min` and absolute `8 h` limits), `touch`, `delete`, `deleteBySid`, `deleteByUser`, `listByUser`. Adapters: `createMemorySessionStore()` for tests and `createRedisSessionStore(client)` (session hash under `session:<id>` with TTL; secondary sets `sid:<sid>` and `user:<sub>`), the only dependency being a `ioredis`-compatible client passed in.
+- `SessionStore` interface (modelled on `nextjs-auth0`'s `sessionStore`; `docs/README.md` §4.4): `create`, `get` (applies idle `30 min` and absolute `8 h` limits), `touch` (atomic conditional update: Lua script on Redis, so a logout in flight is never undone by a rolling write), `delete`, `deleteByLogoutToken({ sid, sub })`, `deleteByUser`, `listByUser`. Adapters: `createMemorySessionStore()` for tests and `createRedisSessionStore(client)` (session hash under `session:<id>` with TTL; secondary sets `sid:<sid>` and `user:<sub>`), the only dependency being a `ioredis`-compatible client passed in.
 - Cookie helpers setting `HttpOnly`, `SameSite=Lax`, `Secure` when the app URL is https, `Path=/`.
 - Subpath export `@auth-stack/auth/next`: route-handler helpers bound to `cookies()` and `NextResponse`.
 - No tokens or session IDs in logs; a `redact()` helper used by every log call.
 - README of the package: how to pick a store; the note that a relational adapter needs an expiry cleanup job or a partial index on `expires_at`.
 
-**Tests:** unit tests with a fake OP (`nock` or `openid-client`'s test helpers): happy path, each failure path, cookie attributes; the `SessionStore` contract test run against both adapters (Redis through the compose service in CI), including idle and absolute expiry and `deleteBySid`.
+**Tests:** unit tests with a fake OP (`nock` or `openid-client`'s test helpers): happy path, each failure path, cookie attributes; the `SessionStore` contract test run against both adapters (Redis through the compose service in CI), including idle and absolute expiry, `deleteByLogoutToken` with `sid` only, `sub` only, and both, and the logout-versus-touch race.
 
 **Status:** Open.
 
@@ -334,7 +334,7 @@ Confirm that a sign-out through `end_session` delivers a logout token to a regis
 
 ### Ticket 23 — Back-channel logout sink in `packages/auth` (2 h)
 
-`POST /auth/backchannel-logout` handler: validate the logout token (signature, `iss`, `aud`, `iat`, `exp`, `events`, `sid` or `sub`, no `nonce`), `deleteBySid` or `deleteByUser`, `200` on success, `400` on an invalid token, never a redirect; registered on `dashboard-web`; bootstrap sets the URI on the application. Unit tests with a signed fake logout token; integration test: logout in Zitadel removes the Redis session.
+`POST /auth/backchannel-logout` handler: validate the logout token (signature, `iss`, `aud`, `iat`, `exp`, `events`, `sid` or `sub`, no `nonce`), `deleteByLogoutToken({ sid, sub })`, `200` on success, `400` on an invalid token, never a redirect; registered on `dashboard-web`; bootstrap sets the URI on the application. Unit tests with a signed fake logout token; integration test: logout in Zitadel removes the Redis session.
 
 **Status:** Open.
 
