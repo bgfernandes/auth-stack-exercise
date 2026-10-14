@@ -214,6 +214,15 @@ definition document {
     permission view = viewer + editor + project->view
 }
 
+// Client authority (§6.7): one object per API scope; bootstrap grants scopes to first-party clients.
+definition client {}
+
+definition api_scope {
+    relation granted: client
+
+    permission use = granted
+}
+
 // Phase 5: the comments domain extends the same schema and resolves through the documents domain.
 definition comment {
     relation document: document
@@ -257,6 +266,27 @@ When `comments-api` needs something about a document, three different questions 
 
 Token exchange (RFC 8693) is the textbook alternative for the second case: trade the user's token for one minted for the target API, optionally with an `act` claim naming the calling service. Zitadel supports the grant but only to keep or narrow a token's audience and scope; it cannot broaden a token from one project to another, so cross-project audiences must be requested at login with `urn:zitadel:iam:org:project:id:{projectId}:aud`. Inside one project the exchange adds nothing except the `act` claim, which requires granting impersonation rights; it is documented, not built.
 
+### 6.7 Client authority: scopes
+
+Two authorities have to hold for every API request, and they come from different places. **Client authority** is what the application was granted (RFC 6749 §3.3 scopes), at registration for first-party clients and at user consent for third-party ones. **User authority** is what the person may do, which SpiceDB decides. The effective permission is their intersection, and the API enforces both, in that order: the bearer plugin checks the scope first (`requireScope('documents:write')`, failing with `403` and `WWW-Authenticate: Bearer error="insufficient_scope"` per RFC 6750 §3.1), then the handler runs the SpiceDB check on `sub`. Without the first gate, any client that obtains a user's token holds the user's full authority, which is exactly what scopes exist to prevent once external clients appear.
+
+Each API publishes a scope vocabulary and enforces it from its first version, so that external clients can be added later without touching the APIs:
+
+| API | Scopes |
+| --- | --- |
+| `dashboard-api` | `documents:read`, `documents:write` |
+| `comments-api` | `comments:read`, `comments:write` |
+
+First-party clients request every scope of every API they call, so for them the gate is always open. A third-party client requests the subset it needs and the user consents to it; a token exchange can only narrow the set further.
+
+> **⚠️ Disclaimer: this is a workaround for a vendor limitation, not the intended design.** Client authority belongs in the authorization server: the provider defines the scopes, shows the consent screen, and puts the granted `scope` in the access token, and the API reads it from there. Zitadel does neither (see the vendor gap below), so this project stores client-to-scope grants in SpiceDB and resolves them by `azp`. It does this for one reason: so that the APIs enforce a scope gate from their first version and never have to be retrofitted when the stack grows third-party clients. The moment the provider emits `scope`, the `fromScopeClaim` resolver replaces the SpiceDB-backed one and the `client`/`api_scope` tuples are deleted; the APIs do not change.
+
+**Where client authority is stored (under this workaround).** In SpiceDB, like every other "who may do what" fact, with the client as the subject: `api_scope:documents_write#granted@client:<azp>`. Bootstrap writes those relationships for every first-party client and every scope; registering a new client is one more set of tuples. There is no per-API client registry: the bearer plugin resolves a client's effective scopes with one `LookupResources(api_scope, use, client:<azp>)`, cached per client for a minute because client authority changes rarely, and the APIs share that single store.
+
+**How `packages/auth` resolves scopes without owning the store.** Through an interface, as with sessions: `ScopeResolver.resolveScopes(claims) → Set<string>`. Two implementations: `fromScopeClaim`, for providers that put `scope` in access tokens, and a `packages/authz`-backed resolver that runs the lookup above, wired in by the API at startup so `packages/auth` depends on neither SpiceDB nor a database.
+
+**Vendor gap.** Zitadel does not, as far as its documentation and community threads show, support custom scopes or a consent screen, and its claims matrix shows no `scope` claim in any token type; JWT access tokens do carry `azp` ("client id of the client who requested the token"; introspection reports it as `client_id`). So with Zitadel the SpiceDB-backed resolver keyed by `azp` is the only source of client authority. Zitadel can register third-party applications and issue them user tokens, but without consent and scopes it cannot run a real third-party program; that would take a provider that does (Auth0, Keycloak) or a second authorization server such as Ory Hydra federated to Zitadel for login. Because the APIs already enforce the gate and the store is central, that is a provider change, not an API change, which is the point of building the gate now.
+
 ## 7. Consistency: ZedTokens and the New Enemy problem
 
 Authorization data is replicated and cached, so a check may run against a snapshot older than the latest write. The Zanzibar paper names two failures that follow: (1) **neglecting update order** — Alice removes Bob from a project and then adds a document; a check served from a snapshot between the two still lets Bob see the new document; (2) **applying an old ACL to new content** — Bob is removed, content is added, and Bob's check against the older snapshot passes. SpiceDB's default consistency, `minimize_latency`, permits both windows.
@@ -279,6 +309,7 @@ Every enforcement point records a **decision** (phase 3): who, what action, whic
 | CSRF | State-changing routes accept `POST` only, check `Origin`/`Sec-Fetch-Site` against the app origin, and (phase 4) carry a per-session CSRF token in forms. `SameSite=Lax` is the first line, not the only one. |
 | Authorization | Server-side on every read and write path (§6.5); deny by default; `404` for unseen resources, `403` for seen-but-forbidden. |
 | Authentication-context policies | Enforced by the apps, never by the IdP (see below). |
+| Token scopes | Every API enforces its scope vocabulary in the bearer plugin before any business logic (§6.7); first-party clients hold all scopes, external clients the subset they were granted; effective permission is scope ∩ SpiceDB. Client-to-scope grants live in SpiceDB only as a workaround for Zitadel's lack of custom scopes; the gate exists so the APIs need no retrofit when a provider with scopes and consent arrives. |
 | Input | Validated with a schema (zod) at the route boundary; document values and comment bodies are bounded strings; IDs are opaque. |
 | Headers | `Content-Security-Policy` (no inline scripts), `X-Content-Type-Options`, `Referrer-Policy`, `Frame-Options`/`frame-ancestors`, HSTS behind TLS (phase 4). |
 | Rate limiting | Zitadel on authentication; app-level limits on the callback, the back-channel logout sink, and mutations (phase 4). |
@@ -298,6 +329,7 @@ The decision has a cost and a dependency. The cost: a session that violates a te
 - **Enterprise SSO (SAML, OIDC federation):** the customer's IdP is registered as an external identity provider in Zitadel (Zitadel acts as the SAML service provider or OIDC relying party); the app-level organization records which IdP its users must come through, and the BFF passes that as a login hint when a user heads for that organization (Zitadel accepts an IdP or organization scope on the authorization request). The requirement itself is enforced as a §9.1 policy on access, not by the IdP at login, so the apps stay vendor-neutral while the hint remains provider-specific. A multi-tenant SSO broker (WorkOS, Ory Polis) can sit upstream the same way, with the tenant selected before the redirect, which is why the IdP registry is per organization.
 - **SCIM provisioning:** a small worker consuming directory webhooks (or Zitadel's SCIM endpoint, currently a preview feature) that creates users through the management API and maps directory groups to `organization#member` and `project#<role>` relationships. This worker is the first auth-service-style app the monorepo would gain.
 - **Service-to-service access:** permission questions go to SpiceDB; data on a user's behalf travels on the user's token within the solution's security context; calls with no user use a service user with its own relationships (§6.6). Across security contexts, token exchange (RFC 8693) with an `act` claim is the textbook shape; with Zitadel it narrows but never broadens an audience, so cross-project audiences are declared at login.
+- **External OAuth clients:** a third-party application holding `documents:read` only calls the same APIs with a user's token; the scope gate (§6.7) refuses writes with `insufficient_scope` while SpiceDB still decides which documents the user may read. Its client authority is a set of `api_scope` tuples; consent and provider-issued scopes require a provider that supports them (Auth0, Keycloak, or Ory Hydra federated to Zitadel), and nothing in the APIs changes when that provider arrives.
 - **Machine-to-machine access and API keys:** service users on Zitadel (private-key JWT profile or client credentials) for services, and API keys stored by the app that exchange into short-lived tokens; all end up as `user:<id>` or `service:<id>` subjects in SpiceDB.
 - **Custom roles, hierarchies, ABAC:** new relations and permissions in the schema (reviewed like code); nested organizations through `organization#parent` with `parent->administer` arrows; attribute rules through SpiceDB caveats (time windows, IP ranges, plan tiers).
 - **A third application:** `packages/auth` plus one adapter, one OIDC application registered by bootstrap, one `backchannel_logout_uri`; the second application (phase 5) is the proof of how little that takes.
@@ -329,3 +361,5 @@ The order follows one principle: the earliest end-to-end working slice first, th
 > **2026-10-13:** Initial decisions recorded in this document: Zitadel over Kratos + Hydra; SpiceDB over OpenFGA and Keto; organization → project → document (projects, not folders); server-side sessions in Postgres with an opaque cookie; ZedToken stored per organization; compose first, Tilt wraps compose, Kubernetes last; TypeScript monorepo with pnpm workspaces, Jest, Playwright; minimal UI; Mailpit in compose; three seeded users plus JIT personal workspaces; development secrets committed and labelled.
 
 > **2026-10-14:** Second application (comments on documents) added as phase 5 to prove single sign-on, single sign-out, and cross-domain access; observability and later phases shift by one. Packages reshaped: per-domain packages (`documents`, `comments`) own schema, migrations, and services together; platform packages (`auth`, `authz`, `db-core`, `config`) carry no domain tables; `packages/auth` exposes a `SessionStore` interface with in-memory and Redis adapters and framework adapters for Next.js and Fastify, replacing the Postgres `sessions` table. One Zitadel project holds all applications (Zitadel's intended model; its roles, grants, and login policies are unused). Authentication-context policies (MFA, IdP, login recency) are enforced by the apps per organization with RFC 9470 step-up, not by the IdP, to keep the stack vendor-neutral; RFC 9068 claims in access tokens recorded as an L1 criterion Zitadel does not meet out of the box. Zitadel's back-channel logout confirmed as supported without a feature flag.
+
+> **2026-10-14 (later):** Client authority added as §6.7: APIs enforce a scope vocabulary in the bearer plugin from their first version, independently of SpiceDB's user authority, so external OAuth clients can be added without changing the APIs. Client authority is stored centrally in SpiceDB (`api_scope#granted@client`) and resolved through a `ScopeResolver` interface in `packages/auth`, keyed by Zitadel's `azp` claim; Zitadel's lack of custom scopes and consent recorded as a vendor gap. A sample external client was considered and dropped: without consent and provider-issued scopes it would only exercise the registry.

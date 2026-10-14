@@ -98,6 +98,7 @@
 
 - Reads the bootstrap machine-user PAT from the shared volume; waits for Zitadel readiness.
 - Creates (if absent, matched by name) the single Zitadel project `auth-stack-exercise` and, inside it, the OIDC application `dashboard-web` (Web, PKCE, exact redirect URIs from env, post-logout URI, `backchannel_logout_uri`, access token type JWT, ID token with userinfo claims). Phase 2 adds the `dashboard-api` API application; phase 5 adds `comments-web` and `comments-api`. All applications share the project, so every user-bound token's `aud` covers every API (`docs/README.md` §4.2).
+- Grants client authority in SpiceDB for every first-party application it registers: `api_scope:<scope>#granted@client:<client id>` for each scope of each API the application calls (§6.7); from phase 2 this is what lets `dashboard-web`'s tokens pass the scope gate.
 - Creates the seeded users (`alice`, `bob`, `carol`) through the v2 user API with verified emails and the dev password; skips existing users.
 - Writes an env file to the shared volume (`/bootstrap/dashboard-web.env`: `OIDC_ISSUER`, `OIDC_CLIENT_ID`, redirect URIs) that `dashboard-web`'s entrypoint sources before `next start`. The Zitadel user IDs of the seeded users are written to `/bootstrap/seed.json` for ticket 12.
 - Structured logging of every created/skipped object; exits non-zero on any failure so compose surfaces it.
@@ -135,7 +136,7 @@
 
 **Description:**
 
-- `packages/authz/schema.zed` exactly as §6.2; `pnpm authz:validate` runs `zed validate` through the SpiceDB container (no local `zed` needed).
+- `packages/authz/schema.zed` exactly as §6.2, including the `client` and `api_scope` definitions for client authority (§6.7); `pnpm authz:validate` runs `zed validate` through the SpiceDB container (no local `zed` needed).
 - Client factory from env (`SPICEDB_ENDPOINT`, `SPICEDB_PRESHARED_KEY`, insecure for localhost), using the promise API of `@authzed/authzed-node`.
 - Typed helpers: `writeSchema()`, `writeRelationships(updates) → ZedToken`, `check({resource, permission, subject, consistency})`, `bulkCheck(items, consistency)` over `CheckBulkPermissions` (one consistency setting per request), `lookupResources({type, permission, subject, consistency})`, `deleteRelationships(filter)`. Object and subject references built from a small typed vocabulary (`organization`, `project`, `document`, `user`) so typos fail at compile time.
 - `consistency` helper: `atLeastAsFresh(zedtoken) | fullyConsistent | minimizeLatency`; default for all app calls is `atLeastAsFresh` when a token is available, `fullyConsistent` otherwise (phase 3 wires the stored token; until then the helper is called with `fullyConsistent`).
@@ -265,9 +266,9 @@
 
 **Read first:** `docs/README.md` §3.1, §4.4 (last paragraph), §6.5.
 
-**Description:** `apps/dashboard-api` exposing `GET /documents`, `GET /documents/:id`, `PUT /documents/:id` over `packages/documents`. The bearer half of `packages/auth`, exported as `@auth-stack/auth/fastify`: a plugin that verifies `Authorization: Bearer` JWTs against Zitadel's JWKS (`jose`), checks `iss`, `exp`, and that `aud` contains the project ID (bootstrap registers `dashboard-api` as an API application in the same project), and puts the subject on the request. Health endpoint, request IDs, structured logs, Dockerfile, compose service.
+**Description:** `apps/dashboard-api` exposing `GET /documents`, `GET /documents/:id`, `PUT /documents/:id` over `packages/documents`. The bearer half of `packages/auth`, exported as `@auth-stack/auth/fastify`: a plugin that verifies `Authorization: Bearer` JWTs against Zitadel's JWKS (`jose`), checks `iss`, `exp`, and that `aud` contains the project ID (bootstrap registers `dashboard-api` as an API application in the same project), and puts the subject on the request. **Scope gate** (`docs/README.md` §6.7): `requireScope(...)` per route (`documents:read` on `GET`, `documents:write` on `PUT`), resolving effective scopes through the `ScopeResolver` interface, here the `packages/authz`-backed resolver (`LookupResources(api_scope, use, client:<azp>)`, cached per client; Zitadel's JWT access tokens carry `azp` and no `scope` claim); first-party clients are registered with every scope; failure is `403` with `WWW-Authenticate: Bearer error="insufficient_scope"`. Health endpoint, request IDs, structured logs, Dockerfile, compose service.
 
-**Tests:** unit tests for the plugin (valid, expired, wrong audience, wrong issuer, malformed); integration test for the routes with a token minted by a test signer.
+**Tests:** unit tests for the plugin (valid, expired, wrong audience, wrong issuer, malformed, missing scope, scope from registry vs from claim); integration test for the routes with a token minted by a test signer.
 
 **Status:** Open.
 
