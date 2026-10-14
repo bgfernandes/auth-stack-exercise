@@ -278,7 +278,7 @@
 
 **Read first:** `docs/README.md` §3.1, §5.1, §6.6 (tenancy table), §7.
 
-**Description:** `apps/tenancy-api` over `packages/tenancy`, reusing the bearer plugin and scope gate from ticket 15 (scopes `tenancy:read`, `tenancy:write`): `POST /me/provision`, `GET /me/organizations`, `GET /organizations/:id` (name, kind, policy; `organization#view`), `GET|PUT /organizations/:id/members` and `PUT /organizations/:id/policy` (`organization#administer`), writing organization relationships to SpiceDB at `fully_consistent`. The HTTP `TenancyClient` in `packages/tenancy` with the per-organization cache (60 s). `dashboard-api` and `dashboard-web` switch to it; the in-process implementation remains for tests.
+**Description:** `apps/tenancy-api` over `packages/tenancy`, reusing the bearer plugin and scope gate from ticket 15 (scopes `tenancy:read`, `tenancy:write`): `POST /me/provision`, `GET /me/organizations`, `GET /organizations/:id` (name, `is_personal`, policy; `organization#view`), `GET|PUT /organizations/:id/members` and `PUT /organizations/:id/policy` (`organization#administer`), writing organization relationships to SpiceDB at `fully_consistent`. The HTTP `TenancyClient` in `packages/tenancy` with the per-organization cache (60 s). `dashboard-api` and `dashboard-web` switch to it; the in-process implementation remains for tests.
 
 **Tests:** route tests with a test signer; `TenancyClient` contract test against both implementations.
 

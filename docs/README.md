@@ -173,7 +173,7 @@ Tenancy is the platform service; two resource domains sit on it. The first domai
 | Table | Columns (abridged) | Notes |
 | --- | --- | --- |
 | `users` | `id` (Zitadel `sub`, PK), `email`, `display_name`, `created_at` | Mirror created just-in-time at first login; the IdP is the source of truth |
-| `organizations` | `id`, `name`, `kind` (`personal` or `shared`), `policy` (JSON: `require_mfa`, `max_auth_age_seconds`, `require_idp`), `created_at` | `policy` holds the tenant's authentication-context floors (§9.1); no consistency token is stored here, see §7 |
+| `organizations` | `id`, `name`, `is_personal`, `policy` (JSON: `require_mfa`, `max_auth_age_seconds`, `require_idp`), `created_at` | `is_personal` marks the organization that provisioning creates for each account (§6.4): `tenancy-web` shows it as "Personal", offers no member management, policy form, or independent leave/delete for it, and the one allowed transition is converting it to a shared organization. The flag exists so that personal and shared content share one hierarchy and one code path; the alternative, personal projects owned directly by the user with no organization above, would need a second listing and policy path. It is not a security boundary: SpiceDB decides access identically for both. `policy` holds the tenant's authentication-context floors (§9.1); no consistency token is stored here, see §7 |
 | `authz_decisions` (phase 3) | `id`, `at`, `subject`, `action`, `resource_type`, `resource_id`, `organization_id`, `allowed`, `consistency`, `request_id`, `latency_ms` | Audit log of decisions from every service (§8) |
 
 ### 5.2 Documents domain (`packages/documents`, database `documents`)
@@ -233,6 +233,7 @@ definition document {
 
     permission edit = editor + project->edit
     permission view = viewer + editor + project->view
+    permission share = project->share
 }
 
 // Client authority (§6.7): one object per API scope; bootstrap grants scopes to first-party clients.
@@ -255,7 +256,7 @@ definition comment {
 }
 ```
 
-Design points. Organization **members** do not see projects by inheritance; only organization **admins** do. That is what makes a project "unavailable" to a member who was not added to it, which the problem statement requires. Project roles flow down to documents; direct document shares (`document#editor`, `document#viewer`) allow the read-only and editable states to differ inside one project. Roles are named bundles of relations rather than a `role` relation with string values, so a new role is a schema change reviewed like code, and permissions stay computable by `LookupResources`.
+Design points. Organization **members** do not see projects by inheritance; only organization **admins** do. That is what makes a project "unavailable" to a member who was not added to it, which the problem statement requires. Project roles flow down to documents; direct document shares (`document#editor`, `document#viewer`) allow the read-only and editable states to differ inside one project. Roles are named bundles of relations rather than a `role` relation with string values, so a new role is a schema change reviewed like code, and permissions stay computable by `LookupResources`. `share` is the permission the share action checks (granting a project role or a direct document share; ticket 21 uses it); it is defined as its own permission rather than having callers test `administer` so that it can be widened later, for example to let editors share what they edit, in one schema line with no caller changed. Permissions are named after actions, roles after people.
 
 ### 6.3 Seeded scenario
 
