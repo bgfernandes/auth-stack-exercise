@@ -286,13 +286,25 @@
 
 ---
 
-### Ticket 17 — `tenancy-web`: organizations, members, policy (2.5 h)
+### Ticket 17 — `tenancy-web`: organizations, members, policy (2 h)
 
-**Read first:** `docs/README.md` §3.1, §9.1.
+**Read first:** `docs/README.md` §3.1, §6.8, §9.1.
 
-**Description:** A second Next.js app on `packages/auth` plus the `next` adapter, its own OIDC application and `backchannel_logout_uri` registered by bootstrap: `/organizations` (mine), `/organizations/[id]` (members with add-by-email of an existing account, remove, admin or member toggle; policy form: require MFA, maximum login age, required IdP). Every action goes through `tenancy-api` with the user's token. Minimal UI; the point of the ticket is how little the second client contains, and the README says so.
+**Description:** A second Next.js app on `packages/auth` plus the `next` adapter, its own OIDC application and `backchannel_logout_uri` registered by bootstrap: `/organizations` (mine), `/organizations/[id]` (member list with role toggle and remove, for admins; read-only list for members, which is also the share picker's source; policy form: require MFA, maximum login age, required IdP). No add-member form: joining is by invitation (ticket 17a). Every action goes through `tenancy-api` with the user's token. Minimal UI; the point of the ticket is how little the second client contains, and the README says so.
 
-**Acceptance criteria:** Alice adds a fourth seeded account to Acme as a member and that user then sees Acme's shared resources in `dashboard-web`; a member cannot open the policy form.
+**Acceptance criteria:** Alice demotes Bob to member and back; a member cannot open the policy form; Carol sees the member list but no controls.
+
+**Status:** Open.
+
+---
+
+### Ticket 17a — Invitations with a uniform response (2 h, optional: only if Saturday allows)
+
+**Read first:** `docs/README.md` §5.1 (`invitations`), §6.8.
+
+**Description:** `tenancy-api`: `POST /organizations/:id/invitations` (`organization#administer`; stores the row with a hashed random token and a 7-day expiry; sends the email through SMTP with `nodemailer`; always answers `202` with the same body), `GET /invitations/:token` and `POST /invitations/:token/accept` (signed-in user whose email matches; writes the tuple at `fully_consistent`; marks accepted; expired, used, and unknown tokens all answer the same `404`). `tenancy-web`: an invite form on the organization page for admins and an `/invitations/[token]` accept page that sends an unauthenticated visitor through login first. Rate limit on the invite endpoint.
+
+**Acceptance criteria:** Alice invites an unknown email and an existing account's email and sees the identical response; both emails appear in Mailpit; following the link as the existing account joins Acme; a second use of the link fails like an unknown one.
 
 **Status:** Open.
 
