@@ -39,7 +39,7 @@
 - Root ESLint flat config (`eslint.config.mjs`) with `typescript-eslint`, `eslint-config-next` for the web app, import ordering; Prettier; `.editorconfig`.
 - Jest at the root with `ts-jest` or `@swc/jest`, one placeholder test per package so the pipeline is green from the start.
 - `.gitignore`, `.dockerignore`, `.nvmrc` mirror of the mise pin for tools that read it.
-- Empty package skeletons: `packages/auth`, `packages/authz`, `packages/db-core`, `packages/documents`, `packages/config`, each with `package.json`, `tsconfig.json`, `src/index.ts`.
+- Empty package skeletons: `packages/auth`, `packages/authz`, `packages/db-core`, `packages/tenancy`, `packages/documents`, `packages/config`, each with `package.json`, `tsconfig.json`, `src/index.ts`.
 
 **Acceptance criteria:** `pnpm install`, `pnpm lint`, `pnpm type-check`, `pnpm test` all pass on a clean clone; `pnpm -r exec tsc --noEmit` resolves cross-package imports through workspace links.
 
@@ -53,7 +53,7 @@
 
 **Description:** Bring up every third-party service with health checks and pinned images, starting from Zitadel's v4 reference compose (`deploy/compose/docker-compose.yml` in the Zitadel repository) trimmed to what this project needs.
 
-- One `postgres:17-alpine` with an init script creating the databases (`zitadel`, `spicedb`, `documents`; `comments` is added in phase 5) and their users; health check with `pg_isready`.
+- One `postgres:17-alpine` with an init script creating the databases (`zitadel`, `spicedb`, `tenancy`, `documents`; `comments` is added in phase 5) and their users; health check with `pg_isready`.
 - `zitadel-api` (`ghcr.io/zitadel/zitadel:v4.19.4`) with `start-from-init --masterkey`, `ZITADEL_EXTERNALDOMAIN/PORT/SECURE` from `.env`, `ZITADEL_TLS_ENABLED=false`, Login V2 settings, first-instance admin (`ZITADEL_FIRSTINSTANCE_ORG_HUMAN_*`, password-change not required), the login-client PAT path, and a **bootstrap machine user** (`ZITADEL_FIRSTINSTANCE_PATPATH=/zitadel/bootstrap/bootstrap.pat`, `ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME=bootstrap`, `ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME`, `ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE`); SMTP pointed at Mailpit (`ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_SMTP_HOST=mailpit:1025`, `..._TLS=false`, `..._FROM=noreply@auth.localtest.me`, `..._FROMNAME`, `ZITADEL_DEFAULTINSTANCE_DOMAINPOLICY_SMTPSENDERADDRESSMATCHESINSTANCEDOMAIN=false`); shared `zitadel-bootstrap` volume.
 - `zitadel-login` (`ghcr.io/zitadel/zitadel-login:v4.19.4`) with `ZITADEL_API_URL`, `NEXT_PUBLIC_BASE_PATH=/ui/v2/login`, `ZITADEL_SERVICE_USER_TOKEN_FILE`, `ZITADEL_SESSION_COOKIE_SECRET`, `CUSTOM_REQUEST_HEADERS`.
 - `proxy` (Traefik v3) with the reference routing labels, published on `8080`.
@@ -97,7 +97,7 @@
 **Description:** `apps/bootstrap` is a one-shot, idempotent TypeScript script (own Dockerfile, run as a compose service that the app services `depends_on` with `condition: service_completed_successfully`).
 
 - Reads the bootstrap machine-user PAT from the shared volume; waits for Zitadel readiness.
-- Creates (if absent, matched by name) the single Zitadel project `auth-stack-exercise` and, inside it, the OIDC application `dashboard-web` (Web, PKCE, exact redirect URIs from env, post-logout URI, `backchannel_logout_uri`, access token type JWT, ID token with userinfo claims). Phase 2 adds the `dashboard-api` API application; phase 5 adds `comments-web` and `comments-api`. All applications share the project, so every user-bound token's `aud` covers every API (`docs/README.md` §4.2).
+- Creates (if absent, matched by name) the single Zitadel project `auth-stack-exercise` and, inside it, the OIDC application `dashboard-web` (Web, PKCE, exact redirect URIs from env, post-logout URI, `backchannel_logout_uri`, access token type JWT, ID token with userinfo claims). Phase 2 adds the `dashboard-api` and `tenancy-api` API applications and the `tenancy-web` OIDC application; phase 5 adds `comments-web` and `comments-api`. All applications share the project, so every user-bound token's `aud` covers every API (`docs/README.md` §4.2).
 - Grants client authority in SpiceDB for every first-party application it registers: `api_scope:<scope>#granted@client:<client id>` for each scope of each API the application calls (§6.7); from phase 2 this is what lets `dashboard-web`'s tokens pass the scope gate.
 - Creates the seeded users (`alice`, `bob`, `carol`) through the v2 user API with verified emails and the dev password; skips existing users.
 - Writes an env file to the shared volume (`/bootstrap/dashboard-web.env`: `OIDC_ISSUER`, `OIDC_CLIENT_ID`, redirect URIs) that `dashboard-web`'s entrypoint sources before `next start`. The Zitadel user IDs of the seeded users are written to `/bootstrap/seed.json` for ticket 12.
@@ -139,7 +139,7 @@
 - `packages/authz/schema.zed` exactly as §6.2, including the `client` and `api_scope` definitions for client authority (§6.7); `pnpm authz:validate` runs `zed validate` through the SpiceDB container (no local `zed` needed).
 - Client factory from env (`SPICEDB_ENDPOINT`, `SPICEDB_PRESHARED_KEY`, insecure for localhost), using the promise API of `@authzed/authzed-node`.
 - Typed helpers: `writeSchema()`, `writeRelationships(updates) → ZedToken`, `check({resource, permission, subject, consistency})`, `bulkCheck(items, consistency)` over `CheckBulkPermissions` (one consistency setting per request), `lookupResources({type, permission, subject, consistency})`, `deleteRelationships(filter)`. Object and subject references built from a small typed vocabulary (`organization`, `project`, `document`, `user`) so typos fail at compile time.
-- `consistency` helper: `atLeastAsFresh(zedtoken) | fullyConsistent | minimizeLatency`; default for all app calls is `atLeastAsFresh` when a token is available, `fullyConsistent` otherwise (phase 3 wires the stored token; until then the helper is called with `fullyConsistent`).
+- `consistency` helper: `atLeastAsFresh(zedtoken) | fullyConsistent | minimizeLatency`; every call names its level explicitly (`docs/README.md` §7.3); until phase 3 the app passes `fullyConsistent` everywhere, which is correct and simplest, and ticket 21 switches listings to `minimizeLatency` and adds the session token.
 - Bootstrap (ticket 4) gains a step: write the schema at start (idempotent).
 
 **Tests:** integration tests against the compose SpiceDB (a Jest project tagged `integration`, run in CI with the SpiceDB service container): the schema loads; the §6.3 scenario produces the expected `check` results for Alice, Bob, Carol; `lookupResources(document, view, carol)` returns exactly Launch plan and Budget.
@@ -148,18 +148,18 @@
 
 ---
 
-### Ticket 7 — `packages/db-core` and `packages/documents`: schema, migrations, services (3 h)
+### Ticket 7 — `packages/db-core`, `packages/tenancy`, `packages/documents`: schema, migrations, services (3.5 h)
 
-**Read first:** `docs/README.md` §3.1 (ownership rules), §5.1, §6.5.
+**Read first:** `docs/README.md` §3.1 (ownership rules), §5, §6.5.
 
-**Description:** The documents domain as one package that owns its database.
+**Description:** The tenancy service and the documents domain as packages that each own a database; both run in-process in `dashboard-web` during phase 1 and move behind their APIs in phase 2.
 
 - `packages/db-core`: `createDb(connectionString)` (Drizzle over `postgres-js`) and `runMigrations(db, folder)`; no tables.
-- `packages/documents`: Drizzle schema for `users`, `organizations` (including `zedtoken` and `policy`), `projects`, `documents` (§5.1; `authz_decisions` arrives in phase 3); `drizzle-kit` migrations committed; services `provisionUser(claims)` (ticket 10 fills it in), `listVisibleDocuments(user)`, `getDocumentForEdit(user, id)`, `updateDocument(user, id, values)`, each calling `packages/authz` before touching data (ticket 11 fills them in). Seed helpers live here and are invoked by bootstrap.
-- `pnpm db:migrate --filter documents` script; migrations run from the app container entrypoint (phase 1: `dashboard-web`; from phase 2: `dashboard-api`) or from bootstrap; decide and record.
-- The package is imported by `dashboard-web` in phase 1 and only by `dashboard-api` from phase 2; no other app ever imports it.
+- `packages/tenancy`: schema for `users` and `organizations` (including `policy`; `authz_decisions` arrives in phase 3); migrations; services `provisionUser(claims)` (ticket 10 fills it in), `getOrganization(user, id)` (policy, name; `organization#view` check), `listOrganizations(user)`, `setMembership(...)` and `setPolicy(...)` (used by `tenancy-web` in phase 2); a `TenancyClient` interface with an in-process implementation now and an HTTP implementation in ticket 16.
+- `packages/documents`: schema for `projects` and `documents` (§5.2); migrations; services `listVisibleDocuments(user)`, `getDocumentForEdit(user, id)`, `updateDocument(user, id, values)`, `createExampleDocument(orgId, projectId)` (called by provisioning), each calling `packages/authz` before touching data and `TenancyClient` for the organization (ticket 11 fills them in). Seed helpers live in both packages and are invoked by bootstrap.
+- `pnpm db:migrate --filter <package>` scripts; migrations run from the owning app's container entrypoint (phase 1: `dashboard-web` runs both; from phase 2 each API runs its own) or from bootstrap; decide and record.
 
-**Tests:** migration applies on a fresh database in CI; a round-trip insert/select per table.
+**Tests:** migrations apply on fresh databases in CI; a round-trip insert/select per table.
 
 **Status:** Open.
 
@@ -169,10 +169,10 @@
 
 **Read first:** `docs/README.md` §4.4, §9.
 
-**Description:** The BFF half of the package (the bearer half is ticket 15; the back-channel logout sink and the policy helper are phase 5 and phase 4).
+**Description:** The BFF half of the package (the bearer half is ticket 15; the back-channel logout sink is ticket 18; the policy helper is ticket 24).
 
 - Framework-agnostic core on the Fetch API: `createOidcClient(config)` from discovery (`openid-client` v6), cached per process; `beginLogin()` → authorization URL plus the `state`, `nonce`, `code_verifier` to stash in a signed, short-lived (10 min) `HttpOnly` cookie; `completeLogin(callbackUrl, stash)` → validated tokens and claims (including `auth_time`, `amr`, `sid`); failures map to typed errors (state mismatch, nonce mismatch, token invalid) that the route turns into a generic "login failed" page without leaking which check failed; `endSessionUrl(idToken, postLogoutRedirect)`.
-- `SessionStore` interface (modelled on `nextjs-auth0`'s `sessionStore`; `docs/README.md` §4.4): `create`, `get` (applies idle `30 min` and absolute `8 h` limits), `touch` (atomic conditional update: Lua script on Redis, so a logout in flight is never undone by a rolling write), `delete`, `deleteByLogoutToken({ sid, sub })`, `deleteByUser`, `listByUser`. Adapters: `createMemorySessionStore()` for tests and `createRedisSessionStore(client)` (session hash under `session:<id>` with TTL; secondary sets `sid:<sid>` and `user:<sub>`), the only dependency being a `ioredis`-compatible client passed in.
+- `SessionStore` interface (modelled on `nextjs-auth0`'s `sessionStore`; `docs/README.md` §4.4): `create`, `get` (applies idle `30 min` and absolute `8 h` limits), `touch` (atomic conditional update: Lua script on Redis, so a logout in flight is never undone by a rolling write), `delete`, `deleteByLogoutToken({ sid, sub })`, `deleteByUser`, `listByUser`. Adapters: `createMemorySessionStore()` for tests and `createRedisSessionStore(client)` (session hash under `session:<id>` with TTL; secondary sets `sid:<sid>` and `user:<sub>`), the only dependency being an `ioredis`-compatible client passed in.
 - Cookie helpers setting `HttpOnly`, `SameSite=Lax`, `Secure` when the app URL is https, `Path=/`.
 - Subpath export `@auth-stack/auth/next`: route-handler helpers bound to `cookies()` and `NextResponse`.
 - No tokens or session IDs in logs; a `redact()` helper used by every log call.
@@ -200,7 +200,7 @@
 
 **Read first:** `docs/README.md` §6.4.
 
-**Description:** In the callback, after session creation: if `users` has no row for `sub`, run the provisioning transaction from §6.4 through `packages/documents` (`provisionUser(claims)`), creating the personal organization, project, example document, and relationships, and storing the returned ZedToken on the organization. Idempotent under a double callback (unique constraint on `users.id`; retry-safe).
+**Description:** In the callback, after session creation: `TenancyClient.provisionUser(claims)`; if `users` has no row for `sub`, tenancy runs the provisioning transaction from §6.4, creating the personal organization and, through `packages/documents`, the "Personal" project and example document, writing the relationships, and returning the ZedToken for the BFF to store in the session. Idempotent under a double callback (unique constraint on `users.id`; retry-safe).
 
 **Tests:** integration test: a new `sub` gets exactly one personal organization, one project, one document, and `check(document, edit, user)` allows; a second call creates nothing.
 
@@ -214,7 +214,7 @@
 
 **Description:**
 
-- `packages/documents` services: `listVisibleDocuments(user)` (one `lookupResources(document, view, user)` → join IDs to `documents` rows with project and organization names → group by `organization_id` → one `bulkCheck` per organization with that organization's ZedToken, checking `view` and `edit`), `getDocumentForEdit(user, id)` (check `edit`; `view`-only → `403`; neither → `404`), `updateDocument(user, id, values)` (same check, then update `value_1`, `value_2`, `updated_by`).
+- `packages/documents` services: `listVisibleDocuments(user, consistency)` (one `lookupResources(document, view, user)` → join IDs to `documents` rows with project names and, through `TenancyClient`, organization names → one `bulkCheck` of `edit` over the rows, both at the listing consistency: `minimize_latency`, or `at_least_as_fresh` with the session token when the caller passes one), `getDocumentForEdit(user, id)` (check `edit`; `view`-only → `403`; neither → `404`), `updateDocument(user, id, values)` (same check at `fully_consistent`, then update `value_1`, `value_2`, `updated_by`).
 - `/dashboard` renders one row per document grouped by organization and project, with "Edit" or a disabled "Read-only" marker.
 - `/documents/[id]/edit` renders the form (server component) and a server action or `POST` route handler that validates input with zod, calls `updateDocument`, and redirects back with a flash message. Forbidden and not-found states render proper pages.
 
@@ -228,7 +228,7 @@
 
 **Read first:** `docs/README.md` §6.3.
 
-**Description:** Bootstrap gains a seeding step after Zitadel users exist: insert the `users` mirror rows for Alice, Bob, Carol (IDs from `seed.json`), the Acme organization, Marketing and Finance projects, the three documents, and the relationship tuples from §6.3; store the ZedToken on Acme. Idempotent (match by stable names, skip if present).
+**Description:** Bootstrap gains a seeding step after Zitadel users exist: through `packages/tenancy`, the `users` mirror rows for Alice, Bob, Carol (IDs from `seed.json`) and the Acme organization; through `packages/documents`, the Marketing and Finance projects and the three documents; the relationship tuples from §6.3 (organization level by tenancy, project and document level by documents). Idempotent (match by stable names, skip if present).
 
 **Acceptance criteria:** fresh stack → log in as each seeded user → the §6.3 dashboard table holds exactly.
 
@@ -260,13 +260,13 @@
 
 ---
 
-## Phase 2 — Resource server
+## Phase 2 — Services: tenancy-api, dashboard-api, tenancy-web, single sign-on and sign-out
 
-### Ticket 15 — `dashboard-api` on Fastify with bearer-token verification (3 h)
+### Ticket 15 — `dashboard-api` on Fastify with bearer-token verification and the scope gate (3 h)
 
-**Read first:** `docs/README.md` §3.1, §4.4 (last paragraph), §6.5.
+**Read first:** `docs/README.md` §3.1, §4.4 (last paragraphs), §6.5, §6.7.
 
-**Description:** `apps/dashboard-api` exposing `GET /documents`, `GET /documents/:id`, `PUT /documents/:id` over `packages/documents`. The bearer half of `packages/auth`, exported as `@auth-stack/auth/fastify`: a plugin that verifies `Authorization: Bearer` JWTs against Zitadel's JWKS (`jose`), checks `iss`, `exp`, and that `aud` contains the project ID (bootstrap registers `dashboard-api` as an API application in the same project), and puts the subject on the request. **Scope gate** (`docs/README.md` §6.7): `requireScope(...)` per route (`documents:read` on `GET`, `documents:write` on `PUT`), resolving effective scopes through the `ScopeResolver` interface, here the `packages/authz`-backed resolver (`LookupResources(api_scope, use, client:<azp>)`, cached per client; Zitadel's JWT access tokens carry `azp` and no `scope` claim); first-party clients are registered with every scope; failure is `403` with `WWW-Authenticate: Bearer error="insufficient_scope"`. Health endpoint, request IDs, structured logs, Dockerfile, compose service.
+**Description:** `apps/dashboard-api` exposing `GET /documents`, `GET /documents/:id`, `PUT /documents/:id` over `packages/documents`. The bearer half of `packages/auth`, exported as `@auth-stack/auth/fastify`: a plugin that verifies `Authorization: Bearer` JWTs against Zitadel's JWKS (`jose`), checks `iss`, `exp`, and that `aud` contains the project ID (bootstrap registers `dashboard-api` as an API application in the same project), and puts the subject on the request. **Scope gate** (`docs/README.md` §6.7): `requireScope(...)` per route (`documents:read` on `GET`, `documents:write` on `PUT`), resolving effective scopes through the `ScopeResolver` interface, here the `packages/authz`-backed resolver (`LookupResources(api_scope, use, client:<azp>)`, cached per client; Zitadel's JWT access tokens carry `azp` and no `scope` claim); first-party clients are registered with every scope; failure is `403` with `WWW-Authenticate: Bearer error="insufficient_scope"`. Health endpoint, request IDs, structured logs, Dockerfile, compose service. Organization data comes through `TenancyClient` (in-process until ticket 16 lands, then HTTP).
 
 **Tests:** unit tests for the plugin (valid, expired, wrong audience, wrong issuer, malformed, missing scope, scope from registry vs from claim); integration test for the routes with a token minted by a test signer.
 
@@ -274,13 +274,61 @@
 
 ---
 
-### Ticket 16 — `dashboard-web` calls the API with the session's access token (2 h)
+### Ticket 16 — `tenancy-api` on Fastify and the HTTP `TenancyClient` (3 h)
+
+**Read first:** `docs/README.md` §3.1, §5.1, §6.6 (tenancy table), §7.
+
+**Description:** `apps/tenancy-api` over `packages/tenancy`, reusing the bearer plugin and scope gate from ticket 15 (scopes `tenancy:read`, `tenancy:write`): `POST /me/provision`, `GET /me/organizations`, `GET /organizations/:id` (name, kind, policy; `organization#view`), `GET|PUT /organizations/:id/members` and `PUT /organizations/:id/policy` (`organization#administer`), writing organization relationships to SpiceDB at `fully_consistent`. The HTTP `TenancyClient` in `packages/tenancy` with the per-organization cache (60 s). `dashboard-api` and `dashboard-web` switch to it; the in-process implementation remains for tests.
+
+**Tests:** route tests with a test signer; `TenancyClient` contract test against both implementations.
+
+**Status:** Open.
+
+---
+
+### Ticket 17 — `tenancy-web`: organizations, members, policy (2.5 h)
+
+**Read first:** `docs/README.md` §3.1, §9.1.
+
+**Description:** A second Next.js app on `packages/auth` plus the `next` adapter, its own OIDC application and `backchannel_logout_uri` registered by bootstrap: `/organizations` (mine), `/organizations/[id]` (members with add-by-email of an existing account, remove, admin or member toggle; policy form: require MFA, maximum login age, required IdP). Every action goes through `tenancy-api` with the user's token. Minimal UI; the point of the ticket is how little the second client contains, and the README says so.
+
+**Acceptance criteria:** Alice adds a fourth seeded account to Acme as a member and that user then sees Acme's shared resources in `dashboard-web`; a member cannot open the policy form.
+
+**Status:** Open.
+
+---
+
+### Ticket 18 — Back-channel logout sink in `packages/auth` (2 h)
+
+**Read first:** `docs/README.md` §4.4 (step 6).
+
+**Description:** `POST /auth/backchannel-logout` handler in the core with a `next` binding: validate the logout token (signature, `iss`, `aud`, `iat`, `exp`, `events`, `sid` or `sub`, no `nonce`), `deleteByLogoutToken({ sid, sub })`, `200` on success, `400` on an invalid token, never a redirect; mounted on `dashboard-web` and `tenancy-web`; bootstrap sets the URI on both applications. Confirm empirically that a sign-out through `end_session` delivers the token inside compose, and whether admin session termination does too; record both as a dated note in §4.4.
+
+**Tests:** unit tests with a signed fake logout token; integration test: logout in Zitadel removes the Redis session.
+
+**Status:** Open.
+
+---
+
+### Ticket 19 — `dashboard-web` calls the APIs with the session's access token (2 h)
 
 **Read first:** `docs/README.md` §4.4.
 
-**Description:** Replace direct `packages/documents` calls in the web app with an HTTP client to `dashboard-api` that attaches the session's access token, refreshes it with the refresh token when expired (updating the session row), and maps `401/403/404` to the existing pages. `packages/documents` is imported only by the API from here on. The three-state behaviour and the Playwright suite must be unchanged.
+**Description:** Replace direct `packages/documents` and in-process tenancy calls in the web app with HTTP clients to `dashboard-api` and `tenancy-api` that attach the session's access token, refresh it with the refresh token when expired (updating the session), and map `401/403/404` to the existing pages. `packages/documents` is imported only by `dashboard-api` from here on. The three-state behaviour and the Playwright suite must be unchanged.
 
-**Acceptance criteria:** Playwright green; the web container has no SpiceDB or documents-database connection any more (only Redis for sessions).
+**Acceptance criteria:** Playwright green; the web container has no SpiceDB or domain-database connection any more (only Redis for sessions).
+
+**Status:** Open.
+
+---
+
+### Ticket 20 — Single sign-on and single sign-out end to end (1.5 h)
+
+**Read first:** `docs/README.md` §4.4.
+
+**Description:** Playwright: log in on `dashboard-web`, open `tenancy-web` and be signed in without a prompt; sign out on `tenancy-web` and have `dashboard-web`'s next request redirect to login (through the back-channel logout sink, with the re-validation backstop as the fallback assertion).
+
+**Acceptance criteria:** green locally and in CI.
 
 **Status:** Open.
 
@@ -288,15 +336,15 @@
 
 ## Phase 3 — Consistency and audit (stubs; specified when the phase starts)
 
-### Ticket 17 — ZedToken on organizations and `at_least_as_fresh` on every check (2 h)
+### Ticket 21 — Consistency per operation and session-scoped ZedTokens (2.5 h)
 
-Store the ZedToken returned by every relationship write on `organizations.zedtoken` (tickets 10 and 12 already do on create; this ticket covers every later write and switches the default consistency from `fullyConsistent` to `atLeastAsFresh(org.zedtoken)`). Integration test reproducing New Enemy case 1 with `minimize_latency` versus the stored token.
+Apply `docs/README.md` §7.3 everywhere: listings at `minimize_latency`, every write-path check at `fully_consistent`, and after any relationship write by a user the BFF stores the returned ZedToken in the session (`packages/auth` session field, `packages/authz` helper to build `at_least_as_fresh` from it) and passes it on that user's subsequent listing calls. Integration test reproducing New Enemy case 1 (remove then add) with `minimize_latency` versus `fully_consistent`, and a read-your-writes test: share a document, list immediately with the session token, see it.
 
 **Status:** Open.
 
-### Ticket 18 — Decision audit log and per-organization audit page (2.5 h)
+### Ticket 22 — Decision audit log and per-organization audit page (2.5 h)
 
-`authz_decisions` table written at every enforcement point through a `recordDecision()` hook in `packages/documents`; `/organizations/[id]/audit` page for organization admins; retention note in the README.
+`authz_decisions` in tenancy, written at every enforcement point through a `recordDecision()` hook that posts asynchronously to `tenancy-api` (`POST /decisions`, buffered); `/organizations/[id]/audit` page in `tenancy-web` for organization admins; retention note in the README.
 
 **Status:** Open.
 
@@ -304,19 +352,19 @@ Store the ZedToken returned by every relationship write on `organizations.zedtok
 
 ## Phase 4 — Hardening (stubs)
 
-### Ticket 19 — CSRF tokens, security headers, CSP, rate limits (3 h)
+### Ticket 23 — CSRF tokens, security headers, CSP, rate limits (3 h)
 
-Per-session CSRF token in forms and server actions; `Origin`/`Sec-Fetch-Site` checks; headers per `docs/README.md` §9 in `next.config.ts` and a Fastify hook; `@fastify/rate-limit` on mutations; a small token bucket on the callback route.
-
-**Status:** Open.
-
-### Ticket 20 — Authentication-context policies: `requireAuthContext` and the step-up flow (3 h)
-
-`organizations.policy` honoured by the BFF: `requireAuthContext({ maxAge, amr })` in `packages/auth` reads `auth_time` and `amr` from the session, produces the RFC 9470 challenge, and the web app turns it into a re-authentication (`prompt=login`, `max_age`) and retry. Finance in the seeded Acme organization gets `max_auth_age_seconds: 600` so the reviewer can see a step-up. README section on where policies live (§9.1).
+Per-session CSRF token in forms and server actions; `Origin`/`Sec-Fetch-Site` checks; headers per `docs/README.md` §9 in `next.config.ts` and a Fastify hook; `@fastify/rate-limit` on mutations; a small token bucket on the callback route and the back-channel logout sink.
 
 **Status:** Open.
 
-### Ticket 21 — Test coverage pass and README trade-offs update (2 h)
+### Ticket 24 — Authentication-context policies: `requireAuthContext` and the step-up flow (3 h)
+
+`organizations.policy` (from tenancy, cached) honoured by the BFFs: `requireAuthContext({ maxAge, amr })` in `packages/auth` reads `auth_time` and `amr` from the session, produces the RFC 9470 challenge, and the web apps turn it into a re-authentication (`prompt=login`, `max_age`) and retry. Finance in the seeded Acme organization gets `max_auth_age_seconds: 600` so the reviewer can see a step-up. README section on where policies live (§9.1).
+
+**Status:** Open.
+
+### Ticket 25 — Test coverage pass and README trade-offs update (2 h)
 
 Fill gaps in unit and integration coverage, `pnpm audit` in CI (non-blocking), refresh the trade-offs and gaps section.
 
@@ -324,35 +372,23 @@ Fill gaps in unit and integration coverage, `pnpm audit` in CI (non-blocking), r
 
 ---
 
-## Phase 5 — Second application: single sign-on, single sign-out, cross-domain access (stubs)
+## Phase 5 — Comments domain: cross-domain access (stubs; only if time allows)
 
-### Ticket 22 — Zitadel spike: back-channel logout delivery and RFC 9068 claims through Actions 🔬 spike (2 h, timeboxed)
+### Ticket 26 — Zitadel spike: RFC 9068 claims through Actions 🔬 spike (1.5 h, timeboxed)
 
-Confirm that a sign-out through `end_session` delivers a logout token to a registered `backchannel_logout_uri` inside compose, and whether admin session termination does too. Try a Zitadel Action that adds `auth_time` and `amr` to the JWT access token; record the outcome in `docs/README.md` §9.1 as a dated note (if it works, ticket 26 enforces policies in the APIs; if not, the limitation stands).
-
-**Status:** Open.
-
-### Ticket 23 — Back-channel logout sink in `packages/auth` (2 h)
-
-`POST /auth/backchannel-logout` handler: validate the logout token (signature, `iss`, `aud`, `iat`, `exp`, `events`, `sid` or `sub`, no `nonce`), `deleteByLogoutToken({ sid, sub })`, `200` on success, `400` on an invalid token, never a redirect; registered on `dashboard-web`; bootstrap sets the URI on the application. Unit tests with a signed fake logout token; integration test: logout in Zitadel removes the Redis session.
+Try a Zitadel Action that adds `auth_time` and `amr` to the JWT access token; record the outcome in `docs/README.md` §9.1 as a dated note (if it works, ticket 28 enforces policies in the APIs; if not, the limitation stands).
 
 **Status:** Open.
 
-### Ticket 24 — `packages/comments` and `comments-api` (3 h)
+### Ticket 27 — `packages/comments` and `comments-api` (3 h)
 
-Schema (§5.2) and migrations, `comments` database in compose, Fastify API with `GET /documents/:id/comments` and `POST /documents/:id/comments`; `comment` definition added to the SpiceDB schema; permission checks through `document->view` on SpiceDB; document title fetched from `dashboard-api` with the caller's access token (§6.6); bootstrap registers `comments-api` in the same project.
-
-**Status:** Open.
-
-### Ticket 25 — `comments-web` on the platform packages (2.5 h)
-
-A second Next.js app with `packages/auth` plus the `next` adapter, its own OIDC application and `backchannel_logout_uri` from bootstrap, a page listing the documents the user can view with their comments and a form to add one. The point of the ticket is how little it contains; the README says so.
+Schema (§5.3) and migrations, `comments` database in compose, Fastify API with `GET /documents/:id/comments` and `POST /documents/:id/comments` (scopes `comments:read`, `comments:write`); `comment` definition in the SpiceDB schema; permission checks through `document->view` at the per-operation consistency of §7; document title fetched from `dashboard-api` with the caller's access token (§6.6); bootstrap registers `comments-api` in the same project.
 
 **Status:** Open.
 
-### Ticket 26 — Single sign-on and single sign-out end to end (2 h)
+### Ticket 28 — `comments-web` and the cross-domain end-to-end test (2.5 h)
 
-Playwright: log in on `dashboard-web`, open `comments-web` and be signed in without a prompt; sign out on `comments-web` and have `dashboard-web`'s next request redirect to login (through the back-channel logout sink, with the re-validation backstop as the fallback assertion). If ticket 22 showed Actions can emit the claims, `dashboard-api` enforces `organizations.policy` with `requireAuthContext` on the access token for calls arriving from `comments-api`.
+A third Next.js app on the platform packages listing the documents the user can view with their comments and a form to add one; Playwright: Carol comments on Launch plan, cannot on Payroll (`404`), and sees her comment's document title fetched across domains. If ticket 26 succeeded, `dashboard-api` enforces `organizations.policy` with `requireAuthContext` on the access token for calls arriving from `comments-api`.
 
 **Status:** Open.
 
@@ -360,7 +396,7 @@ Playwright: log in on `dashboard-web`, open `comments-web` and be signed in with
 
 ## Phase 6 — Observability (stub)
 
-### Ticket 27 — OpenTelemetry tracing across web, APIs, SpiceDB, and Postgres (3 h)
+### Ticket 29 — OpenTelemetry tracing across web, APIs, SpiceDB, and Postgres (3 h)
 
 Node SDK with auto-instrumentations, manual spans around `authz` calls carrying the consistency mode, OTLP export to a collector and Jaeger in a compose `observability` profile; Zitadel's own tracing enabled through its env vars.
 
@@ -370,7 +406,7 @@ Node SDK with auto-instrumentations, manual spans around `authz` calls carrying 
 
 ## Phase 7 — Kubernetes (stub)
 
-### Ticket 28 — Manifests and a Kubernetes Tiltfile (4 h)
+### Ticket 30 — Manifests and a Kubernetes Tiltfile (4 h)
 
 `kind` cluster, Kustomize manifests for every service, a `Tiltfile.k8s`, README section.
 
@@ -380,7 +416,7 @@ Node SDK with auto-instrumentations, manual spans around `authz` calls carrying 
 
 ## Phase 8 — Gateway (stub)
 
-### Ticket 29 — Traefik ForwardAuth or Envoy `ext_authz` in front of the APIs (3 h)
+### Ticket 31 — Traefik ForwardAuth or Envoy `ext_authz` in front of the APIs (3 h)
 
 Configuration-only: token verification moves to the gateway; the APIs trust injected headers only from the gateway network.
 
@@ -390,7 +426,7 @@ Configuration-only: token verification moves to the gateway; the APIs trust inje
 
 ## Phase 9 — Identity extensions (stub)
 
-### Ticket 30 — Broker a second OIDC provider through Zitadel (3 h)
+### Ticket 32 — Broker a second OIDC provider through Zitadel (3 h)
 
 A second Zitadel instance or a mock OIDC provider registered as an external IdP, with the seeded Acme organization's policy requiring it, demonstrating enterprise SSO without app changes.
 
