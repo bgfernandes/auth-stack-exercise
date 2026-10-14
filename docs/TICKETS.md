@@ -81,7 +81,7 @@
 
 - Create a throwaway OIDC application in Zitadel's console (bootstrap automates this in ticket 4): type Web, PKCE, redirect `http://localhost:3000/auth/callback`, post-logout `http://localhost:3000/`.
 - A bare `apps/dashboard-web` (Next.js 16, App Router) with `/auth/login` and `/auth/callback` route handlers using `openid-client` v6 (`discovery`, `buildAuthorizationUrl`, `authorizationCodeGrant`), printing the ID-token claims on a page. No session yet.
-- Run it inside compose with option (a) from §4.3. If discovery or the redirect fails on the issuer mismatch, try option (b) (custom fetch with a `Host` override). Record which one works and why as a dated note in `docs/README.md` §4.3.
+- Run it inside compose with option (a) from §4.3. If discovery or the redirect fails on the issuer mismatch, try option (b) (custom fetch with a `Host` override) and option (c) (a trusted domain for the service name, checking what `issuer` discovery returns and what `iss` the tokens carry when reached through it). Record which one works and why as a dated note in `docs/README.md` §4.3.
 - If `v4.19.4` misbehaves, retry with `v4.16.0` (the tag Zitadel's own `.env.example` pins). If Zitadel cannot be made to work inside the timebox, **fall back to Ory Kratos + Hydra** and record the decision; nothing else in the plan changes except §4.
 
 **Acceptance criteria:** a browser on the host logs in through Zitadel and lands on a page rendered by the containerized app showing `sub`, `email`, `iss`; the same works after `docker compose down -v && up`; the chosen host strategy is written down.
