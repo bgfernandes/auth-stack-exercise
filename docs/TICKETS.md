@@ -5,6 +5,7 @@
 > Each ticket is one PR unless marked **🔬 spike** (investigation; may produce no code) or **📝 docs** (documentation only).
 >
 > **Every code ticket must:**
+>
 > - Open the PR description with `Read first: docs/README.md` and name the ticket.
 > - Pass `pnpm lint`, `pnpm type-check`, and `pnpm test` before "done".
 > - Use conventional commits; one squash-merged PR per ticket; branch named `<nn>-<slug>`.

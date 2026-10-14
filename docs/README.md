@@ -22,7 +22,7 @@ OAuth 2.0 and OIDC were designed for third-party delegation, and a single first-
 
 ## 3. Architecture
 
-```
+```text
                                   ┌──────────────────────────────┐
    Browser ───── login/consent ──►│  Zitadel (IdP, OIDC OP)      │◄─── bootstrap (one-shot)
       │                           │  + Login V2 UI, via Traefik  │
@@ -48,7 +48,7 @@ OAuth 2.0 and OIDC were designed for third-party delegation, and a single first-
 ### 3.1 Components and ownership
 
 | Component | Role | Owns | Source |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Zitadel (`zitadel-api` + `zitadel-login` behind Traefik) | OpenID Provider: registration, login, MFA, password reset, sessions, tokens, JWKS, external IdP brokering | Identities and credentials, in its own Postgres database | Off the shelf, pinned image |
 | SpiceDB | Authorization: relationships, `CheckPermission`, `LookupResources`, ZedTokens | Relationship tuples, in its own Postgres database | Off the shelf, pinned image |
 | `apps/dashboard-web` | The product: login redirect, session, dashboard, edit form; the BFF that holds tokens server-side | HTTP session cookie, page rendering, enforcement on its own write paths | This repo |
@@ -107,7 +107,7 @@ Tokens are configured as JWTs in Zitadel (application setting "Auth Token Type: 
 A deliberately small hierarchy with enough structure for relationship-based access control to earn its place: **organization → project → document**. Projects, not folders: folders imply arbitrary nesting, which needs a recursive schema and buys nothing here.
 
 | Table (`packages/db`) | Columns (abridged) | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `users` | `id` (Zitadel `sub`, PK), `email`, `display_name`, `created_at` | Mirror created just-in-time at first login; the IdP is the source of truth |
 | `organizations` | `id`, `name`, `kind` (`personal` or `shared`), `zedtoken`, `created_at` | `zedtoken` is the consistency anchor (§7) |
 | `projects` | `id`, `organization_id`, `name`, `created_at` | |
@@ -167,7 +167,7 @@ Design points. Organization **members** do not see projects by inheritance; only
 ### 6.3 Seeded scenario
 
 | User | Password (dev only) | Relationships | Dashboard |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `alice@example.com` | `Password1!` | `organization:acme#admin` | Every document in Acme, all editable |
 | `bob@example.com` | `Password1!` | `organization:acme#member`, `project:marketing#editor` | Marketing documents editable; Finance project absent |
 | `carol@example.com` | `Password1!` | `organization:acme#member`, `project:marketing#viewer`, `document:launch-plan#editor` | "Launch plan" editable (direct share), "Budget" read-only, Finance absent |
@@ -199,7 +199,7 @@ Every enforcement point records a **decision** (phase 3): who, what action, whic
 ## 9. Security posture (the configuration profile)
 
 | Concern | Decision |
-|---|---|
+| --- | --- |
 | Credentials | Never handled by the app. Zitadel stores password hashes (its default policy; bcrypt-family, configurable), rate-limits login attempts, and runs lockout and password-reset flows. The app never sees a password. |
 | Session cookie | Opaque ID to a server-side row; `HttpOnly`, `SameSite=Lax`, `Secure` outside localhost, no `Domain` attribute. Idle timeout and absolute lifetime enforced on the row. Logout deletes the row and ends the IdP session. |
 | OIDC client | Authorization code + PKCE `S256`; `state` and `nonce` single-use and bound to the login attempt; exact-match redirect URIs registered in Zitadel; ID token validated by `openid-client` (`iss`, `aud`, `exp`, `nonce`, signature). Tokens never leave the server. |
@@ -230,7 +230,7 @@ Every enforcement point records a **decision** (phase 3): who, what action, whic
 The order follows one principle: the earliest end-to-end working slice first, then widen, with the least important work last. Anything not reached is documented as future work in the root README, which the problem statement explicitly asks for.
 
 | Phase | Delivers | Why in this position |
-|---|---|---|
+| --- | --- | --- |
 | 0 — Foundation | Monorepo scaffold, compose stack (Postgres, Zitadel + login, Traefik, SpiceDB, Mailpit), the Zitadel spike (host mapping, one real login), bootstrap container, Tiltfile, CI skeleton | Everything else depends on a login that works from inside compose |
 | 1 — Vertical slice | SpiceDB schema and `packages/authz`, `packages/db`, `packages/auth` BFF, JIT provisioning, dashboard with the three states, edit flow with server-side enforcement, seeded users, Playwright login-and-edit test, root README v1 | **Minimum viable submission:** phase 1 plus the README satisfies every hard requirement |
 | 2 — Resource server | `dashboard-api` on Fastify verifying bearer tokens (JWKS, `iss`, `aud`); `dashboard-web` calls it with the session's access token; `packages/resources` moves behind the API | Same service code, new host: low cost, and it is the "how would you add a second app" answer |

@@ -39,7 +39,7 @@ A reference IAM stack: OIDC login through a self-hosted Zitadel, fine-grained au
 
 ## Conventions
 
-- Markdown: no hard wrapping. One line per paragraph and per bullet.
+- Markdown: no hard wrapping. One line per paragraph and per bullet. After editing any `.md` file, run `pnpm lint:md` (markdownlint-cli2, configured in `.markdownlint-cli2.yaml`) and fix what it reports before considering the edit done; `pnpm lint:md:fix` applies the automatic fixes.
 - Secrets: development defaults are committed on purpose so the stack starts with zero manual steps; they are labelled as insecure and listed in the trade-offs section of the root README. Never commit a real secret. Gitleaks runs in CI.
 - Every enforcement decision is made server-side, on the write path. UI affordances (an Edit button) are hints, never the control.
 - Logs and errors never include tokens, session identifiers, or passwords.
