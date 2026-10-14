@@ -26,45 +26,82 @@ This project still makes its first-party apps OIDC clients, for a reason that co
 
 ## 3. Architecture
 
-```text
-                                  ┌──────────────────────────────┐
-   Browser ───── login/consent ──►│  Zitadel (IdP, OIDC OP)      │◄─── bootstrap (one-shot)
-      │                           │  + Login V2 UI, via Traefik  │
-      │  session cookie           └──────────────┬───────────────┘
-      ▼                                          │ tokens / JWKS / userinfo
-   ┌──────────────────────┐    bearer (phase 2)  ┌▼─────────────────────┐
-   │ dashboard-web        │─────────────────────►│ dashboard-api        │
-   │ Next.js 16 (BFF)     │                      │ Fastify (resource    │
-   │ holds the session,   │   packages/resources │ server)              │
-   │ renders pages        │◄── (phase 1 direct) ─┤                      │
-   └──────────┬───────────┘                      └──────────┬───────────┘
-              │ packages/authz (gRPC)                       │ packages/db (Drizzle)
-              ▼                                             ▼
-   ┌──────────────────────┐                      ┌──────────────────────┐
-   │ SpiceDB              │                      │ Postgres (app DB)    │
-   │ relationships, check │                      │ users, orgs,         │
-   │ lookup, ZedTokens    │                      │ projects, documents, │
-   └──────────────────────┘                      │ sessions, audit      │
-                                                 └──────────────────────┘
-   Mailpit receives every email Zitadel sends (verification codes, password resets).
+```mermaid
+flowchart LR
+    Browser["Browser"]
+
+    subgraph idp["Identity (L1)"]
+        Traefik["Traefik"]
+        Zitadel["Zitadel API<br/>OIDC provider"]
+        Login["Zitadel Login V2<br/>/ui/v2/login"]
+        Traefik --> Zitadel
+        Traefik --> Login
+    end
+
+    subgraph apps["Applications (this repo)"]
+        Web["dashboard-web<br/>Next.js, BFF<br/>documents domain"]
+        API["dashboard-api<br/>Fastify resource server<br/>documents domain (phase 2)"]
+        CWeb["comments-web<br/>Next.js, BFF<br/>comments domain (phase 5)"]
+        CAPI["comments-api<br/>Fastify resource server<br/>comments domain (phase 5)"]
+        Bootstrap["bootstrap<br/>one-shot container"]
+    end
+
+    subgraph data["State"]
+        SpiceDB["SpiceDB<br/>relationships, checks,<br/>ZedTokens"]
+        Redis[("Redis<br/>sessions")]
+        DocDB[("Postgres: documents")]
+        ComDB[("Postgres: comments")]
+        IdpDB[("Postgres: zitadel")]
+        AuthzDB[("Postgres: spicedb")]
+    end
+
+    Mailpit["Mailpit<br/>localhost:8025"]
+
+    Browser -- "login, consent, logout" --> Traefik
+    Browser -- "session cookie" --> Web
+    Browser -- "session cookie" --> CWeb
+    Web -- "discovery, tokens, JWKS" --> Traefik
+    Web -- "user's access token (phase 2)" --> API
+    Web -. "packages/documents (phase 1 only)" .-> SpiceDB
+    Web -. "packages/documents (phase 1 only)" .-> DocDB
+    CWeb -- "user's access token" --> CAPI
+    CAPI -- "user's access token (document titles)" --> API
+    API -- "packages/authz (gRPC)" --> SpiceDB
+    CAPI -- "packages/authz (gRPC)" --> SpiceDB
+    API --> DocDB
+    CAPI --> ComDB
+    Web -- "packages/auth sessions" --> Redis
+    CWeb -- "packages/auth sessions" --> Redis
+    Zitadel -- "back-channel logout" --> Web
+    Zitadel -- "back-channel logout" --> CWeb
+    Bootstrap -- "management API: project, apps, users" --> Traefik
+    Bootstrap -- "schema, seed tuples" --> SpiceDB
+    Bootstrap -- "seed rows" --> DocDB
+    Zitadel --> IdpDB
+    SpiceDB --> AuthzDB
+    Zitadel -- "SMTP" --> Mailpit
 ```
 
 ### 3.1 Components and ownership
 
 | Component | Role | Owns | Source |
 | --- | --- | --- | --- |
-| Zitadel (`zitadel-api` + `zitadel-login` behind Traefik) | OpenID Provider: registration, login, MFA, password reset, sessions, tokens, JWKS, external IdP brokering | Identities and credentials, in its own Postgres database | Off the shelf, pinned image |
-| SpiceDB | Authorization: relationships, `CheckPermission`, `LookupResources`, ZedTokens | Relationship tuples, in its own Postgres database | Off the shelf, pinned image |
-| `apps/dashboard-web` | The product: login redirect, session, dashboard, edit form; the BFF that holds tokens server-side | HTTP session cookie, page rendering, enforcement on its own write paths | This repo |
-| `apps/dashboard-api` (phase 2) | Resource server behind bearer tokens; the service other apps would call | Resource CRUD, enforcement on every operation | This repo |
-| `apps/bootstrap` | One-shot, idempotent container: configures Zitadel (project, OIDC app, seeded users, SMTP), writes the SpiceDB schema, seeds the app database and relationship tuples | Nothing at runtime; it hands configuration to the apps through a shared volume | This repo |
-| `packages/auth` | OIDC client for the BFF (discovery, PKCE, `state`, `nonce`, token validation, session store); bearer verification for APIs | The one place OIDC details live | This repo |
-| `packages/authz` | SpiceDB client, schema file, typed check/lookup/write helpers, consistency handling | The one place SpiceDB details live | This repo |
-| `packages/db` | Drizzle schema and migrations for the resource domain | Tables in §5 | This repo |
-| `packages/resources` | Service layer: list, read, update, provision; calls `authz` before every mutation | Business rules | This repo |
+| Zitadel (`zitadel-api` + `zitadel-login` behind Traefik) | OpenID Provider: registration, login, MFA, password reset, IdP sessions, tokens, JWKS, back-channel logout, external IdP brokering | Identities and credentials, in its own Postgres database | Off the shelf, pinned image |
+| SpiceDB | Authorization: relationships, `CheckPermission`, `CheckBulkPermissions`, `LookupResources`, ZedTokens; one schema partitioned by domain | Relationship tuples, in its own Postgres database | Off the shelf, pinned image |
+| Redis | Session store behind the `SessionStore` interface of `packages/auth`, shared by every BFF | Application sessions (not IdP sessions) | Off the shelf, pinned image |
+| `apps/dashboard-web` | The documents product: login redirect, session, dashboard, edit form; a BFF that holds tokens server-side | HTTP session cookie, page rendering, enforcement on its own write paths | This repo |
+| `apps/dashboard-api` (phase 2) | Resource server for the documents domain behind bearer tokens | Document CRUD, enforcement on every operation | This repo |
+| `apps/comments-web` and `apps/comments-api` (phase 5) | A second product, comments on documents: proves single sign-on, single sign-out, and cross-domain access | The comments domain | This repo |
+| `apps/bootstrap` | One-shot, idempotent container: configures Zitadel (project, applications, seeded users), writes the SpiceDB schema, seeds the documents database and relationship tuples | Nothing at runtime; it hands generated configuration to the apps through a shared volume | This repo |
+| `packages/auth` | Platform package: OIDC client for BFFs (discovery, PKCE, `state`, `nonce`, token validation), the `SessionStore` interface with in-memory and Redis adapters, the back-channel logout sink, bearer verification for APIs, the authentication-context policy helper; framework-agnostic core with thin `next` and `fastify` adapters | The one place OIDC and session details live | This repo |
+| `packages/authz` | Platform package: SpiceDB client, the schema file, typed check/lookup/write helpers, consistency handling | The one place SpiceDB details live | This repo |
+| `packages/db-core` | Platform package: Postgres connection factory and migration runner; no tables | | This repo |
+| `packages/config` | Shared tsconfig and ESLint presets | | This repo |
+| `packages/documents` | Domain package: Drizzle schema, migrations, and services for organizations, projects, documents, and the decision audit log; imported by `dashboard-web` in phase 1 and only by `dashboard-api` from phase 2 | The documents database | This repo |
+| `packages/comments` (phase 5) | Domain package for comments; imported only by `comments-api` | The comments database | This repo |
 | Mailpit | SMTP sink with a web UI at `localhost:8025` | Nothing | Off the shelf |
 
-The IdP and the authorization service are separate processes with separate databases on purpose: they scale, fail, and get upgraded independently, and either can be swapped (Zitadel for Auth0 or Keycloak; SpiceDB for OpenFGA) without touching the other.
+Three ownership rules shape the package layout. **One service owns each database**, so domain packages are never shared across domains, and a domain's schema travels with its services in one package. **Platform packages carry no domain tables**; `packages/auth` does not even assume a database: its `SessionStore` is an interface, and the host picks the adapter. **The IdP and the authorization service are separate processes with separate databases**, so they scale, fail, and upgrade independently, and either can be swapped (Zitadel for Auth0 or Keycloak; SpiceDB for OpenFGA) without touching the other.
 
 ### 3.2 Layer model
 
@@ -86,6 +123,8 @@ The compose stack starts from Zitadel's own v4 reference compose: Traefik in fro
 
 The first instance is created by environment variables (`ZITADEL_FIRSTINSTANCE_*`), including a **machine user with a PAT written to the shared bootstrap volume** (`ZITADEL_FIRSTINSTANCE_PATPATH`, `ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME`, `..._ORG_MACHINE_PAT_EXPIRATIONDATE`). The bootstrap container reads that PAT and uses the management API to create the project, the OIDC application, and the seeded users. Zitadel generates the OIDC client ID, so the bootstrap container writes the generated values (client ID, issuer) to the shared volume as an env file that `dashboard-web` sources at start. SMTP points at Mailpit through `ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_SMTP_HOST=mailpit:1025` (with `..._TLS=false`, `..._FROM`, and `ZITADEL_DEFAULTINSTANCE_DOMAINPOLICY_SMTPSENDERADDRESSMATCHESINSTANCEDOMAIN=false`), so verification and reset emails are visible at `http://localhost:8025`.
 
+**One Zitadel project for the whole solution.** A project is Zitadel's security context for one software solution, and it is the unit of token audience: a JWT access token's `aud` holds the project ID plus the client IDs of every application in the project. All four applications (`dashboard-web`, `comments-web`, `dashboard-api`, `comments-api`) live in that one project, so any user-bound token issued to a client of the solution is valid at any API of the solution, which is what Zitadel intends and what the apps rely on (§6.6). Zitadel's own authorization features (project roles, role assignments, "check role assignment on authentication", project grants, organization login policies) are not used: SpiceDB owns authorization, and the apps own policy (§9). One default organization exists because the instance needs one. With a provider that models audiences per resource instead (RFC 8707 resource indicators; Auth0's "APIs" with an `audience` parameter), each API would be its own audience and each client would request the audiences it needs at login; the apps would not change, only the bootstrap.
+
 ### 4.3 The issuer and host problem
 
 Zitadel validates that requests arrive for its configured external domain (`ZITADEL_EXTERNALDOMAIN`, `ZITADEL_EXTERNALPORT`, `ZITADEL_EXTERNALSECURE` must match the public URL, or it answers "Instance not found"), and OIDC requires the issuer string the browser is redirected to and the issuer the server discovers to be identical. In compose the browser reaches Zitadel at `localhost:8080` while the app containers reach it by service name, which breaks both. Two candidate fixes, settled by the spike in ticket 3:
@@ -97,29 +136,39 @@ Only the IdP needs the shared hostname; the app's own origin stays `http://local
 
 ### 4.4 Login flow (what `packages/auth` implements)
 
-1. `GET /auth/login` builds an authorization request: `response_type=code`, `scope=openid profile email offline_access`, PKCE `S256` (RFC 7636), fresh `state` and `nonce`, stored in a short-lived, signed, `HttpOnly` cookie; redirect to Zitadel's authorization endpoint from discovery.
+1. `GET /auth/login` builds an authorization request: `response_type=code`, `scope=openid profile email offline_access`, PKCE `S256` (RFC 7636), fresh `state` and `nonce`, stored in a short-lived, signed, `HttpOnly` cookie; redirect to the authorization endpoint found through discovery.
 2. Zitadel's login UI handles registration, password, MFA, and (later) external IdPs; it redirects back to `GET /auth/callback?code&state`.
-3. The callback verifies `state`, exchanges the code with `code_verifier`, validates the ID token (`iss`, `aud`, `exp`, `nonce`, signature against JWKS) through `openid-client`, and creates a **server-side session row** (`sessions` table: id, user id, tokens, expiry, `sid` from the ID token). The browser gets only an opaque session ID in a cookie: `HttpOnly`, `Secure` (except on plain-HTTP localhost), `SameSite=Lax`, `Path=/`.
+3. The callback verifies `state`, exchanges the code with `code_verifier`, validates the ID token (`iss`, `aud`, `exp`, `nonce`, signature against JWKS) through `openid-client`, and creates a **server-side session** through the `SessionStore`: session ID, `sub`, `sid`, the tokens, the ID token's `auth_time` and `amr` (the authentication evidence used by §9), idle and absolute expiry. The browser gets only an opaque session ID in a cookie: `HttpOnly`, `Secure` (except on plain-HTTP localhost), `SameSite=Lax`, `Path=/`.
 4. Just-in-time provisioning (§6.4) runs on the first login of a `sub`.
-5. `GET /auth/logout` deletes the session row and redirects to Zitadel's `end_session_endpoint` with `id_token_hint` and a registered `post_logout_redirect_uri`, so the IdP session ends too.
-6. Access tokens never reach the browser. In phase 2 the BFF attaches the session's access token when calling `dashboard-api`, refreshing with the refresh token when expired (rotation and reuse detection are the IdP's job).
+5. `POST /auth/logout` deletes the session and redirects to the `end_session_endpoint` with `id_token_hint` and a registered `post_logout_redirect_uri`, so the IdP session ends too.
+6. `POST /auth/backchannel-logout` receives Zitadel's logout token (OpenID Connect Back-Channel Logout 1.0): validated like an ID token (`iss`, `aud`, `iat`, `exp`, signature), must carry `events` with `http://schemas.openid.net/event/backchannel-logout` and a `sid` or `sub`, must not carry `nonce`; the sink deletes every session with that `sid` (or every session of that `sub`). Zitadel sends it to each application's registered `backchannel_logout_uri` when the user signs out. Silent re-validation on an interval remains the backstop for notifications that never arrive.
+7. Access tokens never reach the browser. A BFF attaches the session's access token when calling an API, refreshing with the refresh token when expired (rotation and reuse detection are the IdP's job).
 
-Tokens are configured as JWTs in Zitadel (application setting "Auth Token Type: JWT") so `dashboard-api` can verify them against JWKS without a network call per request; introspection (RFC 7662) is the alternative and is noted in §10.
+**`SessionStore` is an interface**, not a table: `create`, `get`, `touch`, `delete`, `deleteBySid`, `deleteByUser`, `listByUser`. Two adapters ship: in-memory for tests and **Redis** for everything else. Redis gives native expiry (idle timeout as a TTL refresh, absolute lifetime as a stored field) at the cost of two secondary indexes the adapter maintains (`sid → session`, `user → sessions`) and of persistence that must be enabled or a restart logs everyone out. A relational adapter would be a drop-in; it would need an expiry cleanup job or a partial index on `expires_at`, and it would gain trivial listing and revocation queries. The core of `packages/auth` works on the Fetch API's `Request`/`Response` and depends only on `openid-client` and `jose`; `@auth-stack/auth/next` and `@auth-stack/auth/fastify` are thin adapters, so the package assumes neither a framework nor an ORM.
 
-## 5. Resource domain and data model
+**APIs validate access tokens locally.** Zitadel issues JWT access tokens when the application's "Auth Token Type" is JWT; a resource server verifies the signature against JWKS, `iss`, `exp`, and that `aud` contains the project ID, with no network call per request. Introspection (RFC 7662, with the API application's own credentials) is the alternative Zitadel's guides lean on: one call per request, but it also catches revoked tokens and reports whether the caller is in the audience. The design takes local validation for latency and notes introspection as the revocation-aware option.
 
-A deliberately small hierarchy with enough structure for relationship-based access control to earn its place: **organization → project → document**. Projects, not folders: folders imply arbitrary nesting, which needs a recursive schema and buys nothing here.
+## 5. Resource domains and data model
 
-| Table (`packages/db`) | Columns (abridged) | Notes |
+Two small domains, each owned by one service and one package. The first is deliberately simple yet hierarchical enough for relationship-based access control to earn its place: **organization → project → document**. Projects, not folders: folders imply arbitrary nesting, which needs a recursive schema and buys nothing here. The second, **comments on documents** (phase 5), exists to prove single sign-on, single sign-out, and access across domains.
+
+### 5.1 Documents domain (`packages/documents`, database `documents`)
+
+| Table | Columns (abridged) | Notes |
 | --- | --- | --- |
 | `users` | `id` (Zitadel `sub`, PK), `email`, `display_name`, `created_at` | Mirror created just-in-time at first login; the IdP is the source of truth |
-| `organizations` | `id`, `name`, `kind` (`personal` or `shared`), `zedtoken`, `created_at` | `zedtoken` is the consistency anchor (§7) |
+| `organizations` | `id`, `name`, `kind` (`personal` or `shared`), `zedtoken`, `policy` (JSON: `require_mfa`, `max_auth_age_seconds`, `require_idp`), `created_at` | `zedtoken` is the consistency anchor (§7); `policy` holds the tenant's authentication-context floors (§9) |
 | `projects` | `id`, `organization_id`, `name`, `created_at` | |
 | `documents` | `id`, `project_id`, `organization_id` (denormalized for filtering), `name`, `value_1`, `value_2`, `updated_at`, `updated_by` | The "values" the problem statement asks to edit |
-| `sessions` | `id`, `user_id`, `sid`, `access_token`, `refresh_token`, `id_token`, `expires_at`, `created_at` | Server-side session store (§4.4) |
 | `authz_decisions` (phase 3) | `id`, `at`, `subject`, `action`, `resource_type`, `resource_id`, `organization_id`, `allowed`, `consistency`, `request_id`, `latency_ms` | Audit log of decisions (§8) |
 
-Membership and roles are **not** stored in Postgres: they are relationships in SpiceDB. The app database stores content and the consistency token; SpiceDB stores who may do what. Keeping one source of truth per concern avoids the dual-write drift that follows from storing roles in both places.
+### 5.2 Comments domain (`packages/comments`, database `comments`, phase 5)
+
+| Table | Columns (abridged) | Notes |
+| --- | --- | --- |
+| `comments` | `id`, `document_id` (foreign key across domains by value only), `organization_id`, `author_id`, `body`, `created_at`, `zedtoken` | A comment references a document it does not own; the title is fetched from `dashboard-api` (§6.6) |
+
+Sessions live in Redis behind `packages/auth` (§4.4), not in a domain database. Membership and roles are **not** stored in Postgres: they are relationships in SpiceDB. The domain databases store content, policy, and the consistency token; SpiceDB stores who may do what. Keeping one source of truth per concern avoids the dual-write drift that follows from storing roles in both places.
 
 ## 6. Authorization: SpiceDB
 
@@ -164,6 +213,16 @@ definition document {
     permission edit = editor + project->edit
     permission view = viewer + editor + project->view
 }
+
+// Phase 5: the comments domain extends the same schema and resolves through the documents domain.
+definition comment {
+    relation document: document
+    relation author: user
+
+    permission view = document->view
+    permission edit = author
+    permission delete = author + document->edit
+}
 ```
 
 Design points. Organization **members** do not see projects by inheritance; only organization **admins** do. That is what makes a project "unavailable" to a member who was not added to it, which the problem statement requires. Project roles flow down to documents; direct document shares (`document#editor`, `document#viewer`) allow the read-only and editable states to differ inside one project. Roles are named bundles of relations rather than a `role` relation with string values, so a new role is a schema change reviewed like code, and permissions stay computable by `LookupResources`.
@@ -188,6 +247,16 @@ A user who registers through Zitadel's login UI arrives at the callback with a `
 - **Edit form (GET) and save (POST):** `CheckPermission(document:<id>, edit, user:<sub>)` on the server before reading or writing. A user who posts a crafted request for a document they can only view gets `403`; one who posts for a document they cannot see gets `404` (no existence leak).
 - **Phase 2:** the same checks move into `dashboard-api`; `dashboard-web` stops calling `packages/authz` directly and the API becomes the only enforcement point for resources.
 
+### 6.6 Cross-domain access
+
+When `comments-api` needs something about a document, three different questions have three different answers.
+
+- **"May this user view document X?"** is asked of SpiceDB directly: `CheckPermission(document:X, view, user:<sub>)` with the documents organization's ZedToken. The comments schema references the documents schema (`comment#document@document`), so `comment.view` resolves through `document->view` without any call to `dashboard-api`. Permission questions never cross service boundaries as HTTP calls.
+- **"What is document X's title?"** is data, and it travels on the **user's own access token**: `comments-api` calls `dashboard-api` with the token it received, `dashboard-api` validates it (same project, so the audience is satisfied by construction) and runs its own SpiceDB check on `sub`. The user's identity and session evidence stay attached to the request end to end. Across security contexts (a different Zitadel project, or a different provider's resource) this would be token forwarding with the wrong audience, the confused-deputy pattern; within the solution's single project it is the intended model, and the README says which is which.
+- **Calls with no user** (a nightly job, a reconciliation) use a Zitadel **service user** (private-key JWT profile, or client credentials for simplicity), requesting the project audience. The receiving API authorizes the service identity itself, through relationships on a `service:<id>` subject, and never a user the caller claims to act for.
+
+Token exchange (RFC 8693) is the textbook alternative for the second case: trade the user's token for one minted for the target API, optionally with an `act` claim naming the calling service. Zitadel supports the grant but only to keep or narrow a token's audience and scope; it cannot broaden a token from one project to another, so cross-project audiences must be requested at login with `urn:zitadel:iam:org:project:id:{projectId}:aud`. Inside one project the exchange adds nothing except the `act` claim, which requires granting impersonation rights; it is documented, not built.
+
 ## 7. Consistency: ZedTokens and the New Enemy problem
 
 Authorization data is replicated and cached, so a check may run against a snapshot older than the latest write. The Zanzibar paper names two failures that follow: (1) **neglecting update order** — Alice removes Bob from a project and then adds a document; a check served from a snapshot between the two still lets Bob see the new document; (2) **applying an old ACL to new content** — Bob is removed, content is added, and Bob's check against the older snapshot passes. SpiceDB's default consistency, `minimize_latency`, permits both windows.
@@ -204,29 +273,38 @@ Every enforcement point records a **decision** (phase 3): who, what action, whic
 
 | Concern | Decision |
 | --- | --- |
-| Credentials | Never handled by the app. Zitadel stores password hashes (its default policy; bcrypt-family, configurable), rate-limits login attempts, and runs lockout and password-reset flows. The app never sees a password. |
-| Session cookie | Opaque ID to a server-side row; `HttpOnly`, `SameSite=Lax`, `Secure` outside localhost, no `Domain` attribute. Idle timeout and absolute lifetime enforced on the row. Logout deletes the row and ends the IdP session. |
+| Credentials | Never handled by the apps. Zitadel stores password hashes (its default policy; bcrypt-family, configurable), rate-limits login attempts, and runs lockout, verification, and password-reset flows. The apps never see a password. |
+| Session cookie | Opaque ID to a server-side session in Redis; `HttpOnly`, `SameSite=Lax`, `Secure` outside localhost, no `Domain` attribute. Idle timeout and absolute lifetime enforced in the store. Logout deletes the session and ends the IdP session; back-channel logout deletes it when the user signs out elsewhere. |
 | OIDC client | Authorization code + PKCE `S256`; `state` and `nonce` single-use and bound to the login attempt; exact-match redirect URIs registered in Zitadel; ID token validated by `openid-client` (`iss`, `aud`, `exp`, `nonce`, signature). Tokens never leave the server. |
 | CSRF | State-changing routes accept `POST` only, check `Origin`/`Sec-Fetch-Site` against the app origin, and (phase 4) carry a per-session CSRF token in forms. `SameSite=Lax` is the first line, not the only one. |
 | Authorization | Server-side on every read and write path (§6.5); deny by default; `404` for unseen resources, `403` for seen-but-forbidden. |
-| Input | Validated with a schema (zod) at the route boundary; document values are bounded strings; IDs are opaque. |
+| Authentication-context policies | Enforced by the apps, never by the IdP (see below). |
+| Input | Validated with a schema (zod) at the route boundary; document values and comment bodies are bounded strings; IDs are opaque. |
 | Headers | `Content-Security-Policy` (no inline scripts), `X-Content-Type-Options`, `Referrer-Policy`, `Frame-Options`/`frame-ancestors`, HSTS behind TLS (phase 4). |
-| Rate limiting | Zitadel on authentication; app-level limits on the callback and on mutations (phase 4). |
+| Rate limiting | Zitadel on authentication; app-level limits on the callback, the back-channel logout sink, and mutations (phase 4). |
 | Secrets | Development defaults committed on purpose (zero-step start); labelled insecure; `.env.example` documents each; Gitleaks in CI; production would inject from a secret store. |
 | Logging | Request IDs everywhere; no tokens, session IDs, or passwords in logs. |
 | Dependencies | Lockfile committed; `pnpm audit` in CI (non-blocking at first). |
 | Transport | Plain HTTP on localhost by design; TLS terminates at Traefik in any real deployment (Zitadel's compose overlays show the modes). |
 
+### 9.1 Authentication-context policies live in the apps
+
+Policies such as "this tenant requires MFA", "this tenant requires login through its own IdP", or "editing payroll needs a login within ten minutes" are statements about the session's quality, not about the resource's permissions, and this design enforces all of them at the application layer rather than in the IdP. The reason is the one GitHub's organization SAML model makes visible: one account can belong to several tenants with different policies, and the IdP cannot know at login time which tenant's resources a session will touch. So the policy is stored on the app-level organization (`organizations.policy`), evaluated by the resource server or BFF when a request touches that organization's resources, and when the session's evidence is insufficient the response is the step-up challenge of RFC 9470 (`401`, `WWW-Authenticate: Bearer error="insufficient_user_authentication"` with the required `acr_values` or `max_age`); the client re-authenticates at the IdP with `prompt=login` and the organization's IdP hint, then retries. A gateway can enforce only what the token alone decides (signature, audience); it never holds tenant policy.
+
+The decision has a cost and a dependency. The cost: a session that violates a tenant's floor can exist; it just cannot touch that tenant's resources, which is the same guarantee GitHub gives. The alternative, Zitadel's per-organization login policies (`ForceMFA`, external-IdP-only), would enforce at login but only for the user's home organization and only with this vendor; the design does not use them, which keeps the IdP replaceable. The dependency: the resource server needs the evidence. RFC 9068 (JWT access tokens) defines `auth_time`, `acr`, and `amr` as optional claims for exactly this purpose, and in the layered model that is an L1 evaluation criterion: *emits RFC 9068 access tokens with `auth_time`, `amr`, and `acr`*. Zitadel does not meet it out of the box: those claims appear only in its ID token, not in access tokens, userinfo, or introspection. In this project the BFF therefore keeps `auth_time` and `amr` from the ID token in the session and enforces its own app's policies there through `requireAuthContext({ maxAge, amr })` from `packages/auth`; whether a Zitadel Action can add the claims to access tokens, which would let the APIs enforce cross-app policies as designed, is a spike in phase 5, and if it cannot, the limitation is recorded in the README. Forwarding the ID token to an API as evidence is ruled out: its `aud` is the client, and an API accepting a token not minted for it is the pattern `aud` exists to prevent.
+
 ## 10. Extension paths (the questions this design is built to answer)
 
-- **Enterprise SSO (SAML, OIDC federation):** register the customer's IdP as an external identity provider on their Zitadel organization (Zitadel acts as the SAML service provider or OIDC relying party) and set the organization's login policy to require it; no app code changes. A multi-tenant SSO broker (WorkOS, Ory Polis) can sit upstream the same way, with the organization selected before redirect, which is why the IdP registry is per organization.
-- **SCIM provisioning:** a small worker consuming directory webhooks (or Zitadel's SCIM endpoint, currently a preview feature) that creates users through the management API and maps directory groups to `organization#member` and `project#<role>` relationships. This worker is the first "auth service" app the monorepo would gain.
-- **Machine-to-machine access and API keys:** client credentials (RFC 6749 §4.4) on Zitadel for services, JWT profile for private-key clients, and API keys stored by the app that exchange into short-lived tokens; all end up as `user:<id>` or `service:<id>` subjects in SpiceDB.
+- **Enterprise SSO (SAML, OIDC federation):** the customer's IdP is registered as an external identity provider in Zitadel (Zitadel acts as the SAML service provider or OIDC relying party); the app-level organization records which IdP its users must come through, and the BFF passes that as a login hint when a user heads for that organization (Zitadel accepts an IdP or organization scope on the authorization request). The requirement itself is enforced as a §9.1 policy on access, not by the IdP at login, so the apps stay vendor-neutral while the hint remains provider-specific. A multi-tenant SSO broker (WorkOS, Ory Polis) can sit upstream the same way, with the tenant selected before the redirect, which is why the IdP registry is per organization.
+- **SCIM provisioning:** a small worker consuming directory webhooks (or Zitadel's SCIM endpoint, currently a preview feature) that creates users through the management API and maps directory groups to `organization#member` and `project#<role>` relationships. This worker is the first auth-service-style app the monorepo would gain.
+- **Service-to-service access:** permission questions go to SpiceDB; data on a user's behalf travels on the user's token within the solution's security context; calls with no user use a service user with its own relationships (§6.6). Across security contexts, token exchange (RFC 8693) with an `act` claim is the textbook shape; with Zitadel it narrows but never broadens an audience, so cross-project audiences are declared at login.
+- **Machine-to-machine access and API keys:** service users on Zitadel (private-key JWT profile or client credentials) for services, and API keys stored by the app that exchange into short-lived tokens; all end up as `user:<id>` or `service:<id>` subjects in SpiceDB.
 - **Custom roles, hierarchies, ABAC:** new relations and permissions in the schema (reviewed like code); nested organizations through `organization#parent` with `parent->administer` arrows; attribute rules through SpiceDB caveats (time windows, IP ranges, plan tiers).
-- **An API gateway (L2):** Traefik ForwardAuth or Envoy `ext_authz` in front of `dashboard-api`, verifying bearer tokens and injecting the subject, so individual services stop validating tokens; configuration, not code.
-- **Logout propagation (L3):** Zitadel back-channel logout to a sink that marks sessions by `sid`; the BFF checks the mark on each request and re-validates silently on an interval.
-- **Multi-region:** SpiceDB on CockroachDB or Spanner for a global relationship store with the same ZedToken semantics; the app database partitioned by organization; the IdP replicated with Zitadel's multi-region guidance. Permission checks stay local to the region that holds the relationships, with `at_least_as_fresh` preventing cross-region staleness from becoming a New Enemy.
-- **Swapping the IdP:** everything the apps know about Zitadel is the issuer URL and a client registration; `packages/auth` works from discovery. Swapping to Auth0 or Keycloak is bootstrap work, not app work.
+- **A third application:** `packages/auth` plus one adapter, one OIDC application registered by bootstrap, one `backchannel_logout_uri`; the second application (phase 5) is the proof of how little that takes.
+- **An API gateway (L2):** Traefik ForwardAuth or Envoy `ext_authz` in front of the APIs, verifying bearer tokens and injecting the subject, so individual services stop validating tokens; configuration, not code. It cannot hold tenant policy (§9.1).
+- **Logout propagation (L3):** the back-channel logout sink is already in every BFF (§4.4); at estate scale it becomes one shared session-status service that every BFF queries, with the IdP notifying one endpoint instead of many.
+- **Multi-region:** SpiceDB on CockroachDB or Spanner for a global relationship store with the same ZedToken semantics; the domain databases partitioned by organization; Redis sessions per region with the session ID carrying its region; the IdP replicated with Zitadel's multi-region guidance. Permission checks stay local to the region that holds the relationships, with `at_least_as_fresh` preventing cross-region staleness from becoming a New Enemy.
+- **Swapping the IdP:** everything the apps know about Zitadel is the issuer URL, a client registration, and the project-shaped audience; `packages/auth` works from discovery, and tenant policy never lived in the IdP. Swapping to Auth0 or Keycloak is bootstrap work plus the audience mapping (§4.2), not app work.
 - **Swapping the authorization engine:** `packages/authz` is the only SpiceDB-aware code; OpenFGA has the same model minus snapshot tokens, so §7 would be rewritten around its consistency flag.
 
 ## 11. Phase plan
@@ -235,16 +313,19 @@ The order follows one principle: the earliest end-to-end working slice first, th
 
 | Phase | Delivers | Why in this position |
 | --- | --- | --- |
-| 0 — Foundation | Monorepo scaffold, compose stack (Postgres, Zitadel + login, Traefik, SpiceDB, Mailpit), the Zitadel spike (host mapping, one real login), bootstrap container, Tiltfile, CI skeleton | Everything else depends on a login that works from inside compose |
-| 1 — Vertical slice | SpiceDB schema and `packages/authz`, `packages/db`, `packages/auth` BFF, JIT provisioning, dashboard with the three states, edit flow with server-side enforcement, seeded users, Playwright login-and-edit test, root README v1 | **Minimum viable submission:** phase 1 plus the README satisfies every hard requirement |
-| 2 — Resource server | `dashboard-api` on Fastify verifying bearer tokens (JWKS, `iss`, `aud`); `dashboard-web` calls it with the session's access token; `packages/resources` moves behind the API | Same service code, new host: low cost, and it is the "how would you add a second app" answer |
+| 0 — Foundation | Monorepo scaffold, compose stack (Postgres, Zitadel + login, Traefik, SpiceDB, Redis, Mailpit), the Zitadel spike (host mapping, one real login), bootstrap container, Tiltfile, CI skeleton | Everything else depends on a login that works from inside compose |
+| 1 — Vertical slice | SpiceDB schema and `packages/authz`, `packages/db-core` and `packages/documents`, `packages/auth` BFF with the Redis session store, JIT provisioning, dashboard with the three states, edit flow with server-side enforcement, seeded users, Playwright login-and-edit test, root README v1 | **Minimum viable submission:** phase 1 plus the README satisfies every hard requirement |
+| 2 — Resource server | `dashboard-api` on Fastify verifying bearer tokens (JWKS, `iss`, `aud`); `dashboard-web` calls it with the session's access token; `packages/documents` moves behind the API | Same service code, new host: low cost, and it is the "how would you add a second app" answer |
 | 3 — Consistency and audit | ZedToken on organizations with `at_least_as_fresh` everywhere; `authz_decisions` table and a per-organization audit page | The design's strongest talking point, made real |
-| 4 — Hardening | CSRF tokens, security headers and CSP, rate limits, input validation audit, Gitleaks and `pnpm audit` in CI, unit and integration tests filled out, README trade-offs section | Security reviewers read this phase |
-| 5 — Observability | OpenTelemetry tracing across web, API, SpiceDB and Postgres calls; collector and Jaeger in a compose profile | Cheap once the structure exists |
-| 6 — Kubernetes | Kustomize or Helm manifests, a `kind` cluster, a second Tiltfile for Kubernetes | Production-like deployment; optional, documented if unreached |
-| 7 — Gateway | Traefik ForwardAuth or Envoy `ext_authz` in front of `dashboard-api` | Configuration-only demonstration of L2 |
-| 8 — Identity extensions | A second OIDC provider brokered through Zitadel (SSO demo); optionally a custom login UI on the Session API, or an IdP abstraction layer | Shows the extension paths in §10 running |
+| 4 — Hardening | CSRF tokens, security headers and CSP, rate limits, input validation audit, `requireAuthContext` policies on the seeded organizations, Gitleaks and `pnpm audit` in CI, unit and integration tests filled out, README trade-offs section | Security reviewers read this phase |
+| 5 — Second application | `comments-web` and `comments-api` on the platform packages; back-channel logout sink; single sign-on and single sign-out proven end to end; cross-domain access per §6.6; the Zitadel Actions spike for RFC 9068 claims | The identity story only proves itself with a second client |
+| 6 — Observability | OpenTelemetry tracing across web, APIs, SpiceDB and Postgres calls; collector and Jaeger in a compose profile | Cheap once the structure exists |
+| 7 — Kubernetes | Kustomize or Helm manifests, a `kind` cluster, a second Tiltfile for Kubernetes | Production-like deployment; optional, documented if unreached |
+| 8 — Gateway | Traefik ForwardAuth or Envoy `ext_authz` in front of the APIs | Configuration-only demonstration of L2 |
+| 9 — Identity extensions | A second OIDC provider brokered through Zitadel (SSO demo); optionally a custom login UI on the Session API | Shows the extension paths in §10 running |
 
 ## 12. Decision log
 
 > **2026-10-13:** Initial decisions recorded in this document: Zitadel over Kratos + Hydra; SpiceDB over OpenFGA and Keto; organization → project → document (projects, not folders); server-side sessions in Postgres with an opaque cookie; ZedToken stored per organization; compose first, Tilt wraps compose, Kubernetes last; TypeScript monorepo with pnpm workspaces, Jest, Playwright; minimal UI; Mailpit in compose; three seeded users plus JIT personal workspaces; development secrets committed and labelled.
+
+> **2026-10-14:** Second application (comments on documents) added as phase 5 to prove single sign-on, single sign-out, and cross-domain access; observability and later phases shift by one. Packages reshaped: per-domain packages (`documents`, `comments`) own schema, migrations, and services together; platform packages (`auth`, `authz`, `db-core`, `config`) carry no domain tables; `packages/auth` exposes a `SessionStore` interface with in-memory and Redis adapters and framework adapters for Next.js and Fastify, replacing the Postgres `sessions` table. One Zitadel project holds all applications (Zitadel's intended model; its roles, grants, and login policies are unused). Authentication-context policies (MFA, IdP, login recency) are enforced by the apps per organization with RFC 9470 step-up, not by the IdP, to keep the stack vendor-neutral; RFC 9068 claims in access tokens recorded as an L1 criterion Zitadel does not meet out of the box. Zitadel's back-channel logout confirmed as supported without a feature flag.
