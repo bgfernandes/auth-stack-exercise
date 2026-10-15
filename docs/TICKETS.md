@@ -11,7 +11,7 @@
 > - Use conventional commits; one PR per ticket, merged with a merge commit (no squash); branch named `<nn>-<slug>`.
 > - Update its **Status** line here in the same PR.
 >
-> Tickets are listed in implementation order. Phases 0–2 are fully specified; later phases are stubs that get specified with a dated note when the phase starts. Estimates are working hours including review.
+> Tickets are listed in implementation order; ticket numbers are stable identifiers, not the order (tickets 15 and 16 moved into phase 1 on 2026-10-15 and kept their numbers). Phases 0–2 are fully specified; later phases are stubs that get specified with a dated note when the phase starts. Estimates are working hours including review.
 
 ---
 
@@ -152,12 +152,12 @@
 
 **Read first:** `docs/README.md` §3.1 (ownership rules), §5, §6.5.
 
-**Description:** The tenancy service and the documents domain as packages that each own a database; both run in-process in `dashboard-web` during phase 1 and move behind their APIs in phase 2.
+**Description:** The tenancy service and the documents domain as packages that each own a database; `packages/tenancy` runs behind `tenancy-api` from phase 1 (ticket 16); `packages/documents` runs in-process in `dashboard-web` during phase 1 and moves behind `dashboard-api` in phase 2.
 
 - `packages/db-core`: `createDb(connectionString)` (Drizzle over `postgres-js`) and `runMigrations(db, folder)`; no tables.
-- `packages/tenancy`: schema for `users` and `organizations` (including `policy`; `authz_decisions` arrives in phase 3); migrations; services `provisionUser(claims)` (ticket 10 fills it in), `getOrganization(user, id)` (policy, name; `organization#view` check), `listOrganizations(user)`, `setMembership(...)` and `setPolicy(...)` (used by `tenancy-web` in phase 2); a `TenancyClient` interface with an in-process implementation now and an HTTP implementation in ticket 16.
+- `packages/tenancy`: schema for `users` and `organizations` (including `policy`; `authz_decisions` arrives in phase 3); migrations; services `provisionUser(claims)` (ticket 10 fills it in), `getOrganization(user, id)` (policy, name; `organization#view` check), `listOrganizations(user)`, `setMembership(...)` and `setPolicy(...)` (used by `tenancy-web` in phase 2); a `TenancyClient` interface with an in-process implementation for unit tests and the HTTP implementation in ticket 16.
 - `packages/documents`: schema for `projects` and `documents` (§5.2); migrations; services `listVisibleDocuments(user)`, `getDocumentForEdit(user, id)`, `updateDocument(user, id, values)`, `createExampleDocument(orgId, projectId)` (called by provisioning), each calling `packages/authz` before touching data and `TenancyClient` for the organization (ticket 11 fills them in). Seed helpers live in both packages and are invoked by bootstrap.
-- `pnpm db:migrate --filter <package>` scripts; migrations run from the owning app's container entrypoint (phase 1: `dashboard-web` runs both; from phase 2 each API runs its own) or from bootstrap; decide and record.
+- `pnpm db:migrate --filter <package>` scripts; migrations run from the owning app's container entrypoint (`tenancy-api` for tenancy; `dashboard-web` for documents in phase 1, `dashboard-api` from phase 2) or from bootstrap; decide and record.
 
 **Tests:** migrations apply on fresh databases in CI; a round-trip insert/select per table.
 
@@ -169,7 +169,7 @@
 
 **Read first:** `docs/README.md` §4.4, §9.
 
-**Description:** The BFF half of the package (the bearer half is ticket 15; the back-channel logout sink is ticket 18; the policy helper is ticket 24).
+**Description:** The BFF half of the package (the bearer half is ticket 15, which follows immediately; the back-channel logout sink is ticket 18; the policy helper is ticket 24).
 
 - Framework-agnostic core on the Fetch API: `createOidcClient(config)` from discovery (`openid-client` v6), cached per process; `beginLogin()` → authorization URL plus the `state`, `nonce`, `code_verifier` to stash in a signed, short-lived (10 min) `HttpOnly` cookie; `completeLogin(callbackUrl, stash)` → validated tokens and claims (including `auth_time`, `amr`, `sid`); failures map to typed errors (state mismatch, nonce mismatch, token invalid) that the route turns into a generic "login failed" page without leaking which check failed; `endSessionUrl(idToken, postLogoutRedirect)`.
 - `SessionStore` interface (modelled on `nextjs-auth0`'s `sessionStore`; `docs/README.md` §4.4): `create`, `get` (applies idle `30 min` and absolute `8 h` limits), `touch` (atomic conditional update: Lua script on Redis, so a logout in flight is never undone by a rolling write), `delete`, `deleteByLogoutToken({ sid, sub })`, `deleteByUser`, `listByUser`. Adapters: `createMemorySessionStore()` for tests and `createRedisSessionStore(client)` (session hash under `session:<id>` with TTL; secondary sets `sid:<sid>` and `user:<sub>`), the only dependency being an `ioredis`-compatible client passed in.
@@ -179,6 +179,30 @@
 - README of the package: how to pick a store; the note that a relational adapter needs an expiry cleanup job or a partial index on `expires_at`.
 
 **Tests:** unit tests with a fake OP (`nock` or `openid-client`'s test helpers): happy path, each failure path, cookie attributes; the `SessionStore` contract test run against both adapters (Redis through the compose service in CI), including idle and absolute expiry, `deleteByLogoutToken` with `sid` only, `sub` only, and both, and the logout-versus-touch race.
+
+**Status:** Open.
+
+---
+
+### Ticket 15 — `packages/auth` bearer verification and scope gate (`@auth-stack/auth/fastify`) (2.5 h)
+
+**Read first:** `docs/README.md` §4.4 (last paragraphs), §6.7.
+
+**Description:** The resource-server half of `packages/auth`, needed by `tenancy-api` in phase 1 and by every later API. A Fastify plugin that verifies `Authorization: Bearer` JWTs against Zitadel's JWKS (`jose`), checks `iss`, `exp`, and that `aud` contains the project ID (bootstrap registers each API as an API application in the same project), and puts the subject on the request. **Scope gate** (`docs/README.md` §6.7): `requireScope(...)` per route, resolving effective scopes through the `ScopeResolver` interface, here the `packages/authz`-backed resolver (`LookupResources(api_scope, use, client:<azp>)`, cached per client; Zitadel's JWT access tokens carry `azp` and no `scope` claim); first-party clients are registered with every scope; failure is `403` with `WWW-Authenticate: Bearer error="insufficient_scope"`. Request IDs and structured logging helpers shared by the APIs.
+
+**Tests:** unit tests for the plugin (valid, expired, wrong audience, wrong issuer, malformed, missing scope, scope from registry vs from claim) with a test signer.
+
+**Status:** Open.
+
+---
+
+### Ticket 16 — `tenancy-api` on Fastify and the HTTP `TenancyClient` (3 h)
+
+**Read first:** `docs/README.md` §3.1, §5.1, §6.4, §6.6 (tenancy table).
+
+**Description:** `apps/tenancy-api` over `packages/tenancy`, on the bearer plugin and scope gate from ticket 15 (scopes `tenancy:read`, `tenancy:write`), running as its own process from phase 1 because a dedicated tenancy service is part of what the project demonstrates: `POST /me/provision` (idempotent, §6.4), `GET /me/organizations`, `GET /organizations/:id` (name, `is_personal`, policy; `organization#view`), writing organization relationships to SpiceDB at `fully_consistent`. Membership and policy endpoints arrive with `tenancy-web` (ticket 17). The HTTP `TenancyClient` in `packages/tenancy` with the per-organization cache (60 s); the in-process implementation stays for unit tests only. Health endpoint, Dockerfile, compose service, bootstrap registers the API application and its scopes.
+
+**Tests:** route tests with a test signer; `TenancyClient` contract test against both implementations.
 
 **Status:** Open.
 
@@ -200,9 +224,9 @@
 
 **Read first:** `docs/README.md` §6.4.
 
-**Description:** In the callback, after session creation: `TenancyClient.provisionUser(claims)`; if `users` has no row for `sub`, tenancy runs the provisioning transaction from §6.4, creating the personal organization and, through `packages/documents`, the "Personal" project and example document, writing the relationships, and returning the ZedToken for the BFF to store in the session. Idempotent under a double callback (unique constraint on `users.id`; retry-safe).
+**Description:** In the callback, after session creation: `TenancyClient.provisionUser(claims)` over HTTP to `tenancy-api` with the user's access token; if `users` has no row for `sub`, tenancy runs the provisioning transaction from §6.4, creating the personal organization and, through `packages/documents`, the "Personal" project and example document, writing the relationships, and returning the ZedToken for the BFF to store in the session. Idempotent and race-safe per §6.4: `INSERT ... ON CONFLICT DO NOTHING` on `users.id` with a read of the winner, the partial unique index on `organizations (owner_id) WHERE is_personal`, and `TOUCH` semantics on the relationship writes; the call runs on every login callback and returns the existing user after the first.
 
-**Tests:** integration test: a new `sub` gets exactly one personal organization, one project, one document, and `check(document, edit, user)` allows; a second call creates nothing.
+**Tests:** integration test: a new `sub` gets exactly one personal organization, one project, one document, and `check(document, edit, user)` allows; a second call creates nothing; ten concurrent first calls for the same `sub` leave exactly one of each.
 
 **Status:** Open.
 
@@ -260,37 +284,25 @@
 
 ---
 
-## Phase 2 — Services: tenancy-api, dashboard-api, tenancy-web, single sign-on and sign-out
+## Phase 2 — Services: dashboard-api, tenancy-web, single sign-on and sign-out
 
-### Ticket 15 — `dashboard-api` on Fastify with bearer-token verification and the scope gate (3 h)
+### Ticket 19a — `dashboard-api` on Fastify (2 h)
 
-**Read first:** `docs/README.md` §3.1, §4.4 (last paragraphs), §6.5, §6.7.
+**Read first:** `docs/README.md` §3.1, §6.5, §6.7.
 
-**Description:** `apps/dashboard-api` exposing `GET /documents`, `GET /documents/:id`, `PUT /documents/:id` over `packages/documents`. The bearer half of `packages/auth`, exported as `@auth-stack/auth/fastify`: a plugin that verifies `Authorization: Bearer` JWTs against Zitadel's JWKS (`jose`), checks `iss`, `exp`, and that `aud` contains the project ID (bootstrap registers `dashboard-api` as an API application in the same project), and puts the subject on the request. **Scope gate** (`docs/README.md` §6.7): `requireScope(...)` per route (`documents:read` on `GET`, `documents:write` on `PUT`), resolving effective scopes through the `ScopeResolver` interface, here the `packages/authz`-backed resolver (`LookupResources(api_scope, use, client:<azp>)`, cached per client; Zitadel's JWT access tokens carry `azp` and no `scope` claim); first-party clients are registered with every scope; failure is `403` with `WWW-Authenticate: Bearer error="insufficient_scope"`. Health endpoint, request IDs, structured logs, Dockerfile, compose service. Organization data comes through `TenancyClient` (in-process until ticket 16 lands, then HTTP).
+**Description:** `apps/dashboard-api` exposing `GET /documents`, `GET /documents/:id`, `PUT /documents/:id` over `packages/documents`, on the bearer plugin and scope gate from ticket 15 (`documents:read` on `GET`, `documents:write` on `PUT`). Organization data through the HTTP `TenancyClient`. Health endpoint, Dockerfile, compose service; bootstrap registers the API application and its scopes.
 
-**Tests:** unit tests for the plugin (valid, expired, wrong audience, wrong issuer, malformed, missing scope, scope from registry vs from claim); integration test for the routes with a token minted by a test signer.
-
-**Status:** Open.
-
----
-
-### Ticket 16 — `tenancy-api` on Fastify and the HTTP `TenancyClient` (3 h)
-
-**Read first:** `docs/README.md` §3.1, §5.1, §6.6 (tenancy table), §7.
-
-**Description:** `apps/tenancy-api` over `packages/tenancy`, reusing the bearer plugin and scope gate from ticket 15 (scopes `tenancy:read`, `tenancy:write`): `POST /me/provision`, `GET /me/organizations`, `GET /organizations/:id` (name, `is_personal`, policy; `organization#view`), `GET|PUT /organizations/:id/members` and `PUT /organizations/:id/policy` (`organization#administer`), writing organization relationships to SpiceDB at `fully_consistent`. The HTTP `TenancyClient` in `packages/tenancy` with the per-organization cache (60 s). `dashboard-api` and `dashboard-web` switch to it; the in-process implementation remains for tests.
-
-**Tests:** route tests with a test signer; `TenancyClient` contract test against both implementations.
+**Tests:** integration test for the routes with a token minted by a test signer, including the `403`/`404` cases of §6.5.
 
 **Status:** Open.
 
 ---
 
-### Ticket 17 — `tenancy-web`: organizations, members, policy (2 h)
+### Ticket 17 — `tenancy-web`: organizations, members, policy (2.5 h)
 
 **Read first:** `docs/README.md` §3.1, §6.8, §9.1.
 
-**Description:** A second Next.js app on `packages/auth` plus the `next` adapter, its own OIDC application and `backchannel_logout_uri` registered by bootstrap: `/organizations` (mine), `/organizations/[id]` (member list with role toggle and remove, for admins; read-only list for members, which is also the share picker's source; policy form: require MFA, maximum login age, required IdP). No add-member form: joining is by invitation (ticket 17a). Every action goes through `tenancy-api` with the user's token. Minimal UI; the point of the ticket is how little the second client contains, and the README says so.
+**Description:** `tenancy-api` gains `GET|PUT /organizations/:id/members` and `PUT /organizations/:id/policy` (`organization#administer`). A second Next.js app on `packages/auth` plus the `next` adapter, its own OIDC application and `backchannel_logout_uri` registered by bootstrap: `/organizations` (mine), `/organizations/[id]` (member list with role toggle and remove, for admins; read-only list for members, which is also the share picker's source; policy form: require MFA, maximum login age, required IdP). No add-member form: joining is by invitation (ticket 17a). Every action goes through `tenancy-api` with the user's token. Minimal UI; the point of the ticket is how little the second client contains, and the README says so.
 
 **Acceptance criteria:** Alice demotes Bob to member and back; a member cannot open the policy form; Carol sees the member list but no controls.
 
@@ -322,11 +334,11 @@
 
 ---
 
-### Ticket 19 — `dashboard-web` calls the APIs with the session's access token (2 h)
+### Ticket 19 — `dashboard-web` calls `dashboard-api` with the session's access token (2 h)
 
 **Read first:** `docs/README.md` §4.4.
 
-**Description:** Replace direct `packages/documents` and in-process tenancy calls in the web app with HTTP clients to `dashboard-api` and `tenancy-api` that attach the session's access token, refresh it with the refresh token when expired (updating the session), and map `401/403/404` to the existing pages. `packages/documents` is imported only by `dashboard-api` from here on. The three-state behaviour and the Playwright suite must be unchanged.
+**Description:** Replace direct `packages/documents` calls in the web app with an HTTP client to `dashboard-api` that attaches the session's access token (tenancy has been over HTTP since ticket 16), refresh it with the refresh token when expired (updating the session), and map `401/403/404` to the existing pages. `packages/documents` is imported only by `dashboard-api` from here on. The three-state behaviour and the Playwright suite must be unchanged.
 
 **Acceptance criteria:** Playwright green; the web container has no SpiceDB or domain-database connection any more (only Redis for sessions).
 
