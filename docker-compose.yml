@@ -263,6 +263,39 @@ services:
     networks:
       - auth-stack
 
+  # Apps profile: the containerized apps, for the reviewer path where everything runs in compose.
+  # `docker compose --profile apps up -d --wait --build`.
+  dashboard-web:
+    profiles:
+      - apps
+    build:
+      context: .
+      dockerfile: apps/dashboard-web/Dockerfile
+    image: auth-stack/dashboard-web:dev
+    restart: unless-stopped
+    ports:
+      # http://dashboard.localtest.me:3000 (one hostname per app; see docker/README.md)
+      - '3000:3000'
+    # Same Zitadel URL as the browser (docs/README.md §4.3, option (a)): the hostname maps to the host, where
+    # Traefik publishes port 8080.
+    extra_hosts:
+      - auth.localtest.me:host-gateway
+    volumes:
+      # Generated configuration (OIDC client ID and issuer), written by the registration script of ticket 3 and
+      # by the bootstrap container from ticket 4.
+      - ./.local/config:/config:ro
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--spider', 'http://127.0.0.1:3000/']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    networks:
+      - auth-stack
+    depends_on:
+      proxy:
+        condition: service_healthy
+
   # Tools profile: not started by `up`. `pnpm authz:zed <args>` runs SpiceDB's CLI against the stack.
   zed:
     image: ${ZED_IMAGE}
