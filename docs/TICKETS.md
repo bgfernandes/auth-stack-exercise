@@ -173,7 +173,7 @@
 
 - Framework-agnostic core on the Fetch API: `createOidcClient(config)` from discovery (`openid-client` v6), cached per process; `beginLogin()` → authorization URL plus the `state`, `nonce`, `code_verifier` to stash in a signed, short-lived (10 min) `HttpOnly` cookie; `completeLogin(callbackUrl, stash)` → validated tokens and claims (including `auth_time`, `amr`, `sid`); failures map to typed errors (state mismatch, nonce mismatch, token invalid) that the route turns into a generic "login failed" page without leaking which check failed; `endSessionUrl(idToken, postLogoutRedirect)`.
 - `SessionStore` interface (modelled on `nextjs-auth0`'s `sessionStore`; `docs/README.md` §4.4): `create`, `get` (applies idle `30 min` and absolute `8 h` limits), `touch` (atomic conditional update: Lua script on Redis, so a logout in flight is never undone by a rolling write), `delete`, `deleteByLogoutToken({ sid, sub })`, `deleteByUser`, `listByUser`. Adapters: `createMemorySessionStore()` for tests and `createRedisSessionStore(client)` (session hash under `session:<id>` with TTL; secondary sets `sid:<sid>` and `user:<sub>`), the only dependency being an `ioredis`-compatible client passed in.
-- Cookie helpers setting `HttpOnly`, `SameSite=Lax`, `Secure` when the app URL is https, `Path=/`.
+- Cookie helpers setting `HttpOnly`, `SameSite=Lax`, `Secure` when the app URL is https, `Path=/`; an `assertSameOrigin(request)` helper (`Origin`, falling back to `Sec-Fetch-Site`) for state-changing route handlers, since Next.js protects Server Actions but not route handlers (§9).
 - Subpath export `@auth-stack/auth/next`: route-handler helpers bound to `cookies()` and `NextResponse`.
 - No tokens or session IDs in logs; a `redact()` helper used by every log call.
 - README of the package: how to pick a store; the note that a relational adapter needs an expiry cleanup job or a partial index on `expires_at`.
@@ -240,7 +240,7 @@
 
 - `packages/documents` services: `listVisibleDocuments(user, consistency)` (one `lookupResources(document, view, user)` → join IDs to `documents` rows with project names and, through `TenancyClient`, organization names → one `bulkCheck` of `edit` over the rows, both at the listing consistency: `minimize_latency`, or `at_least_as_fresh` with the session token when the caller passes one), `getDocumentForEdit(user, id)` (check `edit`; `view`-only → `403`; neither → `404`), `updateDocument(user, id, values)` (same check at `fully_consistent`, then update `value_1`, `value_2`, `updated_by`).
 - `/dashboard` renders one row per document grouped by organization and project, with "Edit" or a disabled "Read-only" marker.
-- `/documents/[id]/edit` renders the form (server component) and a server action or `POST` route handler that validates input with zod, calls `updateDocument`, and redirects back with a flash message. Forbidden and not-found states render proper pages.
+- `/documents/[id]/edit` renders the form (server component) and a Server Action (for Next.js's built-in origin check, §9) that validates input with zod, calls `updateDocument`, and redirects back with a flash message. Forbidden and not-found states render proper pages.
 
 **Acceptance criteria:** with the seeded users (ticket 12): Alice edits everything; Bob edits Marketing and never sees Finance; Carol edits Launch plan, sees Budget read-only, never sees Payroll; a `curl` `POST` to Budget's edit route with Carol's cookie returns `403`; to Payroll returns `404`.
 
@@ -378,7 +378,7 @@ Apply `docs/README.md` §7.3 everywhere: listings at `minimize_latency`, every w
 
 ### Ticket 23 — CSRF tokens, security headers, CSP, rate limits (3 h)
 
-Per-session CSRF token in forms and server actions; `Origin`/`Sec-Fetch-Site` checks; headers per `docs/README.md` §9 in `next.config.ts` and a Fastify hook; `@fastify/rate-limit` on mutations; a small token bucket on the callback route and the back-channel logout sink.
+Per-session synchronizer token in forms (the origin checks exist since phase 1); headers per `docs/README.md` §9 in `next.config.ts` and a Fastify hook; `@fastify/rate-limit` on mutations; a small token bucket on the callback route and the back-channel logout sink.
 
 **Status:** Open.
 
