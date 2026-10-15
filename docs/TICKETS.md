@@ -44,7 +44,13 @@
 
 **Acceptance criteria:** `pnpm install`, `pnpm lint`, `pnpm format:check`, `pnpm type-check`, `pnpm test` all pass on a clean clone and in CI; `pnpm -r exec tsc --noEmit` resolves cross-package imports through workspace links.
 
-**Status:** Open.
+> **2026-10-15:** Pins chosen at implementation time: Node 22.23.3; pnpm 10.34.6 (pnpm 12.11.2 was the latest major, but the 10.x line still receives patches and is the one whose behaviour is known; moving is a one-line change in `mise.toml` and `packageManager`, which must stay equal because pnpm switches itself to the `packageManager` version); TypeScript 5.9.3 (typescript-eslint 8 supports `<6.1`, so the 7.x native compiler is outside the lint toolchain's range); ESLint 10.12.0 (ESLint 9 is end-of-life; the React plugins that `eslint-config-next` pulls in declare peer support up to 9 and run on 10, so the warning is silenced through `peerDependencyRules` in `pnpm-workspace.yaml`); Jest 30 with `@swc/jest`.
+
+> **2026-10-15:** Workspace packages are consumed from source (`exports` → `src/index.ts`, no build step in packages); the decision and its cost are in `docs/README.md` §12. `packages/config` has no `src/index.ts`: it holds only the tsconfig and ESLint presets, and its own `tsconfig.json` type-checks the ESLint preset (`checkJs`) so that `pnpm -r exec tsc --noEmit` covers it. The shared tsconfig lives there (`packages/config/tsconfig/base.json`, no root `tsconfig.base.json`); the root `tsconfig.json` covers only the root config files, so editors and ESLint have a project for them, and `type-check` includes the workspace root and, beyond the three options the ticket names, turns on `exactOptionalPropertyTypes`, `verbatimModuleSyntax`, `noImplicitOverride`, and `noFallthroughCasesInSwitch`; `exactOptionalPropertyTypes` is the one that most often argues with third-party types and can be dropped in the ticket that first hits it. Gitleaks runs as its own `secrets` job next to `checks`, since it needs the full history and no Node.
+
+> **2026-10-15:** `eslint-config-next` is installed in `packages/config` but switched off (`nextjs: false` in `eslint.config.mjs`) because it requires the `next` package at import time; ticket 3 turns it on when the first web app installs Next. `test:e2e` is a placeholder that fails with a pointer to ticket 13, so it can never pass by accident. Prettier ignores Markdown so that markdownlint stays the single authority on the docs.
+
+**Status:** Done (2026-10-15).
 
 ---
 
@@ -87,6 +93,8 @@
 
 **Acceptance criteria:** a browser on the host logs in through Zitadel and lands on a page rendered by the containerized app showing `sub`, `email`, `iss`; the same works after `docker compose down -v && up`; the chosen host strategy is written down.
 
+> **2026-10-15:** This ticket also turns on the Next.js ESLint preset (`nextjs: true` in `eslint.config.mjs`) once `next` is installed, and gives the app a `tsconfig.json` extending `@auth-stack/config/tsconfig/next.json` (ticket 1).
+
 **Status:** Open.
 
 ---
@@ -120,7 +128,7 @@
 
 **Description:**
 
-- `Tiltfile` using `docker_compose('./docker-compose.yml')` for the infrastructure (every service outside the `apps` profile, so no containerized app competes for the ports) and `local_resource` entries that run `pnpm --filter dashboard-web dev` (and later the APIs) on the host, loading `./.local/config/<app>.env` plus host-side connection strings (`localhost:5432`, `localhost:6379`, `localhost:50051`), so `tilt up` is the one-command developer loop. Document `tilt up` and plain `docker compose --profile apps up` in the root README.
+- `Tiltfile` using `docker_compose('./docker-compose.yml')` for the infrastructure (every service outside the `apps` profile, so no containerized app competes for the ports) and `local_resource` entries that run `pnpm --filter dashboard-web dev` (and later the APIs) on the host, loading `./.local/config/<app>.env` plus host-side connection strings (`localhost:5432`, `localhost:6379`, `localhost:50051`), so `tilt up` is the one-command developer loop. Document `tilt up` and plain `docker compose --profile apps up` in the root README's Development section.
 - CI additions to `ci.yml` (the `checks` job exists since ticket 1): `docker compose config` validation, and an `integration` job that starts the infrastructure with `docker compose up -d --wait` (no `apps` profile) and runs `test:integration`, which tickets 6, 7, and 8 populate. Playwright and the full-stack smoke test are added in ticket 13.
 
 **Acceptance criteria:** both CI jobs are green on `main`; `tilt up` starts the infra and the web app; `tilt down` leaves nothing running.
@@ -280,6 +288,8 @@
 **Description:** Write the human-readable README: what this is, architecture diagram and a short tour of the repo, how to run (compose; Tilt), the seeded users table, how to try the three states, how authorization and consistency work in two paragraphs each, the security posture summary, **trade-offs, shortcuts, and gaps** (an explicit list, updated every phase), and **future work** (every unreached phase, from `docs/README.md` §11). Link to `docs/README.md` for the full design.
 
 **Acceptance criteria:** a reader who has never seen the repo can run it and see the three states in under ten minutes following only the README. With ticket 14 merged, the submission is viable.
+
+> **2026-10-15:** The "how to run" part is no longer this ticket's: the root README's **Development** section is kept current by every ticket that changes the local setup (rule in `CLAUDE.md`), starting with ticket 1. Ticket 14 reviews that section for a first-time reader rather than writing it.
 
 **Status:** Open.
 
