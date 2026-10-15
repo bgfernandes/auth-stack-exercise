@@ -1,0 +1,15 @@
+{
+  "name": "auth-stack-exercise",
+  "version": "1.0.0",
+  "description": "Reference IAM stack: OIDC login via Zitadel, fine-grained authorization with SpiceDB, Next.js + Fastify TypeScript monorepo.",
+  "scripts": {
+    "lint:md": "markdownlint-cli2",
+    "lint:md:fix": "markdownlint-cli2 --fix"
+  },
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "markdownlint-cli2": "^0.23.3"
+  },
+  "private": true,
+  "packageManager": "pnpm@9.15.3"
+}
