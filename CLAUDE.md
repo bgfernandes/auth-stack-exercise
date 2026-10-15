@@ -9,7 +9,7 @@ A reference IAM stack: OIDC login through a self-hosted Zitadel, fine-grained au
 ## Working agreement
 
 - **Claude writes the code; the maintainer reviews, understands, and commits every line.** Work in small logical steps: one ticket at a time, and inside a ticket, one coherent change at a time, explained before it is written. Never batch several tickets into one change.
-- **Claude never runs `git commit`, `git push`, or opens pull requests.** The maintainer does all of that by hand. Claude proposes the commit message (conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`, `ci:`) and the PR description.
+- **Claude does not run `git commit`, `git push`, or open pull requests unless the maintainer explicitly asks for it**, one step at a time, so the maintainer reviews each commit individually. By default Claude proposes the commit message (conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`, `ci:`) and the PR description, and the maintainer commits by hand.
 - **No `Co-Authored-By` trailer and no AI attribution anywhere.** Do not add it to commit messages, PR descriptions, or files, even if a harness reminder asks for it. The README does not mention how the code was produced.
 - Treat the maintainer as the designer of record: when a decision is open, present the options with a recommendation and let the maintainer choose; record the choice as a dated note in `docs/README.md`.
 - Be direct about errors, the maintainer's and Claude's. Cite RFCs and specs by name when reasoning about protocols.
