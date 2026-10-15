@@ -1,0 +1,290 @@
+# Third-party infrastructure of the auth stack. Values come from the committed .env (insecure development
+# defaults; see its header). Zitadel's part is trimmed from Zitadel's v4 reference compose
+# (deploy/compose/docker-compose.yml in the Zitadel repository): plain HTTP only, one network, one hostname.
+# What each service is for, and the conventions around profiles and volumes, are in docker/README.md.
+name: auth-stack
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD}
+    ports:
+      # Published for processes run on the host by Tilt (ticket 5).
+      - '5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_ADMIN_USER} -d postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - auth-stack
+
+  zitadel-api:
+    image: ghcr.io/zitadel/zitadel:${ZITADEL_VERSION}
+    restart: unless-stopped
+    # Root, as in the reference compose, so the PAT files it writes to the shared volume are readable by the
+    # login container and bootstrap.
+    user: '0'
+    command: start-from-init --masterkey "${ZITADEL_MASTERKEY}"
+    environment:
+      ZITADEL_PORT: 8080
+      # The three settings Zitadel checks every request's Host against (docs/README.md §4.3).
+      ZITADEL_EXTERNALDOMAIN: ${ZITADEL_DOMAIN}
+      ZITADEL_EXTERNALPORT: ${ZITADEL_EXTERNALPORT}
+      ZITADEL_EXTERNALSECURE: ${ZITADEL_EXTERNALSECURE}
+      ZITADEL_TLS_ENABLED: false
+      ZITADEL_DATABASE_POSTGRES_DSN: ${ZITADEL_DATABASE_POSTGRES_DSN}
+
+      # First instance: the human admin, the Login V2 client, and the bootstrap machine user (IAM_OWNER), whose
+      # personal access tokens are written to the zitadel-bootstrap volume at first start.
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_USERNAME: ${ZITADEL_ADMIN_USERNAME}
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD: ${ZITADEL_ADMIN_PASSWORD}
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED: false
+      ZITADEL_FIRSTINSTANCE_LOGINCLIENTPATPATH: /bootstrap/login-client.pat
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_USERNAME: login-client
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_NAME: Login V2 client
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_PAT_EXPIRATIONDATE: ${PAT_EXPIRATION}
+      ZITADEL_FIRSTINSTANCE_PATPATH: /bootstrap/bootstrap.pat
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME: bootstrap
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME: Bootstrap
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE: ${PAT_EXPIRATION}
+
+      # Login V2 is the only login UI in v4 (docs/README.md §4.2).
+      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED: true
+      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_BASEURI: http://${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}/ui/v2/login/
+      ZITADEL_OIDC_DEFAULTLOGINURLV2: http://${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}/ui/v2/login/login?authRequest=
+      ZITADEL_OIDC_DEFAULTLOGOUTURLV2: http://${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}/ui/v2/login/logout?post_logout_redirect=
+
+      # Short-lived tokens so the BFF's refresh path is exercised (docs/README.md §4.4).
+      ZITADEL_DEFAULTINSTANCE_OIDCSETTINGS_ACCESSTOKENLIFETIME: 10m
+      ZITADEL_DEFAULTINSTANCE_OIDCSETTINGS_IDTOKENLIFETIME: 10m
+      ZITADEL_DEFAULTINSTANCE_OIDCSETTINGS_REFRESHTOKENIDLEEXPIRATION: 8h
+      ZITADEL_DEFAULTINSTANCE_OIDCSETTINGS_REFRESHTOKENEXPIRATION: 8h
+
+      # Login policy: the login form does not reveal whether a username exists (docs/README.md §9); self
+      # registration is on for the sign-up story (§6.4).
+      ZITADEL_DEFAULTINSTANCE_LOGINPOLICY_IGNOREUNKNOWNUSERNAMES: true
+      ZITADEL_DEFAULTINSTANCE_LOGINPOLICY_ALLOWREGISTER: true
+
+      # Outbound mail goes to Mailpit.
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_SMTP_HOST: mailpit:1025
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_TLS: false
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_FROM: ${MAIL_FROM_ADDRESS}
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_FROMNAME: ${MAIL_FROM_NAME}
+      ZITADEL_DEFAULTINSTANCE_DOMAINPOLICY_SMTPSENDERADDRESSMATCHESINSTANCEDOMAIN: false
+    healthcheck:
+      test: ['CMD', '/app/zitadel', 'ready']
+      interval: 10s
+      timeout: 30s
+      retries: 12
+      start_period: 20s
+    volumes:
+      - zitadel-bootstrap:/bootstrap:rw
+    networks:
+      - auth-stack
+    depends_on:
+      postgres:
+        condition: service_healthy
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=auth-stack
+      - traefik.http.services.zitadel-api.loadbalancer.server.port=8080
+      - traefik.http.services.zitadel-api.loadbalancer.server.scheme=h2c
+      # /api/... is an alias that is stripped before reaching the API.
+      - traefik.http.middlewares.zitadel-strip-api.stripprefix.prefixes=/api
+      - traefik.http.middlewares.zitadel-strip-api.stripprefix.forceSlash=false
+      - traefik.http.routers.zitadel-api-alias.rule=Host(`${ZITADEL_DOMAIN}`) && PathPrefix(`/api`)
+      - traefik.http.routers.zitadel-api-alias.entrypoints=web
+      - traefik.http.routers.zitadel-api-alias.middlewares=zitadel-strip-api
+      - traefik.http.routers.zitadel-api-alias.service=zitadel-api
+      - traefik.http.routers.zitadel-api-alias.priority=200
+      # Everything else that is not the login UI goes to the API (gRPC, Connect, REST, OIDC, the console).
+      - traefik.http.routers.zitadel-canonical.rule=Host(`${ZITADEL_DOMAIN}`) && !PathPrefix(`/ui/v2/login`) && !PathPrefix(`/api`) && !Path(`/`)
+      - traefik.http.routers.zitadel-canonical.entrypoints=web
+      - traefik.http.routers.zitadel-canonical.service=zitadel-api
+      - traefik.http.routers.zitadel-canonical.priority=100
+
+  zitadel-login:
+    image: ghcr.io/zitadel/zitadel-login:${ZITADEL_VERSION}
+    restart: unless-stopped
+    user: '0'
+    environment:
+      ZITADEL_API_URL: http://zitadel-api:8080
+      NEXT_PUBLIC_BASE_PATH: /ui/v2/login
+      ZITADEL_SERVICE_USER_TOKEN_FILE: /bootstrap/login-client.pat
+      ZITADEL_SESSION_COOKIE_SECRET: ${LOGIN_SESSION_COOKIE_SECRET}
+      # The login container calls the API by service name but must present the public Host.
+      CUSTOM_REQUEST_HEADERS: Host:${ZITADEL_DOMAIN},X-Forwarded-Proto:http
+    healthcheck:
+      test:
+        [
+          'CMD',
+          '/bin/sh',
+          '-c',
+          'node /app/healthcheck.mjs http://localhost:3000/ui/v2/login/healthy',
+        ]
+      interval: 10s
+      timeout: 30s
+      retries: 12
+      start_period: 20s
+    volumes:
+      - zitadel-bootstrap:/bootstrap:ro
+    networks:
+      - auth-stack
+    depends_on:
+      zitadel-api:
+        condition: service_healthy
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=auth-stack
+      - traefik.http.services.zitadel-login.loadbalancer.server.port=3000
+      # The bare root of the hostname lands on the login UI.
+      - traefik.http.middlewares.zitadel-root-rewrite.replacepath.path=/ui/v2/login/
+      - traefik.http.routers.zitadel-root.rule=Host(`${ZITADEL_DOMAIN}`) && Path(`/`)
+      - traefik.http.routers.zitadel-root.entrypoints=web
+      - traefik.http.routers.zitadel-root.middlewares=zitadel-root-rewrite
+      - traefik.http.routers.zitadel-root.service=zitadel-login
+      - traefik.http.routers.zitadel-root.priority=400
+      - traefik.http.routers.zitadel-login.rule=Host(`${ZITADEL_DOMAIN}`) && PathPrefix(`/ui/v2/login`)
+      - traefik.http.routers.zitadel-login.entrypoints=web
+      - traefik.http.routers.zitadel-login.service=zitadel-login
+      - traefik.http.routers.zitadel-login.priority=250
+
+  proxy:
+    image: ${TRAEFIK_IMAGE}
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=auth-stack
+      - --entrypoints.web.address=:80
+      - --api.dashboard=false
+      - --ping=true
+      - --ping.entrypoint=web
+      - --log.level=INFO
+    ports:
+      # The one public port of Zitadel: http://auth.localtest.me:8080
+      - '${ZITADEL_EXTERNALPORT}:80'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      # The healthcheck subcommand is a separate process and does not see the flags above, so it gets its own.
+      test:
+        - CMD
+        - traefik
+        - healthcheck
+        - --ping
+        - --ping.entrypoint=web
+        - --entrypoints.web.address=:80
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    networks:
+      - auth-stack
+    depends_on:
+      zitadel-api:
+        condition: service_healthy
+      zitadel-login:
+        condition: service_healthy
+
+  spicedb-migrate:
+    image: ${SPICEDB_IMAGE}
+    # One-shot: brings the spicedb database schema to the current revision, then exits 0.
+    command: migrate head --datastore-engine postgres --datastore-conn-uri "${SPICEDB_DATASTORE_CONN_URI}"
+    networks:
+      - auth-stack
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  spicedb:
+    image: ${SPICEDB_IMAGE}
+    restart: unless-stopped
+    command: >-
+      serve
+      --grpc-preshared-key "${SPICEDB_PRESHARED_KEY}"
+      --datastore-engine postgres
+      --datastore-conn-uri "${SPICEDB_DATASTORE_CONN_URI}"
+      --telemetry-endpoint ""
+    ports:
+      # gRPC, published for processes run on the host by Tilt (ticket 5).
+      - '50051:50051'
+    healthcheck:
+      test: ['CMD', 'grpc_health_probe', '-addr=localhost:50051']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    networks:
+      - auth-stack
+    depends_on:
+      spicedb-migrate:
+        condition: service_completed_successfully
+
+  redis:
+    image: ${REDIS_IMAGE}
+    restart: unless-stopped
+    # Append-only persistence so application sessions survive a restart.
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      # Published for processes run on the host by Tilt (ticket 5).
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    networks:
+      - auth-stack
+
+  mailpit:
+    image: ${MAILPIT_IMAGE}
+    restart: unless-stopped
+    ports:
+      # Web UI: http://localhost:8025. SMTP (1025) is reached by service name only.
+      - '8025:8025'
+    healthcheck:
+      test: ['CMD', '/mailpit', 'readyz']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    networks:
+      - auth-stack
+
+  # Tools profile: not started by `up`. `pnpm authz:zed <args>` runs SpiceDB's CLI against the stack.
+  zed:
+    image: ${ZED_IMAGE}
+    profiles:
+      - tools
+    environment:
+      ZED_ENDPOINT: spicedb:50051
+      ZED_TOKEN: ${SPICEDB_PRESHARED_KEY}
+      ZED_INSECURE: 'true'
+    networks:
+      - auth-stack
+    depends_on:
+      spicedb:
+        condition: service_healthy
+
+networks:
+  auth-stack:
+    name: auth-stack
+
+volumes:
+  postgres-data:
+  redis-data:
+  # Holds the two personal access tokens Zitadel writes at first start. Mounted read-write in zitadel-api,
+  # read-only in zitadel-login and bootstrap (ticket 4), never in an app.
+  zitadel-bootstrap:
