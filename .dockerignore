@@ -1,0 +1,17 @@
+# Keep images small and builds reproducible: nothing here is needed to build an app image.
+.git/
+.github/
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.next/
+**/.next/
+coverage/
+playwright-report/
+test-results/
+.local/
+docs/
+*.md
+.eslintcache
+.DS_Store
