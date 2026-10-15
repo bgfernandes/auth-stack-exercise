@@ -12,7 +12,8 @@
     "type-check": "pnpm -r --include-workspace-root exec tsc --noEmit",
     "test": "jest --selectProjects unit",
     "test:integration": "jest --selectProjects integration --passWithNoTests",
-    "test:e2e": "node -e \"console.error('test:e2e: Playwright arrives in ticket 13'); process.exit(1)\""
+    "test:e2e": "node -e \"console.error('test:e2e: Playwright arrives in ticket 13'); process.exit(1)\"",
+    "authz:zed": "docker compose run --rm zed"
   },
   "license": "UNLICENSED",
   "devDependencies": {

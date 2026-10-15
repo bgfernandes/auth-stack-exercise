@@ -76,7 +76,11 @@
 
 **Tests:** `docker compose config` validates in CI (ticket 5).
 
-**Status:** Open.
+> **2026-10-15:** The **Files** line above is stale: the description and `docs/README.md` §9 want a committed `.env` and no `.env.example`, and that is what was built. Images are pinned to exact patch tags, not the floating minors named above: `postgres:17.11-alpine`, `redis:7.4.11-alpine`, `traefik:v3.7.14` (Docker Hub lagged the v3.7.15 GitHub release), `authzed/spicedb:v1.56.2`, `authzed/zed:v1.2.1`, `axllent/mailpit:v1.31.5`, Zitadel `v4.19.4` (v4.19.5 existed; the docs' pin was kept). Env key names were confirmed against `cmd/defaults.yaml` and `cmd/setup/steps.yaml` at that tag; the OIDC lifetime keys are as written above and need no change in the spike.
+
+> **2026-10-15:** Findings from the acceptance run. Zitadel starts with `start-from-init` on a DSN whose role (`zitadel`) owns an existing database and is not a superuser, as `docker/postgres/init.sql` creates it; no admin DSN was needed. Traefik's `healthcheck` subcommand is a separate process that does not see the entrypoint flags of the main command, so the health check passes `--ping.entrypoint=web --entrypoints.web.address=:80` itself. The admin login name is `zitadel-admin@zitadel.auth.localtest.me` (Zitadel suffixes a non-email username with the default organization's domain). A clean `up -d --wait` took 80 s the first time and 23 s on the two following `down -v && up` cycles on a laptop; `spicedb-migrate` exits 0 and `--wait` accepts that. The `apps` profile is reserved for ticket 3; `zed` sits in a `tools` profile behind `pnpm authz:zed`.
+
+**Status:** Done (2026-10-15).
 
 ---
 
