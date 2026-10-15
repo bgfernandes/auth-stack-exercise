@@ -1,0 +1,4 @@
+{
+  "extends": "@auth-stack/config/tsconfig/base.json",
+  "include": ["src"]
+}

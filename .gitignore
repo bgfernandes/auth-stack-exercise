@@ -1,1 +1,24 @@
+# Dependencies
 node_modules/
+
+# Build output
+dist/
+.next/
+*.tsbuildinfo
+
+# Test output
+coverage/
+playwright-report/
+test-results/
+
+# Generated runtime configuration written by the bootstrap container (ticket 4)
+.local/
+
+# Tooling
+.eslintcache
+.mise.local.toml
+
+# OS and editors
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,20 @@
+{
+  "name": "@auth-stack/tenancy",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@auth-stack/authz": "workspace:*",
+    "@auth-stack/db-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@auth-stack/config": "workspace:*"
+  }
+}

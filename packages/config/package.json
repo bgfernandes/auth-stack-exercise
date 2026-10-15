@@ -1,0 +1,28 @@
+{
+  "name": "@auth-stack/config",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared tsconfig and ESLint presets for the auth-stack workspace.",
+  "type": "module",
+  "exports": {
+    "./tsconfig/base.json": "./tsconfig/base.json",
+    "./tsconfig/next.json": "./tsconfig/next.json",
+    "./eslint": "./eslint/index.mjs"
+  },
+  "files": [
+    "tsconfig",
+    "eslint"
+  ],
+  "peerDependencies": {
+    "eslint": "^10.0.0",
+    "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "eslint-config-next": "16.4.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-import-resolver-typescript": "^4.4.5",
+    "eslint-plugin-import-x": "^4.17.1",
+    "globals": "^17.13.0",
+    "typescript-eslint": "^8.71.2"
+  }
+}
