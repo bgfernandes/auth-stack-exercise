@@ -21,7 +21,7 @@
 
 **Description:** `docs/README.md`, `docs/TICKETS.md`, and `CLAUDE.md` are the shared context for every PR. Commit them on `main` directly (the only direct commit).
 
-**Acceptance criteria:** the three files exist on `main`; the root `README.md` has a one-paragraph description and a pointer to `docs/README.md` (the full README is ticket 14).
+**Acceptance criteria:** the three files exist on `main`; the root `README.md` has a one-paragraph description and a pointer to `docs/README.md` (the full README is ticket 14); `.markdownlint-cli2.yaml`, the `lint:md` scripts, and a CI workflow running them are in place.
 
 **Status:** In progress (2026-10-13).
 
@@ -39,9 +39,10 @@
 - Root ESLint flat config (`eslint.config.mjs`) with `typescript-eslint`, `eslint-config-next` for the web app, import ordering; Prettier; `.editorconfig`.
 - Jest at the root with `@swc/jest`; two Jest projects, `unit` (default) and `integration` (files matching `*.integration.test.ts`, run only by `test:integration`); one placeholder unit test per package so the pipeline is green from the start.
 - `.gitignore`, `.dockerignore`, `.nvmrc` mirror of the mise pin for tools that read it.
+- CI: extend `.github/workflows/ci.yml` (already running `lint:md` from ticket 0) into a `checks` job: `pnpm install --frozen-lockfile`, `lint` (ESLint plus `lint:md`), `format:check` (Prettier), `type-check`, `test` (unit), and Gitleaks; Node and pnpm from `mise.toml` through `jdx/mise-action` (replacing the interim `setup-node`); concurrency group per branch. The pipeline is green on the scaffold before any feature lands.
 - Empty package skeletons: `packages/auth`, `packages/authz`, `packages/db-core`, `packages/tenancy`, `packages/documents`, `packages/config`, each with `package.json`, `tsconfig.json`, `src/index.ts`. `.markdownlint-cli2.yaml` and the `lint:md` scripts from ticket 0 are kept and folded into `lint`.
 
-**Acceptance criteria:** `pnpm install`, `pnpm lint`, `pnpm type-check`, `pnpm test` all pass on a clean clone; `pnpm -r exec tsc --noEmit` resolves cross-package imports through workspace links.
+**Acceptance criteria:** `pnpm install`, `pnpm lint`, `pnpm format:check`, `pnpm type-check`, `pnpm test` all pass on a clean clone and in CI; `pnpm -r exec tsc --noEmit` resolves cross-package imports through workspace links.
 
 **Status:** Open.
 
@@ -113,16 +114,16 @@
 
 ---
 
-### Ticket 5 — Tiltfile and CI skeleton (1.5 h)
+### Ticket 5 — Tiltfile and the CI integration job (1.5 h)
 
 **Read first:** `CLAUDE.md` (conventions).
 
 **Description:**
 
 - `Tiltfile` using `docker_compose('./docker-compose.yml')` for the infrastructure (every service outside the `apps` profile, so no containerized app competes for the ports) and `local_resource` entries that run `pnpm --filter dashboard-web dev` (and later the APIs) on the host, loading `./.local/config/<app>.env` plus host-side connection strings (`localhost:5432`, `localhost:6379`, `localhost:50051`), so `tilt up` is the one-command developer loop. Document `tilt up` and plain `docker compose --profile apps up` in the root README.
-- GitHub Actions workflow `ci.yml`: `pnpm install --frozen-lockfile`, `lint`, `type-check`, `test`, `docker compose config`, Gitleaks; a second job starts the infrastructure with `docker compose up -d --wait` (no `apps` profile) and runs `test:integration`, which tickets 6, 7, and 8 populate. Playwright and the full-stack smoke test are added in ticket 13. Node and pnpm through `jdx/mise-action` reading `mise.toml`. Concurrency group per branch.
+- CI additions to `ci.yml` (the `checks` job exists since ticket 1): `docker compose config` validation, and an `integration` job that starts the infrastructure with `docker compose up -d --wait` (no `apps` profile) and runs `test:integration`, which tickets 6, 7, and 8 populate. Playwright and the full-stack smoke test are added in ticket 13.
 
-**Acceptance criteria:** CI is green on `main`; `tilt up` starts the infra and the web app; `tilt down` leaves nothing running.
+**Acceptance criteria:** both CI jobs are green on `main`; `tilt up` starts the infra and the web app; `tilt down` leaves nothing running.
 
 **Status:** Open.
 
