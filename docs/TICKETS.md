@@ -433,7 +433,7 @@ Node SDK with auto-instrumentations, manual spans around `authz` calls carrying 
 
 ### Ticket 30 — Manifests and a Kubernetes Tiltfile (4 h)
 
-`kind` cluster, Kustomize manifests for every service, a `Tiltfile.k8s`, README section.
+`kind` cluster, Kustomize manifests for every service, a `Tiltfile.k8s`, README section. Images for the manifests come from the release pipeline described in `docs/README.md` §10 (Changesets across packages and apps, per-app image workflows pushing `ghcr.io/<org>/<repo>/<app>:<version>` and tagging after a successful build), set up as the first step of this phase; until then `kind load` of locally built images is the fallback.
 
 **Status:** Open.
 
