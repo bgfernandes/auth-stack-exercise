@@ -277,7 +277,7 @@ A user who registers through Zitadel's login UI arrives at the callback with a `
 
 - **Dashboard:** one `LookupResources(document, view, user:<sub>)` call, join the returned IDs to `documents` rows, then one `CheckBulkPermissions` request checking `edit` for every row, both at the listing consistency level of §7 (`minimize_latency`, or `at_least_as_fresh` with the session's ZedToken right after the user's own write). `view` decides whether the row is shown at all; `edit` decides between "Edit" and "Read-only". The button is a hint.
 - **Edit form (GET) and save (POST):** `CheckPermission(document:<id>, edit, user:<sub>)` on the server before reading or writing. A user who posts a crafted request for a document they can only view gets `403`; one who posts for a document they cannot see gets `404` (no existence leak).
-- **Phase 2:** the same checks move into `dashboard-api`; `dashboard-web` stops calling `packages/authz` directly and the API becomes the only enforcement point for resources.
+- **Phase 2:** the same checks move into `dashboard-api`, and `dashboard-web` becomes a BFF in the strict sense: it keeps the OIDC client, the session (cookie, Redis, refresh), CSRF and headers, rendering, and the authentication-context evaluation that must sit there (§9.1), and it drops `packages/documents`, `packages/authz`, and every database connection except Redis. Every documents operation is an HTTP call to `dashboard-api` with the user's access token, and the API is the only place that checks SpiceDB for documents. The phase 1 arrangement, where the web app calls the service layer in-process, exists only to reach the minimum viable submission on one process.
 
 ### 6.6 Cross-domain access
 
