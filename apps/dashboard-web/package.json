@@ -1,0 +1,23 @@
+{
+  "name": "dashboard-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --hostname 0.0.0.0 --port 3000",
+    "build": "next build",
+    "start": "next start --port 3000",
+    "type-check": "next typegen && tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "16.4.1",
+    "openid-client": "^6.8.8",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@auth-stack/config": "workspace:*",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0"
+  }
+}
