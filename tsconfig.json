@@ -1,0 +1,9 @@
+{
+  "_comment": "Root project for the root-level config files only, so editors and ESLint have a project for them. Packages and apps carry their own tsconfig.json; this one must not include them.",
+  "extends": "@auth-stack/config/tsconfig/base.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true
+  },
+  "include": ["eslint.config.mjs", "jest.config.mjs"]
+}
