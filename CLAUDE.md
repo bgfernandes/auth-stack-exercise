@@ -37,6 +37,7 @@ A reference IAM stack: OIDC login through a self-hosted Zitadel, fine-grained au
 - The request interceptor file is `proxy.ts` (exporting `proxy`), not `middleware.ts`. It runs on the Node runtime.
 - No edge runtime anywhere that touches SpiceDB (gRPC) or Postgres. Keep data access in route handlers, server components, and server actions.
 - `next lint` no longer exists; ESLint runs from the root config. Turbopack is the default bundler; do not add a `webpack` config.
+- Relative imports in Next.js apps carry no extension (Turbopack under `moduleResolution: bundler` does not remap `.js` to `.ts`); in packages and Fastify apps (NodeNext) they end in `.js`.
 
 ## Conventions
 

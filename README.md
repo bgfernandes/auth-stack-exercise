@@ -37,4 +37,15 @@ docker compose down -v        # stop and wipe the volumes (fresh Zitadel instanc
 | Postgres, Redis, SpiceDB from the host | `localhost:5432`, `localhost:6379`, `localhost:50051` (preshared key `dev-preshared-key`) |
 | SpiceDB CLI | `pnpm authz:zed schema read` (runs `zed` in a container against the stack; answers "no schema has been defined" until ticket 6 writes one) |
 
-`auth.localtest.me` resolves to `127.0.0.1` in public DNS, so no hosts-file entry is needed. What each service is for, the ports, profiles, and shared volumes are in [`docker/README.md`](docker/README.md). The apps are not here yet; the tickets that add them extend this section.
+The apps run in compose too, under the `apps` profile. Until the bootstrap container (ticket 4) exists, a script registers the OIDC application in Zitadel and writes the app's configuration to `.local/config/` (gitignored):
+
+```sh
+./scripts/spike/register-dashboard-web.sh            # needs the infrastructure up, curl and python3; repeat after every down -v
+docker compose --profile apps up -d --wait --build   # builds the app images and starts them
+```
+
+| App | Where |
+| --- | --- |
+| `dashboard-web` | `http://dashboard.localtest.me:3000`: "Log in" goes through Zitadel and prints the ID-token claims (the spike of ticket 3; the real dashboard arrives in phase 1) |
+
+`localtest.me` and its subdomains resolve to `127.0.0.1` in public DNS, so no hosts-file entry is needed. What each service is for, the ports, profiles, and shared volumes are in [`docker/README.md`](docker/README.md).

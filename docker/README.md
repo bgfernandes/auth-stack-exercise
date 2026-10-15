@@ -14,6 +14,7 @@ What each service in `docker-compose.yml` is for, and the conventions the apps a
 | `spicedb` | `authzed/spicedb` | The authorization service: relationships, checks, lookups, ZedTokens. Clients present the preshared key as a bearer token | `spicedb:50051` inside compose; `localhost:50051` from the host |
 | `redis` | `redis` | Application session store (`packages/auth`), append-only so sessions survive a restart | `redis:6379` inside compose; `localhost:6379` from the host |
 | `mailpit` | `axllent/mailpit` | SMTP sink for Zitadel's verification and reset emails, with a web UI | SMTP `mailpit:1025` inside compose; UI `http://localhost:8025` |
+| `dashboard-web` (profile `apps`) | built from `apps/dashboard-web/Dockerfile` | The documents product's BFF (the ticket 3 spike for now): standalone Next.js server; its entrypoint sources `/config/dashboard-web.env` (OIDC issuer, client ID, redirect URIs) before starting | `http://dashboard.localtest.me:3000` |
 | `zed` | `authzed/zed` | SpiceDB's CLI, in the `tools` profile so `up` never starts it: `pnpm authz:zed schema read` | |
 
 Every long-running service has a health check, so `docker compose up -d --wait` returns only when the stack is usable. Image tags are pinned in `.env`.
@@ -29,7 +30,7 @@ The first-instance admin is `ZITADEL_ADMIN_USERNAME` in `.env`. Zitadel suffixes
 ## Profiles
 
 - No profile: the infrastructure above. This is what Tilt starts (ticket 5) while the apps run on the host.
-- `apps` (from ticket 3): the containerized apps and the bootstrap container, for the reviewer path where everything runs in compose: `docker compose --profile apps up -d --wait`.
+- `apps`: the containerized apps (and, from ticket 4, the bootstrap container), for the reviewer path where everything runs in compose: `docker compose --profile apps up -d --wait --build`. App services carry `extra_hosts: ["auth.localtest.me:host-gateway"]` so they reach Zitadel at the same URL as the browser.
 - `tools`: one-off CLIs run with `docker compose run --rm`, never started by `up`.
 
 ## Shared locations
