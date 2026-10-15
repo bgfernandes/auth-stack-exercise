@@ -150,6 +150,8 @@ Zitadel validates that requests arrive for its configured external domain (`ZITA
 
 The apps use the same loopback scheme with one hostname each, `dashboard.localtest.me:3000`, `tenancy.localtest.me:3001`, `comments.localtest.me:3002`, because browsers ignore the port when scoping cookies: two BFFs on `localhost` with different ports would overwrite each other's session cookies, which would break single sign-on and sign-out between them. Each app's hostname is what its redirect URI registers. For local development with Tilt, the apps run on the host (`local_resource`) while only the infrastructure runs in compose, which sidesteps the problem entirely; the reviewer path (everything in compose) is the one that has to be solved.
 
+> **2026-10-15:** Settled by the spike (ticket 3): option (a) works and is the design. The container maps `auth.localtest.me` to the host gateway and reaches Traefik's published port, so discovery, the browser redirect, the token exchange, and the ID token's `iss` all use `http://auth.localtest.me:8080`. Two constraints came out of it: the application needs Zitadel's dev mode for an `http://` redirect URI on a host other than `localhost`, and `redirect_uri` must come from configuration, because a standalone Next.js server reports its own bind address in `request.url`.
+
 ### 4.4 Login flow (what `packages/auth` implements)
 
 1. `GET /auth/login` builds an authorization request: `response_type=code`, `scope=openid profile email offline_access`, PKCE `S256` (RFC 7636), fresh `state` and `nonce`, stored in a short-lived, signed, `HttpOnly` cookie; redirect to the authorization endpoint found through discovery.

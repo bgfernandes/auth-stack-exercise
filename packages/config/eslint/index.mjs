@@ -32,7 +32,12 @@ async function nextConfigs() {
     import('eslint-config-next/core-web-vitals'),
     import('eslint-config-next/typescript'),
   ]);
-  return [...scoped(coreWebVitals, WEB_APP_FILES), ...scoped(typescript, WEB_APP_FILES)];
+  return [
+    ...scoped(coreWebVitals, WEB_APP_FILES),
+    ...scoped(typescript, WEB_APP_FILES),
+    // ESLint runs from the workspace root, so the Next plugin is told where the apps live.
+    { files: WEB_APP_FILES, settings: { next: { rootDir: 'apps/*-web/' } } },
+  ];
 }
 
 /**
