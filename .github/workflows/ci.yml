@@ -1,5 +1,5 @@
-# Continuous integration. Ticket 1 extends this with lint, format, type-check,
-# and unit tests; ticket 5 adds the integration job that needs the compose stack.
+# Continuous integration. The `checks` job runs everything that needs no infrastructure; ticket 5 adds the
+# `integration` job that starts the compose stack.
 name: CI
 
 on:
@@ -11,16 +11,45 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
-  markdown:
-    name: Markdown lint
+  checks:
+    name: Lint, format, type-check, unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      # Node and pnpm come from mise.toml, the same pins developers get locally.
+      - uses: jdx/mise-action@v5
         with:
-          node-version: 22
-          cache: pnpm
+          cache: true
+      - name: Locate the pnpm store
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+      - name: Cache the pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
-      - run: pnpm lint:md
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm type-check
+      - run: pnpm test
+
+  secrets:
+    name: Gitleaks
+    runs-on: ubuntu-latest
+    # On pull requests the action lists the PR's commits and comments on leaks through the pull request API.
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Gitleaks scans the commits of the push or pull request, so it needs the history.
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
