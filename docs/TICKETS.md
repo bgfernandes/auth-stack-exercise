@@ -19,11 +19,11 @@
 
 ### Ticket 0 — Commit the architecture doc, this ticket list, and `CLAUDE.md` 📝 docs
 
-**Description:** `docs/README.md`, `docs/TICKETS.md`, and `CLAUDE.md` are the shared context for every PR. Commit them on `main` directly (the only direct commit).
+**Description:** `docs/README.md`, `docs/TICKETS.md`, and `CLAUDE.md` are the shared context for every PR.
 
-**Acceptance criteria:** the three files exist on `main`; the root `README.md` has a one-paragraph description and a pointer to `docs/README.md` (the full README is ticket 14); `.markdownlint-cli2.yaml`, the `lint:md` scripts, and a CI workflow running them are in place.
+**Acceptance criteria:** the three files exist; the root `README.md` has a one-paragraph description and a pointer to `docs/README.md` (the full README is ticket 14); `.markdownlint-cli2.yaml`, the `lint:md` scripts, and a CI workflow running them are in place.
 
-**Status:** In progress (2026-10-13).
+**Status:** Done (2026-10-15).
 
 ---
 
