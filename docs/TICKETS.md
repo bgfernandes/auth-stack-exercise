@@ -10,6 +10,7 @@
 > - Pass `pnpm lint`, `pnpm type-check`, and `pnpm test` before "done".
 > - Use conventional commits; one PR per ticket, merged with a merge commit (no squash); branch named `<ticket>-<slug>` (`04-bootstrap`, `17a-invitations`).
 > - Update its **Status** line here in the same PR.
+> - When it implements or changes a package under `packages/`, update that package's `README.md` (how to use it: env contract, entry points and subpaths, a usage example, how to run its checks) in the same PR (rule added 2026-10-17, in ticket 6).
 >
 > Tickets are listed in implementation order; ticket numbers are stable identifiers, not the order (tickets 15 and 16 moved into phase 1 on 2026-10-15 and kept their numbers). Phases 0–2 are fully specified; later phases are stubs that get specified with a dated note when the phase starts. Estimates are working hours including review.
 
@@ -171,7 +172,11 @@
 
 > **2026-10-17 (planned in ticket 5):** This ticket is the first to touch the bootstrap Dockerfile after ticket 4 (it adds the SpiceDB client), so it also reorders the build to pnpm's documented Docker pattern: copy `pnpm-lock.yaml` alone and run `pnpm fetch`, which fills the store from the lockfile without any `package.json`, then copy the sources and run `pnpm install --offline --frozen-lockfile`. Today the sources are copied before the install, so every bootstrap source change invalidates the install layer and re-downloads the packages, which costs about 7 s per edit under Tilt (it rebuilds the image on each change) and 9 s per CI run. After the reorder the download layer depends on the lockfile only. A BuildKit cache in CI (`type=gha`) was considered in ticket 5 and declined: the whole bootstrap step is 26 s of a 93 s job, of which 9 s is the install, and restoring the cache would eat most of the gain; revisit once the integration tests make the job long enough for a stable 10 s to matter.
 
-**Status:** Open.
+> **2026-10-17 (deviations):** `use typechecking` is in: SpiceDB v1.56.2 accepts the directive and rejects a wrong annotation at `WriteSchema` (`incomplete type annotation on relation ...`), and zed v1.2.1 rejects it offline the same way; the annotations are optional per permission as far as SpiceDB is concerned, so a unit test enforces that every permission in the file carries one, that every definition, relation, and permission carries a doc comment, and that the file matches the package's TypeScript vocabulary definition by definition. `ReadSchema` returns the schema re-serialized (directive and annotations dropped, definitions reordered), so bootstrap's `schema` log line reports `created`, `unchanged`, or `updated` by comparing the read-back before and after its write (`ensureSchema`), not the file against the read-back. The schema text reaches TypeScript as an import of `schema.zed` as text (esbuild's `text` loader in the bootstrap build, a one-line Jest transform), on the subpath `@auth-stack/authz/schema` that bootstrap and the integration tests import, so the web apps, which reach the package root through `packages/documents` in phase 1, need no bundler rule; the helper list's `writeSchema()` is `writeSchema(text)` on the client plus `ensureSchema(authz)` on the subpath. "Insecure for localhost" became an explicit `SPICEDB_INSECURE=true` (in `.env`, passed to bootstrap by compose): the client library's localhost mode sends no bearer to an endpoint that is not literally `localhost:*`, so `spicedb:50051` inside compose needs the plaintext-with-credentials mode, and inferring it from the hostname was rejected as a rule nobody expects; unset means TLS with the system's certificate authorities. Every call carries a 10 s deadline. `pnpm authz:validate` runs `zed validate --fail-on-warn` through the compose `zed` service, with `packages/authz` bind-mounted read-only and `--no-deps` so no server starts; the CI `checks` job runs it after the compose validation. The integration tests take `SPICEDB_PRESHARED_KEY` and `SPICEDB_INSECURE` from the root `.env` when the environment lacks them (parsed with `util.parseEnv`: `process.loadEnvFile` writes to the real `process.env`, which Jest replaces per test file) and default the endpoint to `localhost:50051`; their relationships carry an `it-` prefix and are deleted before and after. One test found that a `minimize_latency` check right after a schema write can be served from a snapshot predating the schema (`object definition document not found`), one quantization window of staleness that bootstrap's start order makes irrelevant for the apps; the test requires the scenario write's token with `at_least_as_fresh` instead, the §7.3 pattern. The Dockerfile reorder planned above was measured before being written, and `pnpm fetch` lost: it downloads the whole lockfile (619 packages, 4.6 s cold on a laptop, then a 0.9 s offline install) where the filtered install downloads bootstrap's closure only (2.3 s cold). The layout taken copies the lockfile and every workspace `package.json` first (`COPY --parents`, `docker/dockerfile:1.7-labs` syntax; `--frozen-lockfile` needs every importer's manifest present) and runs the same filtered install, so the install layer depends on the manifests only; a rebuild after a source edit reported it `CACHED` and reran only the esbuild step. The bundle grew to 6.1 MB with the gRPC client and its inline source map. Verified: the 17 new unit tests, the 18 integration tests against the compose SpiceDB, lint, type-check, Prettier, `authz:validate`, compose config with every profile, actionlint; `docker compose run --rm --build bootstrap` against the running stack logged `schema unchanged` (the integration tests had just written the same schema) and the ticket 4 steps as before, 9 s with the build, and the same on a second run; then the reviewer path on fresh volumes (`down -v`, no `.local/`) had every service healthy 50 s after `up`, with bootstrap logging `schema created` before the ticket 4 `created` steps, and `alice` logged in through the containerized app; `zed schema read` returns the schema with its doc comments; `tilt alpha tiltfile-result` shows the bootstrap resource with the two `packages/authz` paths in its `deps` and `spicedb` in its `resource_deps`.
+
+> **2026-10-17 (package README):** `packages/authz/README.md` documents the env contract, the client and helpers with a usage example, the consistency rule per call, the schema subpath, and the checks; the first of the per-package READMEs the preamble now requires.
+
+**Status:** Done (2026-10-17).
 
 ---
 
@@ -187,6 +192,8 @@
 - `pnpm db:migrate --filter <package>` scripts for development; in compose, **bootstrap runs every package's migrations** before seeding (it already imports both packages' seed helpers and the apps `depends_on` it), which is the only order that works; the migrations themselves stay owned by their package, bootstrap is only the executor, and the README's trade-offs section says so.
 
 **Tests:** migrations apply on fresh databases in CI; a round-trip insert/select per table.
+
+> **2026-10-17:** Per the preamble rule added in ticket 6, this ticket writes or updates the README of every package it implements or changes (`packages/db-core`, `packages/tenancy`, `packages/documents`) in the same PR.
 
 **Status:** Open.
 
@@ -218,6 +225,8 @@
 **Description:** The resource-server half of `packages/auth`, needed by `tenancy-api` in phase 1 and by every later API. A Fastify plugin that verifies `Authorization: Bearer` JWTs against Zitadel's JWKS (`jose`), checks `iss`, `exp`, and that `aud` contains the project ID (bootstrap registers each API as an API application in the same project), and puts the subject on the request. **Scope gate** (`docs/README.md` §6.7): `requireScope(...)` per route, resolving effective scopes through the `ScopeResolver` interface, here the `packages/authz`-backed resolver (`LookupResources(api_scope, invoke, client:<azp>)`, cached per client; Zitadel's JWT access tokens carry `azp` and no `scope` claim); first-party clients are registered with every scope; failure is `403` with `WWW-Authenticate: Bearer error="insufficient_scope"`. Request IDs and structured logging helpers shared by the APIs.
 
 **Tests:** unit tests for the plugin (valid, expired, wrong audience, wrong issuer, malformed, missing scope, scope from registry vs from claim) with a test signer.
+
+> **2026-10-17:** Per the preamble rule added in ticket 6, this ticket writes or updates the README of every package it implements or changes (`packages/auth`, its `fastify` subpath) in the same PR.
 
 **Status:** Open.
 
@@ -254,6 +263,10 @@
 **Description:** In the callback, after session creation, two idempotent calls (§6.4). First `TenancyClient.provisionUser()` over HTTP to `tenancy-api` with the user's access token; `tenancy-api` takes `sub` from the token and, on the first call for that `sub`, fetches `email` and `name` from Zitadel's userinfo endpoint with the same token (verified by the IdP, no trust in the caller's body), inserts the `users` row, creates the personal organization (absent-check on the partial unique index), and writes its tuples; it returns the organization. Second, the BFF calls the documents domain's `ensurePersonalProject(user, orgId)` (in-process in phase 1; `POST /organizations/:id/personal-project` on `dashboard-api` from phase 2), which creates the "Personal" project and the "Welcome" document and writes their tuples. Both steps key on absence of the thing they create, not on the `users` row, so seeded users (ticket 12) get their personal workspace on first login too. ZedTokens are not stored until ticket 21. Idempotent and race-safe per §6.4: `INSERT ... ON CONFLICT DO NOTHING` on `users.id` with a read of the winner, the partial unique index on `organizations (owner_id) WHERE is_personal`, and `TOUCH` semantics on the relationship writes; the call runs on every login callback and returns the existing user after the first.
 
 **Tests:** integration test: a new `sub` gets exactly one personal organization, one project, one document, and `check(document, edit, user)` allows; a second call creates nothing; ten concurrent first calls for the same `sub` leave exactly one of each.
+
+> **2026-10-17 (correction, found in ticket 6):** "ZedTokens are not stored until ticket 21" above is stale since the consistency correction of the same date (`docs/README.md` §7.3; ticket 7): `ensurePersonalProject` stores the relationship write's token on the "Welcome" document from phase 1, like every content write.
+
+> **2026-10-17:** Per the preamble rule added in ticket 6, this ticket writes or updates the README of every package it implements or changes (`packages/tenancy`, `packages/documents`) in the same PR.
 
 **Status:** Open.
 
@@ -359,6 +372,8 @@
 
 **Tests:** unit tests with a signed fake logout token; integration test: logout in Zitadel removes the Redis session.
 
+> **2026-10-17:** Per the preamble rule added in ticket 6, this ticket writes or updates the README of every package it implements or changes (`packages/auth`) in the same PR.
+
 **Status:** Open.
 
 ---
@@ -393,11 +408,15 @@
 
 The per-row token and the write-path `fully_consistent` checks exist since phase 1 (tickets 7 and 11). This ticket completes `docs/README.md` §7.3: listings switch from `fullyConsistent` to `minimizeLatency`, and the README states that a listing may lag one's own write by a few seconds while content reads stay exact. A minimal share action in `dashboard-web` (pick a member of the organization, grant `document#viewer` or `#editor` through `PUT /documents/:id/shares`, which stores the write's token on the document) exists so the tests have a write to make. Integration tests: New Enemy case 2 (remove Bob, then edit the document; Bob's read with the row's token is denied while a `minimize_latency` check inside the window may still allow), and New Enemy case 1 (remove then create; the new document's token postdates the removal, so the read is denied).
 
+> **2026-10-17:** Per the preamble rule added in ticket 6, this ticket writes or updates the README of every package it implements or changes (`packages/documents`, and `packages/authz` if the helpers change) in the same PR.
+
 **Status:** Open.
 
 ### Ticket 22 — Decision audit log and per-organization audit page (2.5 h)
 
 `authz_decisions` in tenancy, written at every enforcement point through a `recordDecision()` hook that posts asynchronously to `tenancy-api` (`POST /decisions`, buffered) using the posting API's own client-credentials token (scope `audit:write`, granted to each API's client by bootstrap: the one no-user call in scope); `/organizations/[id]/audit` page in `tenancy-web` for organization admins; retention note in the README.
+
+> **2026-10-17:** Per the preamble rule added in ticket 6, this ticket writes or updates the README of every package it implements or changes (`packages/tenancy`) in the same PR.
 
 **Status:** Open.
 
@@ -414,6 +433,8 @@ Per-session synchronizer token in forms (the origin checks exist since phase 1);
 ### Ticket 24 — Authentication-context policies: `requireAuthContext` and the step-up flow (3 h)
 
 `organizations.policy` (from tenancy, cached) honoured by the BFFs: `requireAuthContext({ maxAge, amr })` in `packages/auth` reads `auth_time` and `amr` from the session, produces the RFC 9470 challenge, and the web apps turn it into a re-authentication (`prompt=login`, `max_age`) and retry. The seeded Acme organization gets `policy.max_auth_age_seconds: 600` (policy is per organization, §5.1) so a reviewer who logged in more than ten minutes earlier sees a step-up on their next write; personal organizations keep `{}`. README section on where policies live (§9.1).
+
+> **2026-10-17:** Per the preamble rule added in ticket 6, this ticket writes or updates the README of every package it implements or changes (`packages/auth`) in the same PR.
 
 **Status:** Open.
 
@@ -436,6 +457,8 @@ Try a Zitadel Action that adds `auth_time` and `amr` to the JWT access token; re
 ### Ticket 27 — `packages/comments` and `comments-api` (3 h)
 
 Schema (§5.3, including `comments.zedtoken`) and migrations, `comments` database in compose, Fastify API with `GET /documents/:id/comments` and `POST /documents/:id/comments` (scopes `comments:read`, `comments:write`); `comment` definition in the SpiceDB schema; permission checks through `document->view`, `fully_consistent` on post with the token stored on the comment and `at_least_as_fresh(comment.zedtoken)` on read (§7.3); document title fetched from `dashboard-api` with the caller's access token (§6.6); bootstrap registers `comments-api` in the same project.
+
+> **2026-10-17:** Per the preamble rule added in ticket 6, this ticket writes or updates the README of every package it implements or changes (`packages/comments`) in the same PR.
 
 **Status:** Open.
 

@@ -1,2 +1,40 @@
-/** Placeholder until the package gets its first real module; lets the pipeline exercise this package from the start. */
-export const packageName = '@auth-stack/authz';
+/**
+ * `@auth-stack/authz`: the one place SpiceDB details live (docs/README.md §3.1). The schema file and its write
+ * are on the subpath `@auth-stack/authz/schema`, imported by bootstrap only.
+ */
+export {
+  authzOptionsFromEnv,
+  createAuthz,
+  type Authz,
+  type AuthzOptions,
+  type CheckItem,
+  type CheckRequest,
+  type CheckResult,
+  type LookupRequest,
+  type RelationshipFilter,
+} from './client.js';
+export {
+  atLeastAsFresh,
+  fullyConsistent,
+  minimizeLatency,
+  type Consistency,
+  type ZedToken,
+} from './consistency.js';
+export { apiScope, scopeObjectId } from './scopes.js';
+export {
+  create,
+  isObjectId,
+  ref,
+  relationship,
+  remove,
+  touch,
+  VOCABULARY,
+  type ObjectRef,
+  type ObjectType,
+  type PermissionOf,
+  type RelationOf,
+  type Relationship,
+  type RelationshipOperation,
+  type RelationshipUpdate,
+  type SubjectTypeOf,
+} from './vocabulary.js';

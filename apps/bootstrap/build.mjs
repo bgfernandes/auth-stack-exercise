@@ -11,6 +11,8 @@ await build({
   target: 'node22',
   format: 'esm',
   sourcemap: 'inline',
+  // The SpiceDB schema is bundled as a string (packages/authz/src/schema.ts).
+  loader: { '.zed': 'text' },
   // CommonJS dependencies bundled into an ES module need a `require` in scope (esbuild's documented pattern).
   banner: {
     js: "import { createRequire } from 'node:module';\nconst require = createRequire(import.meta.url);",

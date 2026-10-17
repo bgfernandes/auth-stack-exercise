@@ -29,8 +29,9 @@ local_resource(
 )
 
 # Bootstrap (ticket 4) is in the apps profile, so Tilt does not run it as a compose service. As a one-off
-# `compose run` it waits for Zitadel through the service's depends_on, blocks until done, and fails the resource on
-# a non-zero exit, which is what the apps below depend on. It re-runs when its sources change; it is idempotent.
+# `compose run` it waits for Zitadel and SpiceDB through the service's depends_on, blocks until done, and fails
+# the resource on a non-zero exit, which is what the apps below depend on. It re-runs when its sources or the
+# workspace packages it bundles change; it is idempotent.
 local_resource(
     'bootstrap',
     cmd='docker compose run --rm --build bootstrap',
@@ -39,8 +40,10 @@ local_resource(
         'apps/bootstrap/Dockerfile',
         'apps/bootstrap/build.mjs',
         'apps/bootstrap/package.json',
+        'packages/authz/schema.zed',
+        'packages/authz/src',
     ],
-    resource_deps=['proxy'],
+    resource_deps=['proxy', 'spicedb'],
     labels=['apps'],
 )
 

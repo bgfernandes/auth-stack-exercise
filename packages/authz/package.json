@@ -2,12 +2,17 @@
   "name": "@auth-stack/authz",
   "version": "0.0.0",
   "private": true,
+  "description": "SpiceDB client, schema, and typed check/lookup/write helpers for the auth-stack workspace.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./schema": "./src/schema.ts"
   },
   "scripts": {
     "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@authzed/authzed-node": "^1.6.1"
   },
   "devDependencies": {
     "@auth-stack/config": "workspace:*"
