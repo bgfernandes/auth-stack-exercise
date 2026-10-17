@@ -13,8 +13,9 @@ const shared = {
         module: { type: 'commonjs' },
       },
     ],
+    '^.+\\.zed$': '<rootDir>/jest.text-transform.cjs',
   },
-  moduleFileExtensions: ['ts', 'tsx', 'js', 'mjs', 'json'],
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'mjs', 'json', 'zed'],
   // Sources use NodeNext resolution, so relative imports carry a .js extension that maps back to the .ts file.
   moduleNameMapper: { '^(\\.{1,2}/.*)\\.js$': '$1' },
   testPathIgnorePatterns: ignoredPaths,
