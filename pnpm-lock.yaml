@@ -40,6 +40,10 @@ importers:
         version: 5.9.3
 
   apps/bootstrap:
+    dependencies:
+      '@auth-stack/authz':
+        specifier: workspace:*
+        version: link:../../packages/authz
     devDependencies:
       '@auth-stack/config':
         specifier: workspace:*

@@ -1,10 +1,14 @@
 /**
- * Bootstrap (ticket 4): a one-shot, idempotent configuration of Zitadel for this stack. It creates the single
- * project and the dashboard-web application, seeds the users of docs/README.md §6.3, and writes the handoff
- * files the apps start from. Every object is matched by name first, so running it again creates nothing. Any
- * failure exits non-zero so compose surfaces it and the apps that depend on it never start.
+ * Bootstrap (ticket 4): a one-shot, idempotent configuration of the stack. It writes the SpiceDB schema
+ * (ticket 6), creates the single Zitadel project and the dashboard-web application, seeds the users of
+ * docs/README.md §6.3, and writes the handoff files the apps start from. Every object is matched by name first,
+ * so running it again creates nothing. Any failure exits non-zero so compose surfaces it and the apps that
+ * depend on it never start.
  */
 import { readFile } from 'node:fs/promises';
+
+import { authzOptionsFromEnv, createAuthz } from '@auth-stack/authz';
+import { ensureSchema } from '@auth-stack/authz/schema';
 
 import { writeHandoff, type Handoff } from './handoff.js';
 import { log, logError } from './log.js';
@@ -60,6 +64,15 @@ async function main(): Promise<void> {
   const dashboardWebUrl = stripTrailingSlash(required('DASHBOARD_WEB_URL'));
   const tenancyApiUrl = stripTrailingSlash(required('TENANCY_API_URL'));
   const seedPassword = required('SEED_USER_PASSWORD');
+
+  // The schema first: SpiceDB is healthy before this container starts, and the tuples of later steps need it.
+  const authz = createAuthz(authzOptionsFromEnv());
+  try {
+    const schema = await ensureSchema(authz);
+    log('schema', { action: schema.action });
+  } finally {
+    authz.close();
+  }
 
   log('zitadel.wait', { url: zitadelUrl });
   await waitForZitadel(zitadelUrl, READY_TIMEOUT_MS);

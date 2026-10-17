@@ -8,6 +8,9 @@
     "start": "node dist/index.js",
     "type-check": "tsc --noEmit"
   },
+  "dependencies": {
+    "@auth-stack/authz": "workspace:*"
+  },
   "devDependencies": {
     "@auth-stack/config": "workspace:*",
     "esbuild": "0.28.2"
