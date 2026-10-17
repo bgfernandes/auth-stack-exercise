@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { apiScope, scopeObjectId } from './scopes.js';
+import { apiScope, scopeObjectId } from './scopes';
 
 describe('scopeObjectId', () => {
   it('maps a scope string to an object ID by replacing the colon', () => {

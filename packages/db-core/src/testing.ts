@@ -6,7 +6,7 @@
  */
 import postgres from 'postgres';
 
-import { createDb, runMigrations, type Db } from './index.js';
+import { createDb, runMigrations, type Db } from './index';
 
 export interface TestDatabaseOptions<TSchema extends Record<string, unknown>> {
   /** A superuser connection, to create and drop databases: the stack's admin role (`.env`). */

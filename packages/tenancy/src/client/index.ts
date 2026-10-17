@@ -4,9 +4,9 @@
  * The HTTP implementation arrives with `tenancy-api` (ticket 16); the in-process one, for tests, lives in the
  * package root.
  */
-import { type Policy } from './policy.js';
+import { type Policy } from './policy';
 
-export { parsePolicy, policySchema, type Policy } from './policy.js';
+export { parsePolicy, policySchema, type Policy } from './policy';
 
 /** The user a BFF or domain acts for: the `sub` of the session and the access token it forwards to the APIs. */
 export interface UserContext {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { toConsistency } from './client.js';
-import { atLeastAsFresh, fullyConsistent, minimizeLatency } from './consistency.js';
+import { toConsistency } from './client';
+import { atLeastAsFresh, fullyConsistent, minimizeLatency } from './consistency';
 
 describe('consistency', () => {
   it('maps each level to the matching SpiceDB requirement', () => {

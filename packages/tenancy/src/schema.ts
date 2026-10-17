@@ -6,7 +6,7 @@
 import { sql } from 'drizzle-orm';
 import { boolean, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 
-import { type Policy } from './client/policy.js';
+import { type Policy } from './client/policy';
 
 /** Created just in time at first login (§6.4); the IdP is the source of truth, this is a mirror. */
 export const users = pgTable('users', {

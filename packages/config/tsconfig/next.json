@@ -1,11 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
-  "_comment": "For Next.js apps: Next requires moduleResolution bundler, a DOM lib, JSX preserved for Turbopack, and the next-env.d.ts and plugin it generates. Everything else comes from base.json.",
+  "_comment": "For Next.js apps: a DOM lib, JSX preserved for Turbopack, and the next-env.d.ts and plugin it generates. Module resolution is the bundler one of base.json, which Next requires.",
   "extends": "./base.json",
   "compilerOptions": {
     "lib": ["DOM", "DOM.Iterable", "ES2023"],
-    "module": "ESNext",
-    "moduleResolution": "bundler",
     "jsx": "preserve",
     "allowJs": true,
     "incremental": true,

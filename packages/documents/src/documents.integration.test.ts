@@ -28,9 +28,9 @@ import {
 } from '@auth-stack/db-core/testing';
 import { type OrganizationSummary, type TenancyClient } from '@auth-stack/tenancy/client';
 
-import { documents, projects, schema, type DocumentsSchema } from './schema.js';
+import { documents, projects, schema, type DocumentsSchema } from './schema';
 
-import { createDocumentsService, type DocumentsService } from './index.js';
+import { createDocumentsService, type DocumentsService } from './index';
 
 // Not process.loadEnvFile: Jest gives each test file its own copy of `process.env`, and loadEnvFile writes to the real one.
 function loadStackDefaults(): void {

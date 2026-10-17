@@ -18,15 +18,9 @@ import {
 } from '@auth-stack/authz';
 import { type Db } from '@auth-stack/db-core';
 
-import { parsePolicy } from './client/policy.js';
-import { TenancyError } from './errors.js';
-import {
-  organizations,
-  users,
-  type Organization,
-  type TenancySchema,
-  type User,
-} from './schema.js';
+import { parsePolicy } from './client/policy';
+import { TenancyError } from './errors';
+import { organizations, users, type Organization, type TenancySchema, type User } from './schema';
 
 export type TenancyDb = Db<TenancySchema>;
 

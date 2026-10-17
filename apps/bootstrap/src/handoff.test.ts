@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 
-import { apisEnv, dashboardWebEnv, renderEnvFile, writeHandoff, type Handoff } from './handoff.js';
+import { apisEnv, dashboardWebEnv, renderEnvFile, writeHandoff, type Handoff } from './handoff';
 
 const handoff: Handoff = {
   issuer: 'http://auth.localtest.me:8080',

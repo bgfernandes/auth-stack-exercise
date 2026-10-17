@@ -10,9 +10,9 @@ export {
   type ProvisionResult,
   type TenancyClient,
   type UserContext,
-} from './client/index.js';
-export { TenancyError, type TenancyErrorCode } from './errors.js';
-export { createInProcessTenancyClient, toSummary } from './in-process-client.js';
+} from './client/index';
+export { TenancyError, type TenancyErrorCode } from './errors';
+export { createInProcessTenancyClient, toSummary } from './in-process-client';
 export {
   organizations,
   schema,
@@ -20,7 +20,7 @@ export {
   type Organization,
   type TenancySchema,
   type User,
-} from './schema.js';
+} from './schema';
 export {
   createTenancyService,
   PERSONAL_ORGANIZATION_NAME,
@@ -30,4 +30,4 @@ export {
   type Role,
   type TenancyDb,
   type TenancyService,
-} from './service.js';
+} from './service';

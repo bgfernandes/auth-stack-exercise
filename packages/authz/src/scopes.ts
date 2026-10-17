@@ -1,4 +1,4 @@
-import { ref, type ObjectRef } from './vocabulary.js';
+import { ref, type ObjectRef } from './vocabulary';
 
 /** An API scope string as RFC 6749 §3.3 writes it: `<api>:<verb>`, e.g. `documents:write` (docs/README.md §6.7). */
 const SCOPE = /^[a-z][a-z0-9]*:[a-z][a-z0-9]*$/;

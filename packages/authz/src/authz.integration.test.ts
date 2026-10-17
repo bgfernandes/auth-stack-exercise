@@ -9,7 +9,7 @@ import { parseEnv } from 'node:util';
 
 import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
 
-import { ensureSchema } from './schema.js';
+import { ensureSchema } from './schema';
 
 import {
   atLeastAsFresh,
@@ -25,7 +25,7 @@ import {
   type Authz,
   type ObjectType,
   type ZedToken,
-} from './index.js';
+} from './index';
 
 // Not process.loadEnvFile: Jest gives each test file its own copy of `process.env`, and loadEnvFile writes to the real one.
 function loadStackDefaults(): void {

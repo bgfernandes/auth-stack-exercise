@@ -51,6 +51,8 @@
 
 > **2026-10-15:** `eslint-config-next` is installed in `packages/config` but switched off (`nextjs: false` in `eslint.config.mjs`) because it requires the `next` package at import time; ticket 3 turns it on when the first web app installs Next. `test:e2e` is a placeholder that fails with a pointer to ticket 13, so it can never pass by accident. Prettier ignores Markdown so that markdownlint stays the single authority on the docs.
 
+> **2026-10-17 (ticket 8):** `NodeNext` gave way to bundler resolution in every tsconfig, and relative imports carry no extension anywhere; see the ticket 3 note and the decision log.
+
 **Status:** Done (2026-10-15).
 
 ---
@@ -103,6 +105,8 @@
 > **2026-10-15 (result):** Option (a) works as designed and is kept; (b) and (c) were not needed. The browser and the container both use `http://auth.localtest.me:8080`: the container reaches it through `extra_hosts: auth.localtest.me:host-gateway` and Traefik's published port, discovery returns that issuer, and the ID token's `iss` is the same string. The ID token's `aud` carries the client ID and the project ID (§4.2 confirmed). Two findings for ticket 8: Zitadel accepts an `http://` redirect URI on a host other than `localhost` only with the application's dev mode on (the registration sets `devMode: true`; a TLS deployment turns it off); and the standalone Next.js server reports `request.url` on the bind address (`0.0.0.0:3000`), not the browser-facing host, so the callback must build `redirect_uri` from configuration and never from the request, or the token exchange fails with a redirect mismatch (which is exactly how the first attempt failed).
 
 > **2026-10-15 (deviations):** The redirect URI is `http://dashboard.localtest.me:3000/auth/callback` (ticket 2's hostname scheme, what ticket 4 registers), not `localhost:3000`. The throwaway application is registered by `scripts/spike/register-dashboard-web.sh` through the management API (find-or-create by name; writes `.local/config/dashboard-web.env`) instead of by hand in the console, so the flow is repeatable after `down -v`; ticket 4 deletes the script. The spike keeps no session: the ID-token claims ride in a short-lived cookie so the page can print them, removed in ticket 8. The container health check probes `127.0.0.1`, since `localhost` resolves to `::1` inside the image and Next listens on IPv4. In Next.js apps relative imports carry no extension (Turbopack under `bundler` resolution does not remap `.js` to `.ts`), unlike the NodeNext packages; the rule is in `CLAUDE.md`. Verified end to end with a headless browser (Playwright, not committed; ticket 13), twice across a `down -v`.
+
+> **2026-10-17 (ticket 8):** The extension rule above is superseded: relative imports carry no extension anywhere (every tsconfig on bundler resolution), because Turbopack does not remap `.js` to `.ts` inside the packages either, which a web app importing a package from source needs. See the decision log.
 
 **Status:** Done (2026-10-15).
 
