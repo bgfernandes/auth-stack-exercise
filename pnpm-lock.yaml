@@ -44,6 +44,15 @@ importers:
       '@auth-stack/authz':
         specifier: workspace:*
         version: link:../../packages/authz
+      '@auth-stack/db-core':
+        specifier: workspace:*
+        version: link:../../packages/db-core
+      '@auth-stack/documents':
+        specifier: workspace:*
+        version: link:../../packages/documents
+      '@auth-stack/tenancy':
+        specifier: workspace:*
+        version: link:../../packages/tenancy
     devDependencies:
       '@auth-stack/config':
         specifier: workspace:*

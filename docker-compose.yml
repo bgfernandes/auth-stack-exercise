@@ -305,6 +305,9 @@ services:
       SPICEDB_ENDPOINT: spicedb:50051
       SPICEDB_PRESHARED_KEY: ${SPICEDB_PRESHARED_KEY}
       SPICEDB_INSECURE: ${SPICEDB_INSECURE}
+      # The service databases, for the migrations (ticket 7) and the seeds (ticket 12).
+      TENANCY_DATABASE_URL: ${TENANCY_DATABASE_URL}
+      DOCUMENTS_DATABASE_URL: ${DOCUMENTS_DATABASE_URL}
     extra_hosts:
       - auth.localtest.me:host-gateway
     volumes:
@@ -316,6 +319,8 @@ services:
       proxy:
         condition: service_healthy
       spicedb:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   # Apps profile: the containerized apps, for the reviewer path where everything runs in compose.

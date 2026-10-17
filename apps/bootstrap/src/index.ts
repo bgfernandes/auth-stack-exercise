@@ -1,14 +1,16 @@
 /**
  * Bootstrap (ticket 4): a one-shot, idempotent configuration of the stack. It writes the SpiceDB schema
- * (ticket 6), creates the single Zitadel project and the dashboard-web application, seeds the users of
- * docs/README.md §6.3, and writes the handoff files the apps start from. Every object is matched by name first,
- * so running it again creates nothing. Any failure exits non-zero so compose surfaces it and the apps that
- * depend on it never start.
+ * (ticket 6), runs the service packages' database migrations (ticket 7), creates the single Zitadel project
+ * and the dashboard-web application, seeds the users of docs/README.md §6.3, and writes the handoff files the
+ * apps start from. Every object is matched by name first and every migration is recorded, so running it again
+ * creates nothing. Any failure exits non-zero so compose surfaces it and the apps that depend on it never start.
  */
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
 import { authzOptionsFromEnv, createAuthz } from '@auth-stack/authz';
 import { ensureSchema } from '@auth-stack/authz/schema';
+import { closeDb, createDb, runMigrations } from '@auth-stack/db-core';
 
 import { writeHandoff, type Handoff } from './handoff.js';
 import { log, logError } from './log.js';
@@ -72,6 +74,21 @@ async function main(): Promise<void> {
     log('schema', { action: schema.action });
   } finally {
     authz.close();
+  }
+
+  // Then every package's migrations (docs/README.md §3.1: the packages own them, bootstrap only runs them),
+  // before the seeds of ticket 12 and before the apps, which depend on this container, start.
+  for (const [database, url] of [
+    ['tenancy', required('TENANCY_DATABASE_URL')],
+    ['documents', required('DOCUMENTS_DATABASE_URL')],
+  ] as const) {
+    const db = createDb(url, {}, { max: 1 });
+    try {
+      await runMigrations(db, fileURLToPath(new URL(`./migrations/${database}`, import.meta.url)));
+      log('migrations', { database });
+    } finally {
+      await closeDb(db);
+    }
   }
 
   log('zitadel.wait', { url: zitadelUrl });

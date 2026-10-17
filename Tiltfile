@@ -42,8 +42,13 @@ local_resource(
         'apps/bootstrap/package.json',
         'packages/authz/schema.zed',
         'packages/authz/src',
+        'packages/db-core/src',
+        'packages/tenancy/src',
+        'packages/tenancy/migrations',
+        'packages/documents/src',
+        'packages/documents/migrations',
     ],
-    resource_deps=['proxy', 'spicedb'],
+    resource_deps=['proxy', 'spicedb', 'postgres'],
     labels=['apps'],
 )
 
