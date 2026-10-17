@@ -169,6 +169,8 @@
 
 **Tests:** integration tests against the compose SpiceDB (a Jest project tagged `integration`, run in CI with the SpiceDB service container): the schema loads; the §6.3 scenario produces the expected `check` results for Alice, Bob, Carol; `lookupResources(document, view, carol)` returns exactly Launch plan and Budget.
 
+> **2026-10-17 (planned in ticket 5):** This ticket is the first to touch the bootstrap Dockerfile after ticket 4 (it adds the SpiceDB client), so it also reorders the build to pnpm's documented Docker pattern: copy `pnpm-lock.yaml` alone and run `pnpm fetch`, which fills the store from the lockfile without any `package.json`, then copy the sources and run `pnpm install --offline --frozen-lockfile`. Today the sources are copied before the install, so every bootstrap source change invalidates the install layer and re-downloads the packages, which costs about 7 s per edit under Tilt (it rebuilds the image on each change) and 9 s per CI run. After the reorder the download layer depends on the lockfile only. A BuildKit cache in CI (`type=gha`) was considered in ticket 5 and declined: the whole bootstrap step is 26 s of a 93 s job, of which 9 s is the install, and restoring the cache would eat most of the gain; revisit once the integration tests make the job long enough for a stable 10 s to matter.
+
 **Status:** Open.
 
 ---
