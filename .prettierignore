@@ -8,3 +8,5 @@ coverage/
 playwright-report/
 test-results/
 .local/
+# drizzle-kit regenerates these snapshots and journals; formatting them would only churn.
+**/migrations/meta/
