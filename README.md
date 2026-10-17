@@ -21,9 +21,10 @@ pnpm lint          # ESLint plus markdownlint
 pnpm format:check  # Prettier (pnpm format rewrites)
 pnpm type-check    # tsc --noEmit in every package
 pnpm test          # unit tests (Jest); test:integration needs the stack running (either way below) and is run by CI
+pnpm authz:validate  # zed validate on packages/authz/schema.zed, in a container; needs Docker, not the stack
 ```
 
-The stack is Docker Compose with committed development defaults in `.env` (insecure by design, local use only): Postgres, Zitadel with its login UI behind Traefik, SpiceDB, Redis, Mailpit, and the bootstrap container, which configures Zitadel (project, OIDC application, seeded users), writes the apps' configuration to `.local/config/` (gitignored), and exits. There are two ways to run the project, and they share port 3000, so run one at a time.
+The stack is Docker Compose with committed development defaults in `.env` (insecure by design, local use only): Postgres, Zitadel with its login UI behind Traefik, SpiceDB, Redis, Mailpit, and the bootstrap container, which writes the SpiceDB schema, configures Zitadel (project, OIDC application, seeded users), writes the apps' configuration to `.local/config/` (gitignored), and exits. There are two ways to run the project, and they share port 3000, so run one at a time.
 
 **Everything in compose**, the way to review the project. No setup step and no Node needed; the app images and the bootstrap image are built locally:
 
@@ -53,7 +54,7 @@ Bootstrap is idempotent: every `up` and every `tilt up` re-runs it, a second run
 | Zitadel login and console | `http://auth.localtest.me:8080` (`/ui/console`); admin `zitadel-admin@zitadel.auth.localtest.me` / `Password1!` |
 | Mailpit (every email Zitadel sends) | `http://localhost:8025` |
 | Postgres, Redis, SpiceDB from the host | `localhost:5432`, `localhost:6379`, `localhost:50051` (preshared key `dev-preshared-key`) |
-| SpiceDB CLI | `pnpm authz:zed schema read` (runs `zed` in a container against the stack; answers "no schema has been defined" until ticket 6 writes one) |
+| SpiceDB CLI | `pnpm authz:zed schema read` (runs `zed` in a container against the stack; prints the schema bootstrap wrote, `packages/authz/schema.zed`, with its doc comments) |
 
 The apps, at the same addresses either way:
 
@@ -61,4 +62,4 @@ The apps, at the same addresses either way:
 | --- | --- |
 | `dashboard-web` | `http://dashboard.localtest.me:3000`: "Log in" goes through Zitadel (any seeded user) and prints the ID-token claims (the spike of ticket 3; the real dashboard arrives in phase 1) |
 
-`localtest.me` and its subdomains resolve to `127.0.0.1` in public DNS, so no hosts-file entry is needed. What each service is for, the ports, profiles, and shared volumes are in [`docker/README.md`](docker/README.md).
+`localtest.me` and its subdomains resolve to `127.0.0.1` in public DNS, so no hosts-file entry is needed. What each service is for, the ports, profiles, and shared volumes are in [`docker/README.md`](docker/README.md). Each package under `packages/` has a `README.md` on how to use it, starting with [`packages/authz`](packages/authz/README.md).
