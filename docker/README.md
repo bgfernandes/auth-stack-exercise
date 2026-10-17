@@ -10,11 +10,11 @@ What each service in `docker-compose.yml` is for, and the conventions the apps a
 | `zitadel-api` | `ghcr.io/zitadel/zitadel` | The OpenID Provider: identities, credentials, tokens, JWKS, the management and v2 APIs, the console. Configured by environment at first start (`ZITADEL_FIRSTINSTANCE_*`), including the admin user and two machine users whose personal access tokens it writes to the `zitadel-bootstrap` volume. Maps each app hostname to the host gateway so it can call the apps' back-channel logout URLs, and runs with its outbound-HTTP deny list narrowed to the link-local range (the default refuses every private address, which is every service here) | Through `proxy` only |
 | `zitadel-login` | `ghcr.io/zitadel/zitadel-login` | Login V2, the login UI of Zitadel v4, served under `/ui/v2/login` on the same origin as the API; authenticates to the API with `login-client.pat` | Through `proxy` only |
 | `proxy` | `traefik` | Routes one public origin, `http://auth.localtest.me:8080`, to the API and the login UI, as in Zitadel's reference compose (plain HTTP only) | `http://auth.localtest.me:8080` |
-| `spicedb-migrate` | `authzed/spicedb` | One-shot: applies SpiceDB's schema migrations to the `spicedb` database and exits | |
+| `spicedb-migrate` | `authzed/spicedb` | One-shot: applies SpiceDB's schema migrations to the `spicedb` database and exits; retries on failure, because Tilt starts it before Postgres is healthy | |
 | `spicedb` | `authzed/spicedb` | The authorization service: relationships, checks, lookups, ZedTokens. Clients present the preshared key as a bearer token | `spicedb:50051` inside compose; `localhost:50051` from the host |
 | `redis` | `redis` | Application session store (`packages/auth`), append-only so sessions survive a restart | `redis:6379` inside compose; `localhost:6379` from the host |
 | `mailpit` | `axllent/mailpit` | SMTP sink for Zitadel's verification and reset emails, with a web UI | SMTP `mailpit:1025` inside compose; UI `http://localhost:8025` |
-| `bootstrap` | built from `apps/bootstrap/Dockerfile` | One-shot: with `bootstrap.pat`, creates the Zitadel project and the `dashboard-web` application (reconciling its settings when they differ), seeds `alice`, `bob`, `carol`, and writes the apps' configuration to `/config`; idempotent, re-run by every `up`, exits non-zero on failure so the apps that depend on it do not start | |
+| `bootstrap` (profiles `apps`, `bootstrap`) | built from `apps/bootstrap/Dockerfile` | One-shot: with `bootstrap.pat`, creates the Zitadel project and the `dashboard-web` application (reconciling its settings when they differ), seeds `alice`, `bob`, `carol`, and writes the apps' configuration to `/config`; idempotent. The reviewer path's `up` runs it before the apps, which depend on it; Tilt and CI run it as the explicit step `docker compose run --rm --build bootstrap`, which blocks until it finishes and returns its exit code | |
 | `dashboard-web` (profile `apps`) | built from `apps/dashboard-web/Dockerfile` | The documents product's BFF (the ticket 3 spike for now): standalone Next.js server; its entrypoint sources `/config/dashboard-web.env` (OIDC issuer, client ID, redirect URIs) before starting | `http://dashboard.localtest.me:3000` |
 | `zed` | `authzed/zed` | SpiceDB's CLI, in the `tools` profile so `up` never starts it: `pnpm authz:zed schema read` | |
 
@@ -36,6 +36,8 @@ The first-instance admin is `ZITADEL_ADMIN_USERNAME` in `.env`. Zitadel suffixes
 
 > **2026-10-15:** The bootstrap container is in the default set, not in `apps`: Tilt and the CI integration job start only the default set and need the configuration it writes. A plain `docker compose up -d --wait` therefore builds its image and runs it (it exits 0 when done; `--wait` accepts that), and the apps under `apps` depend on it with `condition: service_completed_successfully`.
 
+> **2026-10-17:** The note above was verified only with the `apps` profile and is withdrawn. Without the profile, `docker compose up -d --wait` exits 1 on bootstrap's exit: compose accepts an exited one-shot only when a started service depends on it with `service_completed_successfully`, and bootstrap's only dependents are the apps. Bootstrap is therefore in the `apps` profile (and its own, `bootstrap`); the reviewer path is unchanged, and the two paths that start the infrastructure without the apps, the Tiltfile and the CI integration job, run it as the explicit step `docker compose run --rm --build bootstrap` after `docker compose up -d --wait`. That sequence is code, not a documented way to run the project: the root README offers `tilt up` and the `apps` profile, nothing else.
+
 ## Shared locations
 
 - Named volume `zitadel-bootstrap`, mounted at `/bootstrap`: `bootstrap.pat` (the bootstrap machine user, which holds `IAM_OWNER`) and `login-client.pat` (used by Login V2). Read-write in `zitadel-api`, read-only in `zitadel-login` and in the bootstrap container; never mounted in an app.
@@ -43,4 +45,4 @@ The first-instance admin is `ZITADEL_ADMIN_USERNAME` in `.env`. Zitadel suffixes
 
 ## Resetting
 
-`docker compose down -v` removes the volumes, so the next `up` reinitializes Postgres (the init script runs again), Zitadel (a new instance, new PATs), SpiceDB, and Redis from scratch, and bootstrap registers everything again with new IDs (`./.local/config/` is overwritten).
+`docker compose --profile apps down -v` removes the volumes, so the next `up` reinitializes Postgres (the init script runs again), Zitadel (a new instance, new PATs), SpiceDB, and Redis from scratch, and bootstrap registers everything again with new IDs (`./.local/config/` is overwritten). Under Tilt, `tilt down` keeps the volumes; `tilt down --delete-volumes` is the equivalent.

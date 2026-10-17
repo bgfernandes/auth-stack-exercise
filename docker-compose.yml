@@ -206,8 +206,11 @@ services:
 
   spicedb-migrate:
     image: ${SPICEDB_IMAGE}
-    # One-shot: brings the spicedb database schema to the current revision, then exits 0.
+    # One-shot: brings the spicedb database schema to the current revision, then exits 0. Compose starts it only
+    # once Postgres is healthy; Tilt starts it as soon as the Postgres container runs, so it retries until Postgres
+    # accepts connections.
     command: migrate head --datastore-engine postgres --datastore-conn-uri "${SPICEDB_DATASTORE_CONN_URI}"
+    restart: on-failure
     networks:
       - auth-stack
     depends_on:
@@ -273,10 +276,16 @@ services:
       - auth-stack
 
   # One-shot (ticket 4): configures Zitadel through its API with the bootstrap machine user's PAT, seeds the users,
-  # and writes the apps' configuration to ./.local/config. Idempotent, so every `up` re-runs it; exits non-zero on
-  # failure, which holds back the apps that depend on it. Built from source like the apps, in every profile, so
-  # Tilt and CI (ticket 5) get the handoff files too.
+  # and writes the apps' configuration to ./.local/config. Idempotent, so every run creates nothing it finds; exits
+  # non-zero on failure, which holds back the apps that depend on it. In the apps profile, so the reviewer path's
+  # `up` runs it before the apps; outside that profile (Tilt, CI) it is an explicit step,
+  # `docker compose run --rm --build bootstrap`, which blocks until it finishes and returns its exit code. It
+  # cannot be in the default set: `up --wait` treats an exited one-shot as a failure unless a started service
+  # depends on it with service_completed_successfully, and its only dependents are the apps.
   bootstrap:
+    profiles:
+      - apps
+      - bootstrap
     build:
       context: .
       dockerfile: apps/bootstrap/Dockerfile

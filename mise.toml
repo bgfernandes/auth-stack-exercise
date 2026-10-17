@@ -1,6 +1,8 @@
 # Tool versions for this repository. `mise install` installs them; CI uses the same file through jdx/mise-action.
 # Node 22 is the current LTS line (Next.js 16 needs >= 20.9). `.nvmrc` mirrors the Node pin for tools that read it.
 # pnpm must match the `packageManager` field in package.json: pnpm 10 switches itself to that version on every invocation.
+# Tilt drives the developer loop (Tiltfile); run it through mise so the pnpm it starts the apps with is the pinned one.
 [tools]
 node = "22.23.3"
 pnpm = "10.34.6"
+tilt = "0.37.8"

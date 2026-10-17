@@ -1,5 +1,5 @@
-# Continuous integration. The `checks` job runs everything that needs no infrastructure; ticket 5 adds the
-# `integration` job that starts the compose stack.
+# Continuous integration. `checks` runs everything that needs no infrastructure; `integration` starts the compose
+# stack and runs the tests that need it; `secrets` scans the commits. The jobs run in parallel.
 name: CI
 
 on:
@@ -20,23 +20,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # Node and pnpm come from mise.toml, the same pins developers get locally.
-      - uses: jdx/mise-action@v5
-        with:
-          cache: true
-      - name: Locate the pnpm store
-        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
-      - name: Cache the pnpm store
-        uses: actions/cache@v6
-        with:
-          path: ${{ env.STORE_PATH }}
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: pnpm-store-${{ runner.os }}-
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm type-check
       - run: pnpm test
+      # Parses the compose file and .env with every profile enabled; needs no daemon.
+      - name: Validate the compose file
+        run: docker compose --profile '*' config --quiet
+
+  integration:
+    name: Integration tests against the compose stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      # The infrastructure without the containerized apps (the tests run on the runner), the way Tilt starts it.
+      - name: Start the infrastructure
+        run: docker compose up -d --wait
+      # Bootstrap is an explicit step outside the apps profile (docker/README.md): it blocks until Zitadel is
+      # configured and the handoff files are written, and fails the job on a non-zero exit.
+      - name: Configure Zitadel and write the handoff files
+        run: docker compose run --rm --build bootstrap
+      # What later tickets rely on: the handoff files exist, and the runner resolves the public hostname.
+      - name: Check the handoff files and Zitadel's discovery document
+        run: |
+          ls -l .local/config
+          test -s .local/config/dashboard-web.env
+          test -s .local/config/apis.env
+          test -s .local/config/seed.json
+          curl --fail --silent --show-error --output /dev/null http://auth.localtest.me:8080/.well-known/openid-configuration
+      - run: pnpm test:integration
+      - name: Show the stack on failure
+        if: failure()
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color --tail 200
+      - name: Stop the stack
+        if: always()
+        run: docker compose --profile '*' down -v
 
   secrets:
     name: Gitleaks

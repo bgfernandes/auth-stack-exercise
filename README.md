@@ -6,11 +6,11 @@ The full architecture, decisions, and phase plan are in [`docs/README.md`](docs/
 
 ## Development
 
-Tool versions are pinned in `mise.toml` (Node 22, pnpm 10) and installed with [mise](https://mise.jdx.dev). On a fresh clone:
+Tool versions are pinned in `mise.toml` (Node 22, pnpm 10, Tilt) and installed with [mise](https://mise.jdx.dev). On a fresh clone:
 
 ```sh
 mise trust       # once per clone: allow mise to read mise.toml
-mise install     # installs the pinned Node and pnpm
+mise install     # installs the pinned Node, pnpm, and Tilt
 pnpm install     # installs the workspace
 ```
 
@@ -20,18 +20,27 @@ Checks, which are the same ones CI runs:
 pnpm lint          # ESLint plus markdownlint
 pnpm format:check  # Prettier (pnpm format rewrites)
 pnpm type-check    # tsc --noEmit in every package
-pnpm test          # unit tests (Jest); test:integration needs the compose stack, which arrives in ticket 2
+pnpm test          # unit tests (Jest); test:integration needs the stack running (either way below) and is run by CI
 ```
 
-The infrastructure (Postgres, Zitadel with its login UI behind Traefik, SpiceDB, Redis, Mailpit) runs in Docker Compose with committed development defaults in `.env` (insecure by design, local use only). No setup step and no Node needed; the one image built locally is the bootstrap container, which configures Zitadel (project, OIDC application, seeded users) and writes the apps' configuration to `.local/config/` (gitignored), then exits:
+The stack is Docker Compose with committed development defaults in `.env` (insecure by design, local use only): Postgres, Zitadel with its login UI behind Traefik, SpiceDB, Redis, Mailpit, and the bootstrap container, which configures Zitadel (project, OIDC application, seeded users), writes the apps' configuration to `.local/config/` (gitignored), and exits. There are two ways to run the project, and they share port 3000, so run one at a time.
+
+**Everything in compose**, the way to review the project. No setup step and no Node needed; the app images and the bootstrap image are built locally:
 
 ```sh
-docker compose up -d --wait   # 40-90 s from a clean state; returns when every service is healthy and bootstrap has exited 0
-docker compose logs bootstrap # one JSON line per object: created, exists, updated, or unchanged
-docker compose down -v        # stop and wipe the volumes (fresh Zitadel instance and databases on the next up)
+docker compose --profile apps up -d --wait --build   # about a minute from a clean state, plus the image builds; returns when every service is healthy
+docker compose logs bootstrap                        # one JSON line per object: created, exists, updated, or unchanged
+docker compose --profile apps down -v                # stop and wipe the volumes (fresh Zitadel instance and databases on the next up)
 ```
 
-Bootstrap is idempotent: every `up` re-runs it, a second run creates nothing, and a changed application setting is updated in place. The seeded users (password `Password1!`, emails verified, no Mailpit step needed):
+**Tilt**, the developer loop: the infrastructure runs in compose, bootstrap runs as a step, and the apps run on the host with hot reload, each reading its `.local/config/<app>.env`. Run Tilt through mise so the apps start with the pinned pnpm:
+
+```sh
+mise exec -- tilt up   # or plain `tilt up` in a shell with mise activated; the UI is at http://localhost:10350
+tilt down              # after stopping tilt up: removes the containers, keeps the volumes (--delete-volumes wipes them)
+```
+
+Bootstrap is idempotent: every `up` and every `tilt up` re-runs it, a second run creates nothing, and a changed application setting is updated in place. The seeded users (password `Password1!`, emails verified, no Mailpit step needed):
 
 | User | Role in the seeded scenario (from ticket 12) |
 | --- | --- |
@@ -46,11 +55,7 @@ Bootstrap is idempotent: every `up` re-runs it, a second run creates nothing, an
 | Postgres, Redis, SpiceDB from the host | `localhost:5432`, `localhost:6379`, `localhost:50051` (preshared key `dev-preshared-key`) |
 | SpiceDB CLI | `pnpm authz:zed schema read` (runs `zed` in a container against the stack; answers "no schema has been defined" until ticket 6 writes one) |
 
-The apps run in compose too, under the `apps` profile; they start after bootstrap has completed and read their configuration from `.local/config/`:
-
-```sh
-docker compose --profile apps up -d --wait --build   # builds the app images and starts them
-```
+The apps, at the same addresses either way:
 
 | App | Where |
 | --- | --- |

@@ -1,0 +1,23 @@
+# Shared by every job that runs pnpm: the pinned tools from mise.toml, the same ones developers get locally, and the
+# workspace dependencies from a cached pnpm store.
+name: Set up the workspace
+description: Installs the tools pinned in mise.toml and the workspace dependencies, with the pnpm store cached.
+
+runs:
+  using: composite
+  steps:
+    - uses: jdx/mise-action@v5
+      with:
+        cache: true
+    - name: Locate the pnpm store
+      shell: bash
+      run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+    - name: Cache the pnpm store
+      uses: actions/cache@v6
+      with:
+        path: ${{ env.STORE_PATH }}
+        key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: pnpm-store-${{ runner.os }}-
+    - name: Install the workspace
+      shell: bash
+      run: pnpm install --frozen-lockfile
