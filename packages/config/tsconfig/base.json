@@ -1,11 +1,11 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
-  "_comment": "Base for packages and Fastify apps: strict, ES modules resolved the Node way (relative imports carry a .js extension), no emit. Next.js apps extend next.json instead.",
+  "_comment": "Base for packages and Fastify apps: strict, ES modules resolved the bundler way (relative imports carry no extension; esbuild, Turbopack, and Jest all resolve .ts, and Turbopack does not remap .js to .ts), no emit. Next.js apps extend next.json instead.",
   "compilerOptions": {
     "target": "ES2023",
     "lib": ["ES2023"],
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,

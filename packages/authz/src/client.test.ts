@@ -1,8 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { authzOptionsFromEnv, type CheckItem } from './client.js';
-import { fullyConsistent } from './consistency.js';
-import { ref } from './vocabulary.js';
+import { authzOptionsFromEnv, type CheckItem } from './client';
+import { fullyConsistent } from './consistency';
+import { ref } from './vocabulary';
 
 describe('authzOptionsFromEnv', () => {
   it('reads the endpoint, the key, and the plaintext switch', () => {

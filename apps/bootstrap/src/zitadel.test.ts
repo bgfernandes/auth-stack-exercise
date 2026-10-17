@@ -9,7 +9,7 @@ import {
   type OidcApp,
   type OidcAppConfig,
   type ZitadelApi,
-} from './zitadel.js';
+} from './zitadel';
 
 const desired: OidcAppConfig = {
   redirectUris: ['http://dashboard.localtest.me:3000/auth/callback'],

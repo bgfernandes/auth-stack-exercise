@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { create, ref, relationship, remove, touch } from './vocabulary.js';
+import { create, ref, relationship, remove, touch } from './vocabulary';
 
 describe('ref', () => {
   it("accepts SpiceDB's object ID grammar and rejects the rest", () => {

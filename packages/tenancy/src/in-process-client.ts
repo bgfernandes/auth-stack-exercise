@@ -5,9 +5,9 @@
  */
 import { fullyConsistent } from '@auth-stack/authz';
 
-import { type OrganizationSummary, type TenancyClient, type UserContext } from './client/index.js';
-import { type Organization } from './schema.js';
-import { type ProvisionClaims, type TenancyService } from './service.js';
+import { type OrganizationSummary, type TenancyClient, type UserContext } from './client/index';
+import { type Organization } from './schema';
+import { type ProvisionClaims, type TenancyService } from './service';
 
 export function toSummary(organization: Organization): OrganizationSummary {
   return {

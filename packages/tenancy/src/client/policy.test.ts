@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import { ZodError } from 'zod';
 
-import { parsePolicy } from './policy.js';
+import { parsePolicy } from './policy';
 
 describe('parsePolicy', () => {
   it('accepts the empty policy and every known floor', () => {

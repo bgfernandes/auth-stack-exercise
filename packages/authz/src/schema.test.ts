@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
-import { ensureSchema, SCHEMA } from './schema.js';
-import { VOCABULARY } from './vocabulary.js';
+import { ensureSchema, SCHEMA } from './schema';
+import { VOCABULARY } from './vocabulary';
 
 /** The definitions of a schema text: name → relations (with subject type) and permissions, by a small parser. */
 function parseDefinitions(schema: string) {

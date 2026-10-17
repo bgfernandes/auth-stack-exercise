@@ -12,9 +12,9 @@ import { authzOptionsFromEnv, createAuthz } from '@auth-stack/authz';
 import { ensureSchema } from '@auth-stack/authz/schema';
 import { closeDb, createDb, runMigrations } from '@auth-stack/db-core';
 
-import { writeHandoff, type Handoff } from './handoff.js';
-import { log, logError } from './log.js';
-import { SEED_USERS } from './seed.js';
+import { writeHandoff, type Handoff } from './handoff';
+import { log, logError } from './log';
+import { SEED_USERS } from './seed';
 import {
   ensureHumanUser,
   ensureOidcApp,
@@ -23,7 +23,7 @@ import {
   waitForZitadel,
   ZitadelClient,
   type OidcAppConfig,
-} from './zitadel.js';
+} from './zitadel';
 
 const PROJECT_NAME = 'auth-stack-exercise';
 const DASHBOARD_WEB_APP = 'dashboard-web';

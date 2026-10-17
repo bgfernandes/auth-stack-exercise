@@ -2,14 +2,31 @@
   "name": "@auth-stack/auth",
   "version": "0.0.0",
   "private": true,
+  "description": "OIDC client, session store, and cookie helpers for the auth-stack BFFs; the bearer half for the APIs follows.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./next": "./src/next/index.ts",
+    "./testing": "./src/testing/fake-op.ts"
   },
   "scripts": {
     "type-check": "tsc --noEmit"
   },
+  "dependencies": {
+    "openid-client": "6.8.8"
+  },
+  "peerDependencies": {
+    "next": "16.4.1"
+  },
+  "peerDependenciesMeta": {
+    "next": {
+      "optional": true
+    }
+  },
   "devDependencies": {
-    "@auth-stack/config": "workspace:*"
+    "@auth-stack/config": "workspace:*",
+    "ioredis": "^6.0.0",
+    "jose": "6.2.12",
+    "next": "16.4.1"
   }
 }

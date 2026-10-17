@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import { ZodError } from 'zod';
 
-import { parseDocumentValues } from './values.js';
+import { parseDocumentValues } from './values';
 
 describe('parseDocumentValues', () => {
   it('accepts two strings of 1 to 200 characters', () => {

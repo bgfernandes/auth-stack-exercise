@@ -9,7 +9,7 @@
 /// <reference path="./zed.d.ts" />
 import schemaText from '../schema.zed';
 
-import { type Authz } from './client.js';
+import { type Authz } from './client';
 
 export const SCHEMA: string = schemaText;
 

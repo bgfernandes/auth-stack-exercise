@@ -21,6 +21,8 @@ export function dashboardWebEnv(handoff: Handoff): Record<string, string> {
     OIDC_CLIENT_ID: handoff.dashboardWeb.clientId,
     OIDC_REDIRECT_URI: `${handoff.dashboardWeb.url}/auth/callback`,
     OIDC_POST_LOGOUT_REDIRECT_URI: `${handoff.dashboardWeb.url}/`,
+    // The app's public URL, for packages/auth: cookie attributes and the same-origin check (ticket 8).
+    APP_URL: handoff.dashboardWeb.url,
     TENANCY_API_URL: handoff.tenancyApiUrl,
   };
 }

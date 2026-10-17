@@ -5,13 +5,13 @@
  */
 import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
 
-import { type Consistency, type ZedToken } from './consistency.js';
+import { type Consistency, type ZedToken } from './consistency';
 import {
   type ObjectRef,
   type ObjectType,
   type PermissionOf,
   type RelationshipUpdate,
-} from './vocabulary.js';
+} from './vocabulary';
 
 export interface AuthzOptions {
   /** `host:port` of SpiceDB's gRPC API: `spicedb:50051` in compose, `localhost:50051` from the host. */

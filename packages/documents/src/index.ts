@@ -2,7 +2,7 @@
  * `@auth-stack/documents`: schema, migrations, and the service of the documents domain (docs/README.md §3.1).
  * Imported by `dashboard-web` in phase 1 and only by `dashboard-api` from phase 2.
  */
-export { DocumentsError, type DocumentsErrorCode } from './errors.js';
+export { DocumentsError, type DocumentsErrorCode } from './errors';
 export {
   documents,
   projects,
@@ -10,7 +10,7 @@ export {
   type Document,
   type DocumentsSchema,
   type Project,
-} from './schema.js';
+} from './schema';
 export {
   createDocumentsService,
   PERSONAL_PROJECT_NAME,
@@ -19,5 +19,5 @@ export {
   type DocumentsService,
   type PersonalWorkspace,
   type VisibleDocument,
-} from './service.js';
-export { documentValuesSchema, parseDocumentValues, type DocumentValues } from './values.js';
+} from './service';
+export { documentValuesSchema, parseDocumentValues, type DocumentValues } from './values';

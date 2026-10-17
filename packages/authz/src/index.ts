@@ -12,15 +12,15 @@ export {
   type CheckResult,
   type LookupRequest,
   type RelationshipFilter,
-} from './client.js';
+} from './client';
 export {
   atLeastAsFresh,
   fullyConsistent,
   minimizeLatency,
   type Consistency,
   type ZedToken,
-} from './consistency.js';
-export { apiScope, scopeObjectId } from './scopes.js';
+} from './consistency';
+export { apiScope, scopeObjectId } from './scopes';
 export {
   create,
   isObjectId,
@@ -37,4 +37,4 @@ export {
   type RelationshipOperation,
   type RelationshipUpdate,
   type SubjectTypeOf,
-} from './vocabulary.js';
+} from './vocabulary';

@@ -20,15 +20,9 @@ import {
 import { type Db } from '@auth-stack/db-core';
 import { type TenancyClient, type UserContext } from '@auth-stack/tenancy/client';
 
-import { DocumentsError } from './errors.js';
-import {
-  documents,
-  projects,
-  type Document,
-  type DocumentsSchema,
-  type Project,
-} from './schema.js';
-import { parseDocumentValues } from './values.js';
+import { DocumentsError } from './errors';
+import { documents, projects, type Document, type DocumentsSchema, type Project } from './schema';
+import { parseDocumentValues } from './values';
 
 export type DocumentsDb = Db<DocumentsSchema>;
 
