@@ -19,5 +19,9 @@ ENV NODE_ENV=production
 WORKDIR /app
 # The whole program is one bundled file (docs/README.md §12, bootstrap build); no node_modules in the image.
 COPY --from=build /repo/apps/bootstrap/dist/index.js ./index.js
+# The packages' migration folders (SQL plus drizzle-kit's journal), read at runtime by the migration runner;
+# the bundle resolves them as ./migrations/<package> next to itself (apps/bootstrap/src/index.ts).
+COPY --from=build /repo/packages/tenancy/migrations ./migrations/tenancy
+COPY --from=build /repo/packages/documents/migrations ./migrations/documents
 # Runs as root by compose configuration (user: '0'), so it can write the bind-mounted /config on Linux hosts.
 CMD ["node", "index.js"]

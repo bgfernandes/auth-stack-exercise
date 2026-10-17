@@ -8,13 +8,18 @@
     "./client": "./src/client/index.ts"
   },
   "scripts": {
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "@auth-stack/authz": "workspace:*",
-    "@auth-stack/db-core": "workspace:*"
+    "@auth-stack/db-core": "workspace:*",
+    "drizzle-orm": "0.45.4",
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@auth-stack/config": "workspace:*"
+    "@auth-stack/config": "workspace:*",
+    "drizzle-kit": "0.31.11"
   }
 }

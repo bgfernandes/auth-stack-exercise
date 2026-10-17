@@ -14,7 +14,8 @@
     "test:integration": "jest --selectProjects integration --passWithNoTests",
     "test:e2e": "node -e \"console.error('test:e2e: Playwright arrives in ticket 13'); process.exit(1)\"",
     "authz:zed": "docker compose run --rm zed",
-    "authz:validate": "docker compose run --rm --no-deps zed validate --fail-on-warn /authz/schema.zed"
+    "authz:validate": "docker compose run --rm --no-deps zed validate --fail-on-warn /authz/schema.zed",
+    "db:migrate": "pnpm -r --if-present run db:migrate"
   },
   "license": "UNLICENSED",
   "devDependencies": {

@@ -24,13 +24,13 @@ pnpm test          # unit tests (Jest); test:integration needs the stack running
 pnpm authz:validate  # zed validate on packages/authz/schema.zed, in a container; needs Docker, not the stack
 ```
 
-The stack is Docker Compose with committed development defaults in `.env` (insecure by design, local use only): Postgres, Zitadel with its login UI behind Traefik, SpiceDB, Redis, Mailpit, and the bootstrap container, which writes the SpiceDB schema, configures Zitadel (project, OIDC application, seeded users), writes the apps' configuration to `.local/config/` (gitignored), and exits. There are two ways to run the project, and they share port 3000, so run one at a time.
+The stack is Docker Compose with committed development defaults in `.env` (insecure by design, local use only): Postgres, Zitadel with its login UI behind Traefik, SpiceDB, Redis, Mailpit, and the bootstrap container, which writes the SpiceDB schema, runs the service packages' database migrations (the packages own them; bootstrap only executes them, because the apps start after it), configures Zitadel (project, OIDC application, seeded users), writes the apps' configuration to `.local/config/` (gitignored), and exits. There are two ways to run the project, and they share port 3000, so run one at a time.
 
 **Everything in compose**, the way to review the project. No setup step and no Node needed; the app images and the bootstrap image are built locally:
 
 ```sh
 docker compose --profile apps up -d --wait --build   # about a minute from a clean state, plus the image builds; returns when every service is healthy
-docker compose logs bootstrap                        # one JSON line per object: created, exists, updated, or unchanged
+docker compose logs bootstrap                        # one JSON line per object (created, exists, updated, or unchanged) and per migrated database
 docker compose --profile apps down -v                # stop and wipe the volumes (fresh Zitadel instance and databases on the next up)
 ```
 
@@ -40,6 +40,8 @@ docker compose --profile apps down -v                # stop and wipe the volumes
 mise exec -- tilt up   # or plain `tilt up` in a shell with mise activated; the UI is at http://localhost:10350
 tilt down              # after stopping tilt up: removes the containers, keeps the volumes (--delete-volumes wipes them)
 ```
+
+With either stack running, `pnpm db:migrate` applies every package's pending database migrations from the host (`packages/*/migrations`); bootstrap applies the same ones at every start, so this is for iterating on a schema without re-running it.
 
 Bootstrap is idempotent: every `up` and every `tilt up` re-runs it, a second run creates nothing, and a changed application setting is updated in place. The seeded users (password `Password1!`, emails verified, no Mailpit step needed):
 
@@ -62,4 +64,4 @@ The apps, at the same addresses either way:
 | --- | --- |
 | `dashboard-web` | `http://dashboard.localtest.me:3000`: "Log in" goes through Zitadel (any seeded user) and prints the ID-token claims (the spike of ticket 3; the real dashboard arrives in phase 1) |
 
-`localtest.me` and its subdomains resolve to `127.0.0.1` in public DNS, so no hosts-file entry is needed. What each service is for, the ports, profiles, and shared volumes are in [`docker/README.md`](docker/README.md). Each package under `packages/` has a `README.md` on how to use it, starting with [`packages/authz`](packages/authz/README.md).
+`localtest.me` and its subdomains resolve to `127.0.0.1` in public DNS, so no hosts-file entry is needed. What each service is for, the ports, profiles, and shared volumes are in [`docker/README.md`](docker/README.md). Each package under `packages/` has a `README.md` on how to use it: [`authz`](packages/authz/README.md), [`db-core`](packages/db-core/README.md), [`tenancy`](packages/tenancy/README.md), [`documents`](packages/documents/README.md).
