@@ -17,10 +17,11 @@ const shared = {
   },
   moduleFileExtensions: ['ts', 'tsx', 'js', 'mjs', 'json', 'zed'],
   testPathIgnorePatterns: ignoredPaths,
-  // openid-client, oauth4webapi, and jose ship ES modules only; Jest loads CommonJS, so they go through the
-  // transform too (both paths pnpm gives them). Everything else in node_modules is left alone.
+  // openid-client, oauth4webapi, jose, and cookie (Fastify's request injector) ship ES modules only; Jest loads
+  // CommonJS, so they go through the transform too (both paths pnpm gives them). Everything else in
+  // node_modules is left alone.
   transformIgnorePatterns: [
-    '/node_modules/(?!(\\.pnpm/)?(openid-client|oauth4webapi|jose)[@/])',
+    '/node_modules/(?!(\\.pnpm/)?(openid-client|oauth4webapi|jose|cookie)[@/])',
     '\\.pnp\\.[^\\/]+$',
   ],
 };
