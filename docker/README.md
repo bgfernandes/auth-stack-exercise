@@ -7,13 +7,14 @@ What each service in `docker-compose.yml` is for, and the conventions the apps a
 | Service | Image | Role | Reached at |
 | --- | --- | --- | --- |
 | `postgres` | `postgres` | One container, one database per service: `zitadel`, `spicedb`, `tenancy`, `documents` (`comments` in phase 5), created by `postgres/init.sql` on first start, each owned by a same-named role with the role name as password | `postgres:5432` inside compose; `localhost:5432` from the host |
-| `zitadel-api` | `ghcr.io/zitadel/zitadel` | The OpenID Provider: identities, credentials, tokens, JWKS, the management and v2 APIs, the console. Configured by environment at first start (`ZITADEL_FIRSTINSTANCE_*`), including the admin user and two machine users whose personal access tokens it writes to the `zitadel-bootstrap` volume | Through `proxy` only |
+| `zitadel-api` | `ghcr.io/zitadel/zitadel` | The OpenID Provider: identities, credentials, tokens, JWKS, the management and v2 APIs, the console. Configured by environment at first start (`ZITADEL_FIRSTINSTANCE_*`), including the admin user and two machine users whose personal access tokens it writes to the `zitadel-bootstrap` volume. Maps each app hostname to the host gateway so it can call the apps' back-channel logout URLs, and runs with its outbound-HTTP deny list narrowed to the link-local range (the default refuses every private address, which is every service here) | Through `proxy` only |
 | `zitadel-login` | `ghcr.io/zitadel/zitadel-login` | Login V2, the login UI of Zitadel v4, served under `/ui/v2/login` on the same origin as the API; authenticates to the API with `login-client.pat` | Through `proxy` only |
 | `proxy` | `traefik` | Routes one public origin, `http://auth.localtest.me:8080`, to the API and the login UI, as in Zitadel's reference compose (plain HTTP only) | `http://auth.localtest.me:8080` |
 | `spicedb-migrate` | `authzed/spicedb` | One-shot: applies SpiceDB's schema migrations to the `spicedb` database and exits | |
 | `spicedb` | `authzed/spicedb` | The authorization service: relationships, checks, lookups, ZedTokens. Clients present the preshared key as a bearer token | `spicedb:50051` inside compose; `localhost:50051` from the host |
 | `redis` | `redis` | Application session store (`packages/auth`), append-only so sessions survive a restart | `redis:6379` inside compose; `localhost:6379` from the host |
 | `mailpit` | `axllent/mailpit` | SMTP sink for Zitadel's verification and reset emails, with a web UI | SMTP `mailpit:1025` inside compose; UI `http://localhost:8025` |
+| `bootstrap` | built from `apps/bootstrap/Dockerfile` | One-shot: with `bootstrap.pat`, creates the Zitadel project and the `dashboard-web` application (reconciling its settings when they differ), seeds `alice`, `bob`, `carol`, and writes the apps' configuration to `/config`; idempotent, re-run by every `up`, exits non-zero on failure so the apps that depend on it do not start | |
 | `dashboard-web` (profile `apps`) | built from `apps/dashboard-web/Dockerfile` | The documents product's BFF (the ticket 3 spike for now): standalone Next.js server; its entrypoint sources `/config/dashboard-web.env` (OIDC issuer, client ID, redirect URIs) before starting | `http://dashboard.localtest.me:3000` |
 | `zed` | `authzed/zed` | SpiceDB's CLI, in the `tools` profile so `up` never starts it: `pnpm authz:zed schema read` | |
 
@@ -33,11 +34,13 @@ The first-instance admin is `ZITADEL_ADMIN_USERNAME` in `.env`. Zitadel suffixes
 - `apps`: the containerized apps (and, from ticket 4, the bootstrap container), for the reviewer path where everything runs in compose: `docker compose --profile apps up -d --wait --build`. App services carry `extra_hosts: ["auth.localtest.me:host-gateway"]` so they reach Zitadel at the same URL as the browser.
 - `tools`: one-off CLIs run with `docker compose run --rm`, never started by `up`.
 
+> **2026-10-15:** The bootstrap container is in the default set, not in `apps`: Tilt and the CI integration job start only the default set and need the configuration it writes. A plain `docker compose up -d --wait` therefore builds its image and runs it (it exits 0 when done; `--wait` accepts that), and the apps under `apps` depend on it with `condition: service_completed_successfully`.
+
 ## Shared locations
 
-- Named volume `zitadel-bootstrap`, mounted at `/bootstrap`: `bootstrap.pat` (the bootstrap machine user, which holds `IAM_OWNER`) and `login-client.pat` (used by Login V2). Read-write in `zitadel-api`, read-only in `zitadel-login` and in the bootstrap container (ticket 4); never mounted in an app.
-- Bind mount `./.local/config/` (gitignored), mounted at `/config`: the env files the bootstrap container generates for the apps (client IDs, issuer; ticket 4). Read-write in `bootstrap`, read-only in every app; a Tilt-run process on the host reads the same directory.
+- Named volume `zitadel-bootstrap`, mounted at `/bootstrap`: `bootstrap.pat` (the bootstrap machine user, which holds `IAM_OWNER`) and `login-client.pat` (used by Login V2). Read-write in `zitadel-api`, read-only in `zitadel-login` and in the bootstrap container; never mounted in an app.
+- Bind mount `./.local/config/` (gitignored), mounted at `/config`: the files the bootstrap container generates: `dashboard-web.env` (OIDC issuer, client ID, redirect URIs, `TENANCY_API_URL`; later one per app), `apis.env` (issuer, project ID as the audience, JWKS URL; sourced by every API), and `seed.json` (the Zitadel user IDs of the seeded users, for ticket 12). Read-write in `bootstrap`, read-only in every app; a Tilt-run process on the host reads the same directory. Bootstrap runs as root so it can write the directory on a Linux host, where Docker creates it root-owned on a clean checkout; the files it writes are therefore root-owned there (world-readable, mode 644).
 
 ## Resetting
 
-`docker compose down -v` removes the volumes, so the next `up` reinitializes Postgres (the init script runs again), Zitadel (a new instance, new PATs), SpiceDB, and Redis from scratch.
+`docker compose down -v` removes the volumes, so the next `up` reinitializes Postgres (the init script runs again), Zitadel (a new instance, new PATs), SpiceDB, and Redis from scratch, and bootstrap registers everything again with new IDs (`./.local/config/` is overwritten).

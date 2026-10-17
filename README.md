@@ -23,12 +23,21 @@ pnpm type-check    # tsc --noEmit in every package
 pnpm test          # unit tests (Jest); test:integration needs the compose stack, which arrives in ticket 2
 ```
 
-The infrastructure (Postgres, Zitadel with its login UI behind Traefik, SpiceDB, Redis, Mailpit) runs in Docker Compose with committed development defaults in `.env` (insecure by design, local use only). No setup step and no Node needed:
+The infrastructure (Postgres, Zitadel with its login UI behind Traefik, SpiceDB, Redis, Mailpit) runs in Docker Compose with committed development defaults in `.env` (insecure by design, local use only). No setup step and no Node needed; the one image built locally is the bootstrap container, which configures Zitadel (project, OIDC application, seeded users) and writes the apps' configuration to `.local/config/` (gitignored), then exits:
 
 ```sh
-docker compose up -d --wait   # 25-80 s from a clean state; returns when every service is healthy
+docker compose up -d --wait   # 40-90 s from a clean state; returns when every service is healthy and bootstrap has exited 0
+docker compose logs bootstrap # one JSON line per object: created, exists, updated, or unchanged
 docker compose down -v        # stop and wipe the volumes (fresh Zitadel instance and databases on the next up)
 ```
+
+Bootstrap is idempotent: every `up` re-runs it, a second run creates nothing, and a changed application setting is updated in place. The seeded users (password `Password1!`, emails verified, no Mailpit step needed):
+
+| User | Role in the seeded scenario (from ticket 12) |
+| --- | --- |
+| `alice@example.com` | Acme admin: every document editable |
+| `bob@example.com` | Acme member, Marketing editor |
+| `carol@example.com` | Acme member, Marketing viewer, one document shared directly (the reviewer's user) |
 
 | What | Where |
 | --- | --- |
@@ -37,15 +46,14 @@ docker compose down -v        # stop and wipe the volumes (fresh Zitadel instanc
 | Postgres, Redis, SpiceDB from the host | `localhost:5432`, `localhost:6379`, `localhost:50051` (preshared key `dev-preshared-key`) |
 | SpiceDB CLI | `pnpm authz:zed schema read` (runs `zed` in a container against the stack; answers "no schema has been defined" until ticket 6 writes one) |
 
-The apps run in compose too, under the `apps` profile. Until the bootstrap container (ticket 4) exists, a script registers the OIDC application in Zitadel and writes the app's configuration to `.local/config/` (gitignored):
+The apps run in compose too, under the `apps` profile; they start after bootstrap has completed and read their configuration from `.local/config/`:
 
 ```sh
-./scripts/spike/register-dashboard-web.sh            # needs the infrastructure up, curl and python3; repeat after every down -v
 docker compose --profile apps up -d --wait --build   # builds the app images and starts them
 ```
 
 | App | Where |
 | --- | --- |
-| `dashboard-web` | `http://dashboard.localtest.me:3000`: "Log in" goes through Zitadel and prints the ID-token claims (the spike of ticket 3; the real dashboard arrives in phase 1) |
+| `dashboard-web` | `http://dashboard.localtest.me:3000`: "Log in" goes through Zitadel (any seeded user) and prints the ID-token claims (the spike of ticket 3; the real dashboard arrives in phase 1) |
 
 `localtest.me` and its subdomains resolve to `127.0.0.1` in public DNS, so no hosts-file entry is needed. What each service is for, the ports, profiles, and shared volumes are in [`docker/README.md`](docker/README.md).

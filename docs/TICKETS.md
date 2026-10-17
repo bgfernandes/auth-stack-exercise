@@ -126,7 +126,9 @@
 
 **Tests:** unit tests for idempotency helpers (find-or-create) with the Zitadel client mocked.
 
-**Status:** Open.
+> **2026-10-15 (deviations):** The back-channel logout URI is the application's **public** URL, `http://dashboard.localtest.me:3000/auth/backchannel-logout`, not an internal one: Zitadel resolves the URI's hostname when the application is registered and refuses it if the lookup fails, and the app's service name is not in DNS until the app starts, which is after bootstrap completes. So `zitadel-api` gets `extra_hosts: dashboard.localtest.me:host-gateway` and reaches the app through the host's published port, the mirror image of §4.3 option (a); the same URL works under Tilt, where the app listens on the host, and `DASHBOARD_WEB_INTERNAL_URL` does not exist. Zitadel's outbound HTTP client also refuses private and loopback addresses by default (`HTTPClient.DenyList`, the SSRF guard behind the `Errors.Project.App.Blocked.BackchannelLogoutURL` error), which is every address in this stack, so compose narrows the list to the link-local range (`ZITADEL_HTTPCLIENT_DENYLIST=169.254.0.0/16`); a real deployment keeps the default. The existing application is **reconciled**, not only found: when its registered settings differ from what bootstrap wants (a URI changed, a later ticket added one), the OIDC configuration is updated in place and logged `updated`; project and users stay find-or-create. The service runs in the default profile set, not under `apps`, so a plain `docker compose up` (Tilt, CI) produces the handoff files, and `dashboard-web` depends on it with `service_completed_successfully`. It runs as root like `zitadel-api`, because Docker creates the gitignored `./.local/config` bind mount root-owned on a Linux host. Build: one esbuild bundle (`apps/bootstrap/build.mjs`, `dist/index.js`) copied into a bare `node:alpine` image, the decision deferred by the scaffold entry of the decision log. The seeded users have username = email (`alice@example.com`), so their login name carries no organization domain suffix; verified by logging all three in through the ticket 3 page with a headless browser, and `seed.json` holds the `sub` each login returned. The spike script of ticket 3 is deleted. Zitadel talks: plain `fetch` against the REST endpoints (management v1 for project and application, user v2 for users) behind a `ZitadelApi` interface, no SDK.
+
+**Status:** Done (2026-10-15).
 
 ---
 
@@ -140,6 +142,8 @@
 - CI additions to `ci.yml` (the `checks` job exists since ticket 1): `docker compose config` validation, and an `integration` job that starts the infrastructure with `docker compose up -d --wait` (no `apps` profile) and runs `test:integration`, which tickets 6, 7, and 8 populate. Playwright and the full-stack smoke test are added in ticket 13.
 
 **Acceptance criteria:** both CI jobs are green on `main`; `tilt up` starts the infra and the web app; `tilt down` leaves nothing running.
+
+> **2026-10-15:** The bootstrap service (ticket 4) is in the default profile set, so `docker_compose` under Tilt and `docker compose up -d --wait` in the integration job both run it and get `./.local/config/` populated; the back-channel URI it registers is the app's public URL, which works for a Tilt-run app on the host without an override. `TENANCY_API_URL` in `dashboard-web.env` is the compose-internal URL and is the one value Tilt overrides with `localhost:4001`.
 
 **Status:** Open.
 
