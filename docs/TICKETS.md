@@ -180,6 +180,8 @@
 
 > **2026-10-17 (package README):** `packages/authz/README.md` documents the env contract, the client and helpers with a usage example, the consistency rule per call, the schema subpath, and the checks; the first of the per-package READMEs the preamble now requires.
 
+> **2026-10-17 (ticket 15):** `apiScope` and `scopeObjectId` moved from `packages/authz` to the new `packages/client-scopes`, which holds the whole §6.7 workaround; `packages/authz` keeps the `client` and `api_scope` schema definitions only.
+
 **Status:** Done (2026-10-17).
 
 ---
@@ -238,7 +240,9 @@
 
 > **2026-10-17 (after ticket 8):** The test signer exists: the fake OP of `@auth-stack/auth/testing` signs any claims with its key (`sign()`) and serves the matching JWKS through its `fetch`. `jose` is a devDependency of the package since ticket 8; this ticket promotes it to a dependency.
 
-**Status:** Open.
+> **2026-10-17 (deviations):** Built as specified, with these differences. A real Zitadel JWT access token (minted through a throwaway machine user with the client-credentials grant, then deleted) carries `client_id` and no `azp`, no `scope`, header `typ: JWT`; the ID token of the same response carries `azp`, `client_id`, `at_hash`, `auth_time`, `amr`. So the grants and the resolver key on `client_id`, and the plugin refuses a token with `at_hash` or `nonce` and requires `client_id`, since an ID token of the issuer passes the `iss`/`aud`/`exp` checks otherwise (its `aud` carries the project ID, ticket 3). The SpiceDB-backed resolver and the `apiScope`/`scopeObjectId` helpers of ticket 6 live in a new package, `packages/client-scopes`, chosen over `packages/authz` so the §6.7 workaround has a boundary and a deletion recipe (its README); `packages/authz` keeps only the schema definitions. The plugin denies by default: a global `onRequest` hook rejects every route without a valid bearer unless the route declares `config: { public: true }`; `fastify.requireScope(...)` is the per-route gate, validating the scope strings when the route is declared. Responses: `401` with `WWW-Authenticate: Bearer` (no token) or `Bearer error="invalid_token"`, `403` with `error="insufficient_scope", scope="..."`, a body of `{ error: <code> }` and nothing else. The shared server options (`apiServerOptions`) take a well-formed inbound `X-Request-Id` and generate one otherwise, log it as `requestId`, and redact `authorization`, `cookie`, and `set-cookie` headers; `echoRequestId(app)` echoes the ID on responses. `fastify` is an optional peer dependency like `next`; `fastify-plugin` and `jose` are dependencies. The resolver caches per client for 60 s at `minimizeLatency` (a `consistency` option exists for tests), deduplicating concurrent lookups. Jest additionally transforms `cookie`, which Fastify's request injector loads as an ES module. The aud of a user's access token obtained through dashboard-web (expected to carry the project ID like the ID token does) is confirmed in ticket 16, the first consumer.
+
+**Status:** Done (2026-10-17).
 
 ---
 
@@ -251,6 +255,8 @@
 **Tests:** route tests with a test signer; `TenancyClient` contract test against both implementations.
 
 > **2026-10-17 (after ticket 7):** The tenancy service and the `TenancyClient` interface (`@auth-stack/tenancy/client`, with `UserContext` carrying the access token) exist since ticket 7; this ticket adds the Fastify routes over the service, the HTTP client implementation, and maps `TenancyError` codes to statuses.
+
+> **2026-10-17 (after ticket 15):** The API registers `bearerPlugin` from `@auth-stack/auth/fastify` with `createBearerVerifier(bearerOptionsFromEnv())` (reads `apis.env`) and `createScopeResolver(authz)` from `@auth-stack/client-scopes`, builds its server with `apiServerOptions()` and `echoRequestId(app)`, marks the health route `config: { public: true }`, and gates the rest with `app.requireScope('tenancy:read' | 'tenancy:write')`. Bootstrap writes the grants with `apiScope` and `client` from `@auth-stack/client-scopes`, keyed by the application's client ID. With the first real user token, confirm that its `aud` carries the project ID and that `client_id` is dashboard-web's client ID, and record it here.
 
 **Status:** Open.
 

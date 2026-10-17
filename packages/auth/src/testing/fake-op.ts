@@ -9,11 +9,19 @@ import { createHash, randomBytes } from 'node:crypto';
 
 import { exportJWK, generateKeyPair, SignJWT, type JWK } from 'jose';
 
-import type { OidcFetch } from '../oidc';
 import type { ServerMetadata } from 'openid-client';
 
 /** Drops the package's per-process discovery cache between tests. */
 export { resetDiscoveryCache } from '../oidc';
+
+/**
+ * The shape both `openid-client` (`customFetch`) and jose (`createRemoteJWKSet`) call a fetch replacement with;
+ * the OP only reads the method and the body.
+ */
+export type FakeFetch = (
+  url: string,
+  request: { method?: string; headers?: unknown; body?: unknown; signal?: AbortSignal },
+) => Promise<Response>;
 
 export interface FakeUser {
   sub: string;
@@ -42,7 +50,7 @@ export interface IdTokenOverrides {
 export interface FakeOp {
   issuer: string;
   metadata: ServerMetadata;
-  fetch: OidcFetch;
+  fetch: FakeFetch;
   /** The user's login at the OP: records the request, returns the callback URL (`redirect_uri?code&state`). */
   authorize(authorizationUrl: URL, user: FakeUser): URL;
   /** The OP answers the callback with an error instead of a code. */
@@ -53,8 +61,8 @@ export interface FakeOp {
   readonly refreshTokens: Set<string>;
   /** How many token requests the OP has served, by grant. */
   readonly grants: { authorization_code: number; refresh_token: number };
-  /** Signs arbitrary claims with the OP's key (tickets 15 and 18 build bearer and logout tokens with it). */
-  sign(claims: Record<string, unknown>): Promise<string>;
+  /** Signs arbitrary claims with the OP's key (tickets 15 and 18 build bearer and logout tokens with it); `typ` goes in the header. */
+  sign(claims: Record<string, unknown>, header?: { typ?: string }): Promise<string>;
 }
 
 interface PendingCode {
@@ -99,9 +107,9 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
   const grants = { authorization_code: 0, refresh_token: 0 };
   let tamper: IdTokenOverrides | undefined;
 
-  const sign = (claims: Record<string, unknown>): Promise<string> =>
+  const sign = (claims: Record<string, unknown>, header: { typ?: string } = {}): Promise<string> =>
     new SignJWT(claims)
-      .setProtectedHeader({ alg: 'ES256', kid: jwk.kid as string })
+      .setProtectedHeader({ alg: 'ES256', kid: jwk.kid as string, ...header })
       .sign(privateKey);
 
   async function idToken(user: FakeUser, nonce: string | undefined): Promise<string> {
@@ -172,7 +180,7 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
     return json({ error: 'unsupported_grant_type' }, 400);
   }
 
-  const fetch: OidcFetch = async (url, request) => {
+  const fetch: FakeFetch = async (url, request) => {
     const { pathname } = new URL(url);
     if (!url.startsWith(issuer)) return new Response('not the OP', { status: 502 });
     if (pathname === '/.well-known/openid-configuration') return json(metadata);

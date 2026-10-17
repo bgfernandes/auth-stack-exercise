@@ -20,7 +20,6 @@ export {
   type Consistency,
   type ZedToken,
 } from './consistency';
-export { apiScope, scopeObjectId } from './scopes';
 export {
   create,
   isObjectId,

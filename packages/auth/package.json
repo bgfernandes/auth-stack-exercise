@@ -2,31 +2,38 @@
   "name": "@auth-stack/auth",
   "version": "0.0.0",
   "private": true,
-  "description": "OIDC client, session store, and cookie helpers for the auth-stack BFFs; the bearer half for the APIs follows.",
+  "description": "OIDC client, session store, and cookie helpers for the auth-stack BFFs; bearer verification and the scope gate for the APIs.",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
     "./next": "./src/next/index.ts",
+    "./fastify": "./src/fastify/index.ts",
     "./testing": "./src/testing/fake-op.ts"
   },
   "scripts": {
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "fastify-plugin": "6.0.1",
+    "jose": "6.2.12",
     "openid-client": "6.8.8"
   },
   "peerDependencies": {
+    "fastify": "5.12.7",
     "next": "16.4.1"
   },
   "peerDependenciesMeta": {
+    "fastify": {
+      "optional": true
+    },
     "next": {
       "optional": true
     }
   },
   "devDependencies": {
     "@auth-stack/config": "workspace:*",
+    "fastify": "5.12.7",
     "ioredis": "^6.0.0",
-    "jose": "6.2.12",
     "next": "16.4.1"
   }
 }

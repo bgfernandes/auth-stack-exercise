@@ -1,0 +1,20 @@
+{
+  "name": "@auth-stack/client-scopes",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Client authority stored in SpiceDB: the workaround for a provider without custom scopes. Deletable as a unit.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@auth-stack/auth": "workspace:*",
+    "@auth-stack/authz": "workspace:*"
+  },
+  "devDependencies": {
+    "@auth-stack/config": "workspace:*"
+  }
+}
