@@ -220,7 +220,9 @@
 
 **Tests:** unit tests with a fake OP (`nock` or `openid-client`'s test helpers): happy path, each failure path, cookie attributes; the `SessionStore` contract test run against both adapters (Redis through the compose service in CI), including idle and absolute expiry, `deleteByLogoutToken` with `sid` only, `sub` only, and both, and the logout-versus-touch race.
 
-**Status:** Open.
+> **2026-10-17 (deviations):** Built as specified, with these differences. The `SessionStore` also has `update(id, patch): Promise<boolean>`, the optional atomic update of `nextjs-auth0`'s `sessionStore` that `docs/README.md` §4.4 names: it writes only to a session that still exists, reports whether it did, and resets the idle expiry, and it is how `getAccessToken` stores a refreshed token pair; `touch` keeps its single job, and there is no upsert. `getAccessToken` lives on a provider (`createAccessTokenProvider({ client, store })`) that deduplicates concurrent refreshes per session in the process (parallel server components of one render, and Zitadel rotates refresh tokens), re-reads the session when its refresh is refused in case another process refreshed first, and on `invalid_grant` deletes the session and returns `undefined`. `completeLogin` compares `state` itself before the exchange; the error codes are `no_login_in_progress`, `login_expired`, `state_mismatch`, `nonce_mismatch`, `authorization_denied`, `exchange_failed`, `token_invalid`, `refresh_failed`, and `forbidden_origin`, and the `next` binding answers every login failure with one generic response while logging the code through `redact`. `endSessionUrl(idToken)` takes the post-logout redirect from the client's configuration rather than as a second argument, since it is a registered URI. The stash cookie is scoped to the callback path rather than `/`; the session cookie is `Path=/`. The Redis adapter takes a `prefix` per app (the BFFs share one Redis, and the `sid` and `user` indexes must not mix) and needs four commands of an `ioredis`-compatible client (`eval`, `hgetall`, `smembers`, `srem`); `ioredis` 6 is a devDependency of the package for the integration test and a dependency of the apps. The rolling `touch` in the `next` binding runs at most once a minute per session. Tests use neither `nock` nor library test helpers (`openid-client` v6 has none): an in-process fake OP on the subpath `@auth-stack/auth/testing`, served through the library's `customFetch` hook, with `sign()` for the bearer and logout tokens of tickets 15 and 18; Jest transforms `openid-client`, `oauth4webapi`, and `jose`, which ship ES modules only. `next` is an optional peer dependency (and a devDependency) of the package. A `next build` probe of a route importing `@auth-stack/auth/next` found that Turbopack does not resolve the `.js` relative imports the packages used, which changed the workspace rule (CLAUDE.md; decision log). Env: `.env` gains `SESSION_SECRET` and `REDIS_URL`, bootstrap's handoff adds `APP_URL` to `dashboard-web.env`; wiring them into the dashboard-web compose service and the Tiltfile is ticket 9, with the routes. Timestamps in the session are epoch milliseconds (`authTime` included). Zitadel's instance settings were checked against the refresh premise: access and ID tokens live 600 s, refresh tokens 8 h.
+
+**Status:** Done (2026-10-17).
 
 ---
 
@@ -233,6 +235,8 @@
 **Tests:** unit tests for the plugin (valid, expired, wrong audience, wrong issuer, malformed, missing scope, scope from registry vs from claim) with a test signer.
 
 > **2026-10-17:** Per the preamble rule added in ticket 6, this ticket writes or updates the README of every package it implements or changes (`packages/auth`, its `fastify` subpath) in the same PR.
+
+> **2026-10-17 (after ticket 8):** The test signer exists: the fake OP of `@auth-stack/auth/testing` signs any claims with its key (`sign()`) and serves the matching JWKS through its `fetch`. `jose` is a devDependency of the package since ticket 8; this ticket promotes it to a dependency.
 
 **Status:** Open.
 
@@ -259,6 +263,8 @@
 **Description:** Replace the spike page with the real app skeleton: `/` (public landing with "Log in"), `/auth/login`, `/auth/callback`, `/auth/logout` (a `POST` route handler guarded by `assertSameOrigin`), `/dashboard` (protected). `proxy.ts` redirects unauthenticated requests under `/dashboard` to `/auth/login`. A `getCurrentUser()` server helper reads the session once per request. Minimal CSS, no component library. Refines the Dockerfile, compose service, and entrypoint from ticket 3.
 
 **Acceptance criteria:** log in as Alice, see "Welcome, Alice" on `/dashboard`; log out and `/dashboard` redirects to login; the Zitadel session is ended too (visiting Zitadel's login shows the form again).
+
+> **2026-10-17 (after ticket 8):** The routes are one call each on `createNextAuth` from `@auth-stack/auth/next` (`login()`, `callback(request)`, `logout(request)`, which does the same-origin check itself; `currentSession()` for `getCurrentUser()`, `sessionFromRequest(request)` for `proxy.ts`), configured from `authOptionsFromEnv(process.env, { app: 'dashboard-web' })` and `createRedisSessionStore(new Redis(redisUrl), { prefix: 'dashboard-web' })`; the app adds `ioredis`. This ticket wires `SESSION_SECRET` and `REDIS_URL` from `.env` into the compose service and the Tiltfile (`REDIS_URL=redis://localhost:6379` on the host); `APP_URL` already comes from the handoff file. The spike's claims cookie and `lib/oidc.ts` go away.
 
 **Status:** Open.
 
@@ -385,6 +391,8 @@
 **Tests:** unit tests with a signed fake logout token; integration test: logout in Zitadel removes the Redis session.
 
 > **2026-10-17:** Per the preamble rule added in ticket 6, this ticket writes or updates the README of every package it implements or changes (`packages/auth`) in the same PR.
+
+> **2026-10-17 (after ticket 8):** `deleteByLogoutToken({ sid, sub })` exists on both stores with the semantics of §4.4 (with `sid`, that IdP session's sessions, also matching `sub` when both are given; with `sub` alone, every session of the user; a mismatched pair deletes nothing), and the fake OP's `sign()` produces the test logout tokens. This ticket adds the token validation and the handler.
 
 **Status:** Open.
 
