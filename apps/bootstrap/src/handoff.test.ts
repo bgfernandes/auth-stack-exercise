@@ -36,6 +36,7 @@ describe('env files', () => {
       OIDC_CLIENT_ID: '456',
       OIDC_REDIRECT_URI: 'http://dashboard.localtest.me:3000/auth/callback',
       OIDC_POST_LOGOUT_REDIRECT_URI: 'http://dashboard.localtest.me:3000/',
+      APP_URL: 'http://dashboard.localtest.me:3000',
       TENANCY_API_URL: 'http://tenancy-api:4001',
     });
   });
