@@ -1,2 +1,23 @@
-/** Placeholder until the package gets its first real module; lets the pipeline exercise this package from the start. */
-export const packageName = '@auth-stack/documents';
+/**
+ * `@auth-stack/documents`: schema, migrations, and the service of the documents domain (docs/README.md §3.1).
+ * Imported by `dashboard-web` in phase 1 and only by `dashboard-api` from phase 2.
+ */
+export { DocumentsError, type DocumentsErrorCode } from './errors.js';
+export {
+  documents,
+  projects,
+  schema,
+  type Document,
+  type DocumentsSchema,
+  type Project,
+} from './schema.js';
+export {
+  createDocumentsService,
+  PERSONAL_PROJECT_NAME,
+  WELCOME_DOCUMENT,
+  type DocumentsDb,
+  type DocumentsService,
+  type PersonalWorkspace,
+  type VisibleDocument,
+} from './service.js';
+export { documentValuesSchema, parseDocumentValues, type DocumentValues } from './values.js';
