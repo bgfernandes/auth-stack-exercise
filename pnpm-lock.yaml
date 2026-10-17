@@ -121,6 +121,19 @@ importers:
         specifier: workspace:*
         version: link:../config
 
+  packages/client-scopes:
+    dependencies:
+      '@auth-stack/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@auth-stack/authz':
+        specifier: workspace:*
+        version: link:../authz
+    devDependencies:
+      '@auth-stack/config':
+        specifier: workspace:*
+        version: link:../config
+
   packages/config:
     dependencies:
       eslint:

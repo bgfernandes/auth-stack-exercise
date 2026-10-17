@@ -79,7 +79,7 @@ definition document {
     permission share: user = project->share
 }
 
-/** An OAuth client, identified by the `azp` claim of the access token (§6.7). A workaround for Zitadel issuing no `scope` claim: client authority is stored here like every other "who may do what" fact. */
+/** An OAuth client, identified by the `client_id` claim of the access token (§6.7). A workaround for Zitadel issuing no `scope` claim: client authority is stored here like every other "who may do what" fact. The helpers live in packages/client-scopes, deletable as a unit. */
 definition client {}
 
 /** One object per API scope string, with `:` replaced by `_` in the object ID because SpiceDB object IDs cannot contain a colon (`documents:write` is `api_scope:documents_write`). */

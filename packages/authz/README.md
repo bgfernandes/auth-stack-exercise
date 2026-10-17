@@ -72,7 +72,7 @@ Every call names its consistency explicitly: `fullyConsistent` on the write path
 
 `ref(type, id)` validates the object ID (SpiceDB allows `[a-zA-Z0-9/_|\-=+]`, 1 to 1024 characters, no colon) and `relationship(resource, relation, subject)` only accepts a subject of the type the schema names for that relation. `VOCABULARY` is the constant the types derive from; a unit test keeps it equal to `schema.zed`.
 
-API scopes (`docs/README.md` §6.7) are `api_scope` objects: `scopeObjectId('documents:write')` is `documents_write` and `apiScope('documents:write')` is the reference, used by bootstrap when writing a client's grants and by the scope resolver when looking them up.
+The `client` and `api_scope` definitions carry the client-authority workaround of `docs/README.md` §6.7; the helpers that write and resolve those grants are in `@auth-stack/client-scopes`, not here, so the workaround can be deleted as a unit.
 
 ## The schema
 
