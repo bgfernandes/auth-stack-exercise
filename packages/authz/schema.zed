@@ -1,0 +1,92 @@
+// The SpiceDB schema (docs/README.md §6.2), one schema partitioned by owner: tenancy writes the organization
+// level, the documents domain the project and document levels, bootstrap the client-authority grants (§6.7).
+// Phase 5 adds the `comment` definition (ticket 27). Roles are named bundles of relations rather than a `role`
+// relation with string values, so a new role is a schema change reviewed like code and every permission stays
+// computable by LookupResources. Relations are named as nouns (who), permissions as verbs (what).
+//
+// `use typechecking` makes SpiceDB verify the subject types annotated on each permission at WriteSchema time
+// (and `zed validate` offline); the annotations are documentation that cannot drift. Bootstrap writes this
+// file at every start (packages/authz/src/schema.ts); `pnpm authz:validate` checks it without a server.
+
+use typechecking
+
+/** A person, identified by the `sub` claim of the token Zitadel issued. Every grant is per person: the role relations below admit only users, and grants to sets (a `group` definition) are left to docs/README.md §10. */
+definition user {}
+
+/** The top of the hierarchy (organization → project → document), owned by the tenancy service, which writes its relationships. There is no object above it: a platform operator has no place in this model (§10). */
+definition organization {
+    /** Organization administrators. They reach every project and document in the organization by inheritance. */
+    relation admin: user
+
+    /** Organization members. They see nothing by inheritance and must be added to each project, which is what makes a project "unavailable" to a member who was not added to it. */
+    relation member: user
+
+    /** Manage the organization (members, roles, policy) and, through the arrows below, everything in it. */
+    permission administer: user = admin
+
+    /** See the organization: its name and policy. A non-member gets 404 from tenancy-api. */
+    permission view: user = admin + member
+
+    /** Create a project in the organization. */
+    permission create_project: user = admin + member
+}
+
+/** The container the documents domain owns inside an organization. Project roles flow down to every document in the project. */
+definition project {
+    /** The organization the project belongs to: the structural relationship the `organization->` arrows resolve through, written together with the project. */
+    relation organization: organization
+
+    /** The project's owner, a project administrator. */
+    relation owner: user
+
+    /** Editors: edit and read every document in the project. */
+    relation editor: user
+
+    /** Viewers: read every document in the project. */
+    relation viewer: user
+
+    /** Manage the project: its owner and the organization's administrators. */
+    permission administer: user = owner + organization->administer
+
+    /** Change the documents in the project. */
+    permission edit: user = owner + editor + organization->administer
+
+    /** See the project and read its documents. */
+    permission view: user = owner + editor + viewer + organization->administer
+
+    /** Grant a project role or a direct document share: project administrators only. Its own permission rather than `administer` tested by callers, so it can be widened later (editors sharing what they edit) in this one line with no caller changed. */
+    permission share: user = administer
+}
+
+/** A document: the content with the two editable values. Direct shares let the read-only and editable states differ inside one project. */
+definition document {
+    /** The project the document belongs to; written together with the document. */
+    relation project: project
+
+    /** Direct share: edit this one document without a project role. */
+    relation editor: user
+
+    /** Direct share: read this one document without a project role. */
+    relation viewer: user
+
+    /** Change the content. The write path checks it at fully_consistent and stores the returned ZedToken with the content (§7.3); the dashboard checks it in bulk to choose between "Edit" and "Read-only". */
+    permission edit: user = editor + project->edit
+
+    /** Read the content. The dashboard lists what LookupResources returns for it; the edit page checks it with the row's ZedToken. A user without it gets 404, not 403 (no existence leak). */
+    permission view: user = viewer + editor + project->view
+
+    /** Share the document. Follows the project, so a user who only holds a direct share cannot share it on: Carol edits "Launch plan" and cannot share it. */
+    permission share: user = project->share
+}
+
+/** An OAuth client, identified by the `azp` claim of the access token (§6.7). A workaround for Zitadel issuing no `scope` claim: client authority is stored here like every other "who may do what" fact. */
+definition client {}
+
+/** One object per API scope string, with `:` replaced by `_` in the object ID because SpiceDB object IDs cannot contain a colon (`documents:write` is `api_scope:documents_write`). */
+definition api_scope {
+    /** The clients granted the scope. Bootstrap writes one relationship per scope of each API a first-party client calls; registering a new client is one more set of relationships. */
+    relation grantee: client
+
+    /** Call the API operations behind the scope. The bearer plugin resolves a client's effective scopes with one LookupResources on this permission, cached per client. */
+    permission invoke: client = grantee
+}

@@ -354,6 +354,9 @@ services:
       ZED_ENDPOINT: spicedb:50051
       ZED_TOKEN: ${SPICEDB_PRESHARED_KEY}
       ZED_INSECURE: 'true'
+    volumes:
+      # The schema file, for `zed validate` without a server: `pnpm authz:validate` (run with --no-deps).
+      - ./packages/authz:/authz:ro
     networks:
       - auth-stack
     depends_on:

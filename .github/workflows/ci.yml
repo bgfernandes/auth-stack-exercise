@@ -28,6 +28,9 @@ jobs:
       # Parses the compose file and .env with every profile enabled; needs no daemon.
       - name: Validate the compose file
         run: docker compose --profile '*' config --quiet
+      # `zed validate` offline, through the zed image: the schema parses and its type annotations hold.
+      - name: Validate the SpiceDB schema
+        run: pnpm authz:validate
 
   integration:
     name: Integration tests against the compose stack
