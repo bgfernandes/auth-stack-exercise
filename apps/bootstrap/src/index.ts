@@ -1,0 +1,113 @@
+/**
+ * Bootstrap (ticket 4): a one-shot, idempotent configuration of Zitadel for this stack. It creates the single
+ * project and the dashboard-web application, seeds the users of docs/README.md §6.3, and writes the handoff
+ * files the apps start from. Every object is matched by name first, so running it again creates nothing. Any
+ * failure exits non-zero so compose surfaces it and the apps that depend on it never start.
+ */
+import { readFile } from 'node:fs/promises';
+
+import { writeHandoff, type Handoff } from './handoff.js';
+import { log, logError } from './log.js';
+import { SEED_USERS } from './seed.js';
+import {
+  ensureHumanUser,
+  ensureOidcApp,
+  ensureProject,
+  fetchDiscovery,
+  waitForZitadel,
+  ZitadelClient,
+  type OidcAppConfig,
+} from './zitadel.js';
+
+const PROJECT_NAME = 'auth-stack-exercise';
+const DASHBOARD_WEB_APP = 'dashboard-web';
+const READY_TIMEOUT_MS = 120_000;
+
+function required(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`missing environment variable ${name}`);
+  return value;
+}
+
+function stripTrailingSlash(url: string): string {
+  return url.replace(/\/+$/, '');
+}
+
+/** Web application, PKCE without a secret, JWT access tokens, userinfo claims in the ID token (§4.2, §4.4). */
+export function dashboardWebConfig(publicUrl: string): OidcAppConfig {
+  return {
+    redirectUris: [`${publicUrl}/auth/callback`],
+    postLogoutRedirectUris: [`${publicUrl}/`],
+    responseTypes: ['OIDC_RESPONSE_TYPE_CODE'],
+    grantTypes: ['OIDC_GRANT_TYPE_AUTHORIZATION_CODE', 'OIDC_GRANT_TYPE_REFRESH_TOKEN'],
+    appType: 'OIDC_APP_TYPE_WEB',
+    authMethodType: 'OIDC_AUTH_METHOD_TYPE_NONE',
+    accessTokenType: 'OIDC_TOKEN_TYPE_JWT',
+    idTokenUserinfoAssertion: true,
+    // Allows an http:// redirect URI on a host other than localhost (ticket 3); off behind TLS.
+    devMode: true,
+    // Zitadel calls this URL server to server (§4.4 step 6; the route arrives in ticket 18). It is the public
+    // URL: Zitadel resolves the hostname at registration time, and the app's service name is not in DNS until
+    // the app starts, which happens after bootstrap. zitadel-api maps the hostname to the host gateway.
+    backChannelLogoutUri: `${publicUrl}/auth/backchannel-logout`,
+  };
+}
+
+async function main(): Promise<void> {
+  const zitadelUrl = stripTrailingSlash(required('ZITADEL_URL'));
+  const patFile = required('ZITADEL_PAT_FILE');
+  const configDir = required('CONFIG_DIR');
+  const dashboardWebUrl = stripTrailingSlash(required('DASHBOARD_WEB_URL'));
+  const tenancyApiUrl = stripTrailingSlash(required('TENANCY_API_URL'));
+  const seedPassword = required('SEED_USER_PASSWORD');
+
+  log('zitadel.wait', { url: zitadelUrl });
+  await waitForZitadel(zitadelUrl, READY_TIMEOUT_MS);
+  const pat = (await readFile(patFile, 'utf8')).trim();
+  if (!pat) throw new Error(`${patFile} is empty`);
+  const api = new ZitadelClient(zitadelUrl, pat);
+  const discovery = await fetchDiscovery(zitadelUrl);
+  log('zitadel.ready', { issuer: discovery.issuer });
+
+  const project = await ensureProject(api, PROJECT_NAME);
+  log('project', { name: PROJECT_NAME, id: project.id, action: project.action });
+
+  const app = await ensureOidcApp(
+    api,
+    project.id,
+    DASHBOARD_WEB_APP,
+    dashboardWebConfig(dashboardWebUrl),
+  );
+  log('application', { name: DASHBOARD_WEB_APP, id: app.appId, action: app.action });
+
+  const users: Handoff['users'] = {};
+  for (const seed of SEED_USERS) {
+    const user = await ensureHumanUser(api, {
+      username: seed.email,
+      email: seed.email,
+      givenName: seed.givenName,
+      familyName: seed.familyName,
+      password: seedPassword,
+    });
+    users[seed.key] = { id: user.id, email: seed.email };
+    log('user', { username: seed.email, id: user.id, action: user.action });
+  }
+
+  const files = await writeHandoff(configDir, {
+    issuer: discovery.issuer,
+    jwksUrl: discovery.jwks_uri,
+    projectId: project.id,
+    dashboardWeb: { clientId: app.clientId, url: dashboardWebUrl },
+    tenancyApiUrl,
+    users,
+  });
+  log('handoff', { dir: configDir, files });
+  log('done');
+}
+
+try {
+  await main();
+} catch (error) {
+  logError('bootstrap.failed', error);
+  process.exit(1);
+}
