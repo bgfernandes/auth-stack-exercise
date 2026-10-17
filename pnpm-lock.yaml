@@ -95,6 +95,9 @@ importers:
       '@auth-stack/config':
         specifier: workspace:*
         version: link:../config
+      jose:
+        specifier: 6.2.12
+        version: 6.2.12
 
   packages/authz:
     dependencies:

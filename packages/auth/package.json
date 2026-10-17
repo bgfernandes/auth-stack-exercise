@@ -5,7 +5,8 @@
   "description": "OIDC client, session store, and cookie helpers for the auth-stack BFFs; the bearer half for the APIs follows.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/fake-op.ts"
   },
   "scripts": {
     "type-check": "tsc --noEmit"
@@ -14,6 +15,7 @@
     "openid-client": "6.8.8"
   },
   "devDependencies": {
-    "@auth-stack/config": "workspace:*"
+    "@auth-stack/config": "workspace:*",
+    "jose": "6.2.12"
   }
 }

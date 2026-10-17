@@ -6,7 +6,7 @@ const ignoredPaths = ['/node_modules/', '/dist/', '/.next/'];
 const shared = {
   testEnvironment: 'node',
   transform: {
-    '^.+\\.tsx?$': [
+    '^.+\\.[tj]sx?$': [
       '@swc/jest',
       {
         jsc: { parser: { syntax: 'typescript', tsx: true }, target: 'es2022' },
@@ -17,6 +17,12 @@ const shared = {
   },
   moduleFileExtensions: ['ts', 'tsx', 'js', 'mjs', 'json', 'zed'],
   testPathIgnorePatterns: ignoredPaths,
+  // openid-client, oauth4webapi, and jose ship ES modules only; Jest loads CommonJS, so they go through the
+  // transform too (both paths pnpm gives them). Everything else in node_modules is left alone.
+  transformIgnorePatterns: [
+    '/node_modules/(?!(\\.pnpm/)?(openid-client|oauth4webapi|jose)[@/])',
+    '\\.pnp\\.[^\\/]+$',
+  ],
 };
 
 /** @type {import('jest').Config} */
