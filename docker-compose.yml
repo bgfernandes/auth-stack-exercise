@@ -73,6 +73,11 @@ services:
       ZITADEL_DEFAULTINSTANCE_LOGINPOLICY_IGNOREUNKNOWNUSERNAMES: true
       ZITADEL_DEFAULTINSTANCE_LOGINPOLICY_ALLOWREGISTER: true
 
+      # Zitadel's outbound HTTP client (back-channel logout, actions) refuses private and loopback addresses by
+      # default, which is every service in this stack and the host under Tilt. Only the link-local range stays
+      # denied here (cloud metadata endpoints); a real deployment keeps the default list.
+      ZITADEL_HTTPCLIENT_DENYLIST: 169.254.0.0/16
+
       # Outbound mail goes to Mailpit.
       ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_SMTP_HOST: mailpit:1025
       ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_TLS: false
@@ -85,6 +90,10 @@ services:
       timeout: 30s
       retries: 12
       start_period: 20s
+    # Zitadel reaches the apps the way the apps reach Zitadel: by their public hostname through the host's
+    # published port (back-channel logout, docs/README.md §4.4). One entry per app hostname.
+    extra_hosts:
+      - dashboard.localtest.me:host-gateway
     volumes:
       - zitadel-bootstrap:/bootstrap:rw
     networks:
@@ -263,6 +272,37 @@ services:
     networks:
       - auth-stack
 
+  # One-shot (ticket 4): configures Zitadel through its API with the bootstrap machine user's PAT, seeds the users,
+  # and writes the apps' configuration to ./.local/config. Idempotent, so every `up` re-runs it; exits non-zero on
+  # failure, which holds back the apps that depend on it. Built from source like the apps, in every profile, so
+  # Tilt and CI (ticket 5) get the handoff files too.
+  bootstrap:
+    build:
+      context: .
+      dockerfile: apps/bootstrap/Dockerfile
+    image: auth-stack/bootstrap:dev
+    # Root so it can write the bind-mounted ./.local/config on a Linux host, where Docker creates the directory
+    # as root on a clean checkout (the PAT it reads is world-readable).
+    user: '0'
+    environment:
+      # Same Zitadel URL as the browser (docs/README.md §4.3, option (a)), so the issuer it writes is the public one.
+      ZITADEL_URL: http://${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}
+      ZITADEL_PAT_FILE: /bootstrap/bootstrap.pat
+      CONFIG_DIR: /config
+      DASHBOARD_WEB_URL: ${DASHBOARD_WEB_URL}
+      TENANCY_API_URL: ${TENANCY_API_URL}
+      SEED_USER_PASSWORD: ${SEED_USER_PASSWORD}
+    extra_hosts:
+      - auth.localtest.me:host-gateway
+    volumes:
+      - zitadel-bootstrap:/bootstrap:ro
+      - ./.local/config:/config
+    networks:
+      - auth-stack
+    depends_on:
+      proxy:
+        condition: service_healthy
+
   # Apps profile: the containerized apps, for the reviewer path where everything runs in compose.
   # `docker compose --profile apps up -d --wait --build`.
   dashboard-web:
@@ -281,8 +321,7 @@ services:
     extra_hosts:
       - auth.localtest.me:host-gateway
     volumes:
-      # Generated configuration (OIDC client ID and issuer), written by the registration script of ticket 3 and
-      # by the bootstrap container from ticket 4.
+      # Generated configuration (OIDC client ID and issuer), written by the bootstrap container.
       - ./.local/config:/config:ro
     healthcheck:
       test: ['CMD', 'wget', '--quiet', '--spider', 'http://127.0.0.1:3000/']
@@ -293,8 +332,9 @@ services:
     networks:
       - auth-stack
     depends_on:
-      proxy:
-        condition: service_healthy
+      # Implies a healthy Zitadel; the app must not start before its env file exists.
+      bootstrap:
+        condition: service_completed_successfully
 
   # Tools profile: not started by `up`. `pnpm authz:zed <args>` runs SpiceDB's CLI against the stack.
   zed:
@@ -319,5 +359,5 @@ volumes:
   postgres-data:
   redis-data:
   # Holds the two personal access tokens Zitadel writes at first start. Mounted read-write in zitadel-api,
-  # read-only in zitadel-login and bootstrap (ticket 4), never in an app.
+  # read-only in zitadel-login and bootstrap, never in an app.
   zitadel-bootstrap:

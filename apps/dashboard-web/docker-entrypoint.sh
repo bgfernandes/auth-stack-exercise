@@ -1,6 +1,6 @@
 #!/bin/sh
-# Loads the configuration the bootstrap container generated (ticket 4; the spike's script in ticket 3), then
-# starts the standalone Next.js server. Variables already set in the environment win over the file.
+# Loads the configuration the bootstrap container generated, then starts the standalone Next.js server. The file
+# is sourced, so its values win over variables of the same name already in the environment.
 set -eu
 CONFIG_FILE=/config/dashboard-web.env
 if [ -f "$CONFIG_FILE" ]; then

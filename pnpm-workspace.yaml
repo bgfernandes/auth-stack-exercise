@@ -2,11 +2,12 @@ packages:
   - apps/*
   - packages/*
 
-# pnpm 10 refuses dependency lifecycle scripts unless listed. These three ship their native binaries as optional
-# dependencies and their postinstall is only a fallback download, so they are ignored on purpose.
+# pnpm 10 refuses dependency lifecycle scripts unless listed. These ship their native binaries as optional
+# dependencies and their postinstall is only a fallback download or a check, so they are ignored on purpose.
 ignoredBuiltDependencies:
   - '@parcel/watcher'
   - '@swc/core'
+  - esbuild
   - unrs-resolver
 
 # eslint-config-next 16 pulls plugins whose peer ranges stop at ESLint 9 (an end-of-life line); they run on
