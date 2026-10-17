@@ -193,9 +193,11 @@
 
 **Tests:** migrations apply on fresh databases in CI; a round-trip insert/select per table.
 
-> **2026-10-17:** Per the preamble rule added in ticket 6, this ticket writes or updates the README of every package it implements or changes (`packages/db-core`, `packages/tenancy`, `packages/documents`) in the same PR.
+> **2026-10-17 (deviations):** Drizzle 0.45.4 with drizzle-kit 0.31.11 (the 1.0 release candidate was not taken: its migrator and relational query APIs are still moving), postgres-js 3.4.9, zod 4.6.7. The services are implemented now rather than stubbed, since their inputs exist: tenancy's `provisionUser(claims)`, `getOrganization`, `listOrganizations`, `setMembership`, `setPolicy`, and documents' `ensurePersonalProject`, `listVisibleDocuments`, `getDocumentForEdit`, `updateDocument`, so tickets 10, 11, and 16 wire HTTP and UI around them. Each reads its consistency level from the caller (`fullyConsistent` throughout phase 1), takes `db`, `authz`, and the `TenancyClient` through a factory, and throws one error type per package with a `code` (`not_found`, `forbidden`, tenancy's `personal_organization`) that the API or the web app maps to a status; `UserContext` (`sub` plus the access token the HTTP client will forward) is the caller's identity on the client subpath, `Principal` (`sub`) on the service. `projects` gained `is_personal`, which the partial unique index this ticket names needs and §5.2 did not list (note there). Migrations are drizzle-kit's generated SQL (`packages/<p>/migrations/`, with the `meta/` snapshots committed and ignored by Prettier); `db:generate --name <change>` and `db:migrate` per package are `drizzle-kit`, so the ticket's `pnpm db:migrate --filter <package>` is `pnpm --filter @auth-stack/<package> db:migrate`, and a root `pnpm db:migrate` runs every package; bootstrap applies the same folders through `runMigrations` of `db-core`, which shares drizzle-kit's journal table, after the schema write and before the Zitadel steps, and its image copies the folders next to the bundle (`./migrations/<package>`), since a bundle cannot carry a folder the migrator reads at runtime. `TENANCY_DATABASE_URL` and `DOCUMENTS_DATABASE_URL` join `.env` beside the Zitadel and SpiceDB DSNs; compose passes them to bootstrap, which now also waits for a healthy Postgres. Seed helpers are left to ticket 12, where the data is defined. The service tests are integration tests, not unit tests with fakes: a Drizzle query has no meaningful fake, so each package's test owns a database on the compose Postgres (`it_tenancy`, `it_documents`, created through `@auth-stack/db-core/testing`), dropped with `WITH (FORCE)` before it is created so a crashed run never leaves more than one behind, and migrated from zero, which is the "fresh database" the ticket asks for; SpiceDB has no such unit, so the three integration files share the compose instance and isolate by data: fresh UUID resources and per-run subjects, every relationship written removed afterwards, and lookups that return an orphan filtered through a UUID check (the files run in parallel; the authz test's `it-` prefix cannot match a UUID); unit tests cover the two zod schemas. Two findings while writing them: a query sent through the pool from inside a transaction deadlocks under contention (every loser of the insert race held a pooled connection and waited for another), so the losing path reads through the transaction and `db-core`'s README says so; and a grant written directly to SpiceDB after a document's last write is invisible to reads at least as fresh as the row, which is the §7.3 reason the share action stores its token on the row, so the test does the same. The root README has no trade-offs section until ticket 14; the sentence about bootstrap executing migrations sits in its Development section until then. The bootstrap image's install layer, rebuilt because the manifests changed, took 3.8 s cold against the 2.3 s of ticket 6: drizzle-kit is a devDependency of the two service packages and the filtered install takes the devDependencies of every workspace package in bootstrap's closure; the bundle grew from 6.1 MB to 7.2 MB with Drizzle and postgres-js. Verified: lint, type-check, Prettier, the 8 new unit tests, the 34 integration tests (schema, provisioning, the three dashboard states, concurrency), compose config with every profile, actionlint, gitleaks; `docker compose run --rm --build bootstrap` against the running stack logged `migrations` for both databases after `schema unchanged`, the tables and the journal row exist in each, a second run was a no-op, `pnpm db:migrate` from the host found nothing pending, and no `it_*` database remained after the tests; then the reviewer path on fresh volumes (`down -v`, no `.local/`) had every service healthy 47 s after `up`, with bootstrap logging `schema created`, `migrations` for `tenancy` and `migrations` for `documents`, then the Zitadel `created` steps, both databases holding their tables and one journal row, and `bob` logged in through the containerized app.
 
-**Status:** Open.
+> **2026-10-17:** Per the preamble rule added in ticket 6, this ticket writes or updates the README of every package it implements or changes (`packages/db-core`, `packages/tenancy`, `packages/documents`) in the same PR. Done: all three, with the root README pointing at them.
+
+**Status:** Done (2026-10-17).
 
 ---
 
@@ -240,6 +242,8 @@
 
 **Tests:** route tests with a test signer; `TenancyClient` contract test against both implementations.
 
+> **2026-10-17 (after ticket 7):** The tenancy service and the `TenancyClient` interface (`@auth-stack/tenancy/client`, with `UserContext` carrying the access token) exist since ticket 7; this ticket adds the Fastify routes over the service, the HTTP client implementation, and maps `TenancyError` codes to statuses.
+
 **Status:** Open.
 
 ---
@@ -268,6 +272,8 @@
 
 > **2026-10-17:** Per the preamble rule added in ticket 6, this ticket writes or updates the README of every package it implements or changes (`packages/tenancy`, `packages/documents`) in the same PR.
 
+> **2026-10-17 (after ticket 7):** `provisionUser(claims)` and `ensurePersonalProject(user, organizationId)` exist in the packages since ticket 7, idempotent and race-safe as described, with the integration tests above (concurrency included) already passing there; this ticket wires the callback, `tenancy-api`'s userinfo fetch, and the in-process call.
+
 **Status:** Open.
 
 ---
@@ -283,6 +289,8 @@
 - `/documents/[id]/edit` renders the form (server component) that posts to the route handler `POST /documents/[id]/edit` guarded by `assertSameOrigin` (§9), which validates input with zod, calls `updateDocument`, and redirects back with a flash message. Route handlers rather than Server Actions, so that enforcement is a visible HTTP endpoint a reviewer can replay with `curl`. Forbidden and not-found states render proper pages.
 
 **Acceptance criteria:** with the seeded users (ticket 12): Alice edits everything; Bob edits Marketing and never sees Finance; Carol edits Launch plan, sees Budget read-only, never sees Payroll; a `curl` `POST` to Budget's edit route with Carol's cookie returns `403`; to Payroll returns `404`.
+
+> **2026-10-17 (after ticket 7):** The three `packages/documents` services of the first bullet exist since ticket 7 with the consistency levels named here and `DocumentsError` codes for `403` and `404`; this ticket builds the pages and the route handler on them.
 
 **Status:** Open.
 
