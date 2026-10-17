@@ -6,6 +6,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./next": "./src/next/index.ts",
     "./testing": "./src/testing/fake-op.ts"
   },
   "scripts": {
@@ -14,9 +15,18 @@
   "dependencies": {
     "openid-client": "6.8.8"
   },
+  "peerDependencies": {
+    "next": "16.4.1"
+  },
+  "peerDependenciesMeta": {
+    "next": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@auth-stack/config": "workspace:*",
     "ioredis": "^6.0.0",
-    "jose": "6.2.12"
+    "jose": "6.2.12",
+    "next": "16.4.1"
   }
 }
