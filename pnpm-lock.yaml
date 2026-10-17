@@ -87,6 +87,10 @@ importers:
         version: 19.3.0(@types/react@19.3.0)
 
   packages/auth:
+    dependencies:
+      openid-client:
+        specifier: 6.8.8
+        version: 6.8.8
     devDependencies:
       '@auth-stack/config':
         specifier: workspace:*

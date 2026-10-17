@@ -2,12 +2,16 @@
   "name": "@auth-stack/auth",
   "version": "0.0.0",
   "private": true,
+  "description": "OIDC client, session store, and cookie helpers for the auth-stack BFFs; the bearer half for the APIs follows.",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
   },
   "scripts": {
     "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "openid-client": "6.8.8"
   },
   "devDependencies": {
     "@auth-stack/config": "workspace:*"
