@@ -1,11 +1,18 @@
 /**
  * `@auth-stack/tenancy/client`: the `TenancyClient` interface and its types, and nothing from the package root
  * (no schema, no database), so that domain packages and BFFs import this subpath alone (docs/README.md §3.1).
- * The HTTP implementation arrives with `tenancy-api` (ticket 16); the in-process one, for tests, lives in the
- * package root.
+ * The HTTP implementation (`createHttpTenancyClient`) lives here; the in-process one, for tests, in the package
+ * root.
  */
 import { type Policy } from './policy';
 
+export {
+  createHttpTenancyClient,
+  httpTenancyClientFromEnv,
+  TenancyClientError,
+  type HttpTenancyClient,
+  type HttpTenancyClientOptions,
+} from './http';
 export { parsePolicy, policySchema, type Policy } from './policy';
 export {
   fromWire,

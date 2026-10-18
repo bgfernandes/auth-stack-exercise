@@ -29,6 +29,7 @@ import {
 
 import { createInProcessTenancyClient } from './in-process-client';
 import { organizations, schema, users, type TenancySchema } from './schema';
+import { describeTenancyClientContract } from './testing/contract';
 
 import { createTenancyService, TenancyError, type TenancyService } from './index';
 
@@ -276,3 +277,11 @@ describe('in-process TenancyClient', () => {
     ).toBeUndefined();
   });
 });
+
+describeTenancyClientContract('in-process', () => ({
+  client: createInProcessTenancyClient(service, (user) =>
+    Promise.resolve({ sub: user.sub, email: `${user.sub}@example.com`, name: user.sub }),
+  ),
+  user: (name) => Promise.resolve({ sub: sub(`contract-${name}`), accessToken: 'unused' }),
+  track: (id) => organizationIds.add(id),
+}));

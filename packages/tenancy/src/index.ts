@@ -3,14 +3,19 @@
  * by `tenancy-api` and bootstrap only; everything else imports `@auth-stack/tenancy/client`.
  */
 export {
+  createHttpTenancyClient,
   fromWire,
+  httpTenancyClientFromEnv,
   organizationsWire,
   organizationWire,
   parsePolicy,
   policySchema,
   provisionWire,
   TENANCY_API_SCOPES,
+  TenancyClientError,
   toWire,
+  type HttpTenancyClient,
+  type HttpTenancyClientOptions,
   type OrganizationSummary,
   type OrganizationWire,
   type Policy,
