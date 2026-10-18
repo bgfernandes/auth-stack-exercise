@@ -26,4 +26,6 @@ function redactValue(value: unknown, depth: number): unknown {
 /** The shape of the logger a host hands to the package; `fields` are already redacted when it is called. */
 export interface AuthLogger {
   warn(event: string, fields?: Record<string, unknown>): void;
+  /** Outcomes that are not failures (a back-channel logout delivered); `warn` is used when a host has none. */
+  info?(event: string, fields?: Record<string, unknown>): void;
 }

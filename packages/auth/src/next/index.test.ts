@@ -251,4 +251,40 @@ describe('createNextAuth', () => {
     );
     expect(noSession.headers.get('location')).toBe(`${APP}/`);
   });
+
+  it('backchannelLogout removes the session the IdP names, with no origin check and no cookie', async () => {
+    const { sessionId } = await loggedIn();
+    const token = await op.sign({
+      iss: 'https://op.test',
+      aud: 'dashboard-web',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 120,
+      jti: 'jti-1',
+      events: { 'http://schemas.openid.net/event/backchannel-logout': {} },
+      sid: 'sid-1',
+      sub: 'alice',
+    });
+    const response = await auth.backchannelLogout(
+      new Request(`${APP}/auth/backchannel-logout`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ logout_token: token }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('location')).toBeNull();
+    expect(setCookies(response).size).toBe(0);
+    await expect(store.get(sessionId)).resolves.toBeUndefined();
+
+    const refused = await auth.backchannelLogout(
+      new Request(`${APP}/auth/backchannel-logout`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ logout_token: 'garbage' }),
+      }),
+    );
+    expect(refused.status).toBe(400);
+    expect(events).toContain('auth.backchannel_logout_rejected');
+  });
 });

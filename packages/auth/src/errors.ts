@@ -23,7 +23,9 @@ export type AuthErrorCode =
   /** A state-changing request did not come from the app's own origin (`assertSameOrigin`). */
   | 'forbidden_origin'
   /** A binding's `onLogin` hook (just-in-time provisioning) threw; the new session was removed again. */
-  | 'login_hook_failed';
+  | 'login_hook_failed'
+  /** A back-channel logout request carried no logout token, or the token failed validation (§4.4 step 6). */
+  | 'logout_token_invalid';
 
 export class AuthError extends Error {
   override readonly name = 'AuthError';

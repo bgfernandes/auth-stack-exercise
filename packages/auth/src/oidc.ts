@@ -1,13 +1,18 @@
 /**
- * The OIDC client of the BFFs (docs/README.md §4.4 steps 1, 3, 5, 7) over `openid-client` v6: authorization
+ * The OIDC client of the BFFs (docs/README.md §4.4 steps 1, 3, 5, 6, 7) over `openid-client` v6: authorization
  * code with PKCE `S256` (RFC 7636), `state` and `nonce` bound to the login attempt through the stash, ID-token
  * validation (`iss`, `aud`, `exp`, `nonce`, signature against JWKS) by the library, refresh through the refresh
- * token, and the RP-initiated logout URL. Discovery runs once per process and issuer.
+ * token, the RP-initiated logout URL, and the validation of a back-channel logout token against the same JWKS.
+ * Discovery runs once per process and issuer.
  */
+import { createRemoteJWKSet, customFetch, errors as joseErrors, jwtVerify } from 'jose';
 import * as oidc from 'openid-client';
 
 import { AuthError } from './errors';
 import { STASH_LIFETIME_SECONDS, type LoginStash } from './stash';
+
+import type { LogoutTokenClaims } from './session';
+import type { JWTPayload, JWTVerifyGetKey } from 'jose';
 
 export type OidcFetch = NonNullable<oidc.Configuration[typeof oidc.customFetch]>;
 
@@ -67,7 +72,15 @@ export interface OidcClient {
   refresh(refreshToken: string): Promise<TokenSet>;
   /** The `end_session_endpoint` URL with `id_token_hint` and the registered post-logout redirect. */
   endSessionUrl(idToken: string | undefined): Promise<URL>;
+  /**
+   * Validates a logout token (OpenID Connect Back-Channel Logout 1.0 §2.6) and returns what it names: `sid`,
+   * `sub`, or both. Throws `AuthError('logout_token_invalid')`.
+   */
+  verifyLogoutToken(logoutToken: string): Promise<LogoutTokenClaims>;
 }
+
+/** The member a logout token's `events` claim must carry (Back-Channel Logout 1.0 §2.4). */
+export const BACKCHANNEL_LOGOUT_EVENT = 'http://schemas.openid.net/event/backchannel-logout';
 
 export const DEFAULT_SCOPE = 'openid profile email offline_access';
 
@@ -170,6 +183,36 @@ function loginError(error: unknown): AuthError {
   return new AuthError('token_invalid', 'token response failed validation', { cause: error });
 }
 
+/**
+ * The checks of Back-Channel Logout 1.0 §2.6 beyond what `jwtVerify` did (signature, `iss`, `aud`, `exp`,
+ * `iat` present): the `events` member, no `nonce`, and `sid` or `sub`. The token is a JWT of the same issuer
+ * and audience as an ID token, so the `events` member and the absent `nonce` are what tell the two apart; an
+ * ID token replayed here is refused on both.
+ */
+function logoutTokenClaims(payload: JWTPayload): LogoutTokenClaims {
+  const events = payload.events;
+  if (typeof events !== 'object' || events === null || Array.isArray(events)) {
+    throw new AuthError('logout_token_invalid', 'logout token carries no events claim');
+  }
+  const event = (events as Record<string, unknown>)[BACKCHANNEL_LOGOUT_EVENT];
+  if (typeof event !== 'object' || event === null) {
+    throw new AuthError('logout_token_invalid', 'logout token carries no backchannel-logout event');
+  }
+  if ('nonce' in payload) {
+    throw new AuthError('logout_token_invalid', 'logout token carries a nonce');
+  }
+  const claims: LogoutTokenClaims = {};
+  if (typeof payload.sid === 'string' && payload.sid !== '') claims.sid = payload.sid;
+  if (typeof payload.sub === 'string' && payload.sub !== '') claims.sub = payload.sub;
+  if (claims.sid === undefined && claims.sub === undefined) {
+    throw new AuthError('logout_token_invalid', 'logout token names neither sid nor sub');
+  }
+  return claims;
+}
+
+/** Seconds of leeway on `exp` and `iat`, as the bearer verifier gives access tokens. */
+const LOGOUT_TOKEN_CLOCK_TOLERANCE_SECONDS = 30;
+
 export function createOidcClient(
   config: OidcClientConfig,
   options: OidcClientOptions = {},
@@ -177,6 +220,22 @@ export function createOidcClient(
   const now = options.now ?? Date.now;
   const scope = config.scope ?? DEFAULT_SCOPE;
   const configuration = () => configure(config, options);
+
+  // The issuer's JWKS, from discovery, fetched and cached by jose; through the same `fetch` as everything else.
+  let jwks: JWTVerifyGetKey | undefined;
+  const signingKey = async (): Promise<JWTVerifyGetKey> => {
+    if (!jwks) {
+      const { jwks_uri: jwksUri } = (await configuration()).serverMetadata();
+      if (!jwksUri) throw new AuthError('token_invalid', 'the issuer publishes no jwks_uri');
+      const fetch = options.fetch;
+      jwks = createRemoteJWKSet(new URL(jwksUri), {
+        ...(fetch
+          ? { [customFetch]: (url, init) => fetch(url, { ...init, body: undefined, headers: {} }) }
+          : {}),
+      });
+    }
+    return jwks;
+  };
 
   return {
     async beginLogin() {
@@ -238,6 +297,36 @@ export function createOidcClient(
         ...(idToken ? { id_token_hint: idToken } : {}),
         post_logout_redirect_uri: config.postLogoutRedirectUri,
       });
+    },
+
+    async verifyLogoutToken(logoutToken) {
+      let payload: JWTPayload;
+      try {
+        // `aud` must contain this client's ID (an ID token's audience; Zitadel adds the project ID, which jose
+        // tolerates: a string audience is matched against every member of an array). `iat` is required of a
+        // logout token where an ID token's validation only checks it when present.
+        ({ payload } = await jwtVerify(logoutToken, await signingKey(), {
+          issuer: config.issuer,
+          audience: config.clientId,
+          requiredClaims: ['iat', 'exp'],
+          clockTolerance: LOGOUT_TOKEN_CLOCK_TOLERANCE_SECONDS,
+          currentDate: new Date(now()),
+        }));
+      } catch (error) {
+        // As in the bearer verifier: a verdict on the token is the token's fault; a JWKS that cannot be fetched
+        // is ours, and propagates so the IdP sees a server error and may retry rather than a refusal.
+        if (
+          error instanceof joseErrors.JOSEError &&
+          error.code !== 'ERR_JOSE_GENERIC' &&
+          error.code !== 'ERR_JWKS_TIMEOUT'
+        ) {
+          throw new AuthError('logout_token_invalid', 'logout token failed verification', {
+            cause: error,
+          });
+        }
+        throw error;
+      }
+      return logoutTokenClaims(payload);
     },
   };
 }

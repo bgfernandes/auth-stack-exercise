@@ -3,8 +3,8 @@
  * the BFFs: the OIDC client, the session and its store with the in-memory and Redis adapters, the access-token
  * provider, the cookie and same-origin helpers, and `redact` for logs; `@auth-stack/auth/next` binds them to
  * Next.js route handlers. For the APIs: bearer verification and the scope gate (§6.7), bound to Fastify by
- * `@auth-stack/auth/fastify`. The back-channel logout sink is ticket 18; the authentication-context policy
- * helper is ticket 24.
+ * `@auth-stack/auth/fastify`. The back-channel logout sink (`handleBackchannelLogout`, over the OIDC client's
+ * `verifyLogoutToken`) is bound by the Next.js adapter too. The authentication-context policy helper is ticket 24.
  */
 export {
   createAccessTokenProvider,
@@ -12,6 +12,7 @@ export {
   type AccessTokenProvider,
   type AccessTokenProviderOptions,
 } from './access-token';
+export { handleBackchannelLogout, type BackchannelLogoutOptions } from './backchannel-logout';
 export {
   assertScopeStrings,
   BearerError,
@@ -39,6 +40,7 @@ export {
 export { authOptionsFromEnv, type AuthEnvOptions, type AuthOptions } from './env';
 export { AuthError, type AuthErrorCode } from './errors';
 export {
+  BACKCHANNEL_LOGOUT_EVENT,
   createOidcClient,
   DEFAULT_SCOPE,
   oauthErrorOf,

@@ -2,13 +2,15 @@
  * `@auth-stack/auth/next`: the core bound to Next.js route handlers (`Request` in, `NextResponse` out) and to
  * `cookies()` for server components. The routes of a BFF (docs/README.md §4.4; ticket 9 for dashboard-web) are
  * one call each: `GET /auth/login` → `login()`, `GET /auth/callback` → `callback(request)`, `POST /auth/logout`
- * → `logout(request)`. Nothing here decides anything the core does not; it only moves cookies, and runs the
- * host's `onLogin` hook (§4.4 step 4, just-in-time provisioning) between the session's creation and the redirect.
+ * → `logout(request)`, `POST /auth/backchannel-logout` → `backchannelLogout(request)`. Nothing here decides
+ * anything the core does not; it only moves cookies, and runs the host's `onLogin` hook (§4.4 step 4,
+ * just-in-time provisioning) between the session's creation and the redirect.
  */
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
 import { createAccessTokenProvider, type AccessTokenProvider } from '../access-token';
+import { handleBackchannelLogout } from '../backchannel-logout';
 import { assertSameOrigin, cookieAttributes, readCookie, type CookieAttributes } from '../cookies';
 import { AuthError } from '../errors';
 import { createOidcClient, type OidcClient } from '../oidc';
@@ -47,6 +49,8 @@ export interface NextAuth {
   callback(request: Request): Promise<NextResponse>;
   /** Ends the session and sends the browser to the IdP's end-session endpoint; same-origin requests only. */
   logout(request: Request): Promise<NextResponse>;
+  /** The back-channel logout sink (§4.4 step 6): the IdP's logout token in, the sessions it names gone. */
+  backchannelLogout(request: Request): Promise<NextResponse>;
   /** The live session behind a request's cookie (route handlers, `proxy.ts`), marked seen; undefined otherwise. */
   sessionFromRequest(request: Request): Promise<Session | undefined>;
   /** The live session behind `cookies()` (server components, server actions), marked seen; undefined otherwise. */
@@ -158,6 +162,15 @@ export function createNextAuth(init: NextAuthOptions): NextAuth {
       const response = NextResponse.redirect(target, 303);
       clear(response, cookieName, sessionCookie);
       return response;
+    },
+
+    async backchannelLogout(request) {
+      const response = await handleBackchannelLogout(request, {
+        client,
+        store,
+        ...(logger ? { logger } : {}),
+      });
+      return new NextResponse(response.body, response);
     },
 
     sessionFromRequest(request) {
