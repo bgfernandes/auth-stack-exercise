@@ -2,7 +2,7 @@
  * `@auth-stack/documents`: schema, migrations, and the service of the documents domain (docs/README.md §3.1).
  * Imported by `dashboard-web` in phase 1 and only by `dashboard-api` from phase 2.
  */
-export { DocumentsError, type DocumentsErrorCode } from './errors';
+export { DocumentsError, isDocumentsError, type DocumentsErrorCode } from './errors';
 export {
   documents,
   projects,

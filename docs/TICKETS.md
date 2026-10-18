@@ -324,7 +324,9 @@
 
 > **2026-10-17 (after ticket 7):** The three `packages/documents` services of the first bullet exist since ticket 7 with the consistency levels named here and `DocumentsError` codes for `403` and `404`; this ticket builds the pages and the route handler on them.
 
-**Status:** Open.
+> **2026-10-18 (deviations):** Built on the ticket 7 services, with these differences. The save route is `POST /documents/[id]`, not `POST /documents/[id]/edit`: Next.js does not allow a `page.tsx` and a `route.ts` in one segment, so the form page keeps `/documents/[id]/edit` and posts one segment up, which mirrors the per-document write `dashboard-api` gets in phase 2. A successful save answers `303` to `/dashboard?saved=<id>`, where the listing shows the flash (`Saved “<name>”.`, the name taken from the listing, never from the query); rejected values (the domain's zod schema, run in the handler before anything is looked up) answer `303` to the form with `?error=values`, and a body that is not a form `400`. The handler checks the origin first, then the session, and maps the domain's `forbidden` to `403` and `not_found` to `404` with plain-text bodies, since those answers exist for a replayed `curl`, which must carry `Origin: http://dashboard.localtest.me:3000` or `Sec-Fetch-Site: same-origin`, or every POST answers `403`. The forbidden state of the edit page is a read-only page answered with `200`: a `403` from a page needs `forbidden()` behind `experimental.authInterrupts`, which the maintainer chose not to enable; the not-found state is `notFound()` with `app/not-found.tsx`, a true `404`. The listing runs at `fullyConsistent`, as this ticket says, until ticket 21. `proxy.ts` gates `/documents` too and answers a request without a session with `303` for anything but `GET`, so a form posted after the session ended does not repeat its POST on the login. The handler is built with its dependencies (`lib/save-document.ts`) and unit-tested with them faked (origin, session, validation, both denials, success, the log line without a token); the dashboard grouping is a pure function with a test; the pages are thin and were checked live. Two findings in `packages/documents`: a malformed ID reached the `uuid` column and answered with a database error, now `not_found`; and Turbopack gives the route handler and the server components separate copies of the package while the service is built once on `globalThis`, so `instanceof DocumentsError` failed across them and the save route answered `500`; `isDocumentsError` tests the name and the code instead. The acceptance criteria name the ticket 12 seeds, which do not exist yet; verified against the container with the personal workspaces instead: alice's dashboard lists "Welcome" under Personal / Personal with "Edit", the form shows the values, the save redirects with the flash and the form shows the new values; every refusal (another origin, no origin header, an empty and a 201-character value, a JSON body, a malformed and an unknown ID, no session for the page and for the POST); bob's first login provisioned his workspace, his dashboard shows only his document, and alice's answers `404` to his POST and his GET; with `document:<id>#viewer@user:<bob>` written through `pnpm authz:zed`, his POST answers `403`, his dashboard lists the document read-only, the edit page shows the read-only page, and after the tuple's removal the POST is `404` again; the container log holds no error and no token. Checks: lint, Prettier, type-check, 143 unit tests, 52 integration tests, `next build` with no configuration, gitleaks. Found and not fixed here: the design has no way to create a document (no creation permission below the organization in the schema, no service, no form); ticket 19b adds it.
+
+**Status:** Done (2026-10-18); the criteria with the seeded users are checked when ticket 12 seeds them.
 
 ---
 
@@ -377,6 +379,25 @@
 **Tests:** integration test for the routes with a token minted by a test signer, including the `403`/`404` cases of §6.5.
 
 > **2026-10-18 (after ticket 16):** Follow `apps/tenancy-api`: `buildApp(deps)` over the service with the error handler's status mapping, the esbuild `build.mjs`, the Dockerfile and entrypoint sourcing `apis.env`, the compose service without a published port, and a `host_app(..., config='apis', path='/health')` Tilt resource; in bootstrap, one more `ensureApiApp` and the documents scopes added to `scopeGrants`. The HTTP `TenancyClient` of ticket 16 is what this API uses for organization data.
+
+**Status:** Open.
+
+---
+
+### Ticket 19b — Create a document in a project (1 h)
+
+**Read first:** `docs/README.md` §6.2, §6.5, §7.3.
+
+**Description:** A deficiency found in the design while implementing ticket 11: nothing creates a document after the ticket 12 seeds and the "Welcome" document of provisioning, and the schema has no creation permission below the organization (`organization#create_project` exists, `project` has nothing). The fix, in the shape the existing pieces have:
+
+- Schema: `project` gains `permission create_document = edit` (`packages/authz`), one line to widen later, for example to let viewers propose documents.
+- `packages/documents`: `createDocument(user, projectId, { name, value1, value2 })` (zod: `name` a string of 1–200 characters, the values as in `updateDocument`) checks `project#create_document` at `fullyConsistent` (`project#view` allowed → `403`, otherwise → `404`, the §6.5 rule), then in one transaction inserts the row and writes `document:<id>#project@project:<id>`, storing the relationship write's token on the row, the shape of `ensurePersonalProject`.
+- `dashboard-api`: `POST /projects/:id/documents` (bearer, the documents write scope) over the service, answering `201` with the document.
+- `dashboard-web`: a "New document" form under each project heading of the dashboard where the user may create (one bulk check of `project#create_document` over the listed projects, at the listing's consistency), posting to the route handler `POST /projects/[id]/documents` guarded by `assertSameOrigin` (§9), which validates with zod and calls the API the way ticket 19 does, then redirects to the dashboard with the flash of ticket 11. If this ticket lands before ticket 19, the handler calls the service in-process as ticket 11 does, and ticket 19 moves it with the rest.
+
+**Tests:** the service's integration test (an editor creates, a viewer gets `403`, a non-member `404`, the token stored); the API route in `dashboard-api`'s integration test; the BFF handler's unit test with the client faked.
+
+**Acceptance criteria:** with the seeded users: Alice creates a document in Finance; Bob creates one in Marketing and gets `404` for Finance; Carol gets `403` for Marketing; each new document appears on the dashboards with the states of §6.3 (an organization admin edits it, a project viewer sees it read-only).
 
 **Status:** Open.
 

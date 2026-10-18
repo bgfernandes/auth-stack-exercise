@@ -197,6 +197,9 @@ describe('listVisibleDocuments, getDocumentForEdit, updateDocument', () => {
     await expect(service.getDocumentForEdit(alice, randomUUID())).rejects.toMatchObject({
       code: 'not_found',
     });
+    await expect(service.getDocumentForEdit(alice, 'not-a-uuid')).rejects.toMatchObject({
+      code: 'not_found',
+    });
   });
 
   it('stores the values with the token of the fully consistent check', async () => {
@@ -219,6 +222,9 @@ describe('listVisibleDocuments, getDocumentForEdit, updateDocument', () => {
       service.updateDocument(alice, document.id, { value1: '', value2: 'x' }),
     ).rejects.toBeInstanceOf(ZodError);
     await expect(service.updateDocument(alice, randomUUID(), values)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    await expect(service.updateDocument(alice, 'not-a-uuid', values)).rejects.toMatchObject({
       code: 'not_found',
     });
   });
