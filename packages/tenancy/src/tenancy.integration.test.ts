@@ -29,7 +29,13 @@ import { createInProcessTenancyClient } from './in-process-client';
 import { organizations, schema, users, type TenancySchema } from './schema';
 import { describeTenancyClientContract } from './testing/contract';
 
-import { createTenancyService, seedOrganization, TenancyError, type TenancyService } from './index';
+import {
+  createTenancyService,
+  seedOrganization,
+  TenancyError,
+  type Role,
+  type TenancyService,
+} from './index';
 
 // Not process.loadEnvFile: Jest gives each test file its own copy of `process.env`, and loadEnvFile writes to the real one.
 function loadStackDefaults(): void {
@@ -75,13 +81,30 @@ afterAll(async () => {
   authz.close();
 });
 
-/** A shared organization with one admin, written the way bootstrap's seeds are (ticket 12). */
-async function sharedOrganization(name: string, adminSub: string): Promise<string> {
+/**
+ * A shared organization with these roles, written the way bootstrap's seeds are (ticket 12): the only way a
+ * first role is granted, since `setMembership` changes current members only (§6.8).
+ */
+async function sharedOrganization(
+  name: string,
+  members: { sub: string; displayName?: string; role: Role }[],
+): Promise<string> {
   const id = randomUUID();
   organizationIds.add(id);
   await seedOrganization(
     { db: database.db, authz },
-    { id, name, users: [], roles: [{ sub: adminSub, role: 'admin' }] },
+    {
+      id,
+      name,
+      users: members
+        .filter((member) => member.displayName !== undefined)
+        .map((member) => ({
+          sub: member.sub,
+          email: `${member.sub}@example.com`,
+          displayName: member.displayName ?? '',
+        })),
+      roles: members.map(({ sub, role }) => ({ sub, role })),
+    },
   );
   return id;
 }
@@ -182,7 +205,7 @@ describe('getOrganization and listOrganizations', () => {
 
   it('lists every visible organization by name', async () => {
     const { organization: personal } = await service.provisionUser(claims('alice'));
-    const acme = await sharedOrganization('Acme', sub('alice'));
+    const acme = await sharedOrganization('Acme', [{ sub: sub('alice'), role: 'admin' }]);
     const listed = await service.listOrganizations({ sub: sub('alice') }, fullyConsistent);
     expect(listed.map((row) => row.id)).toEqual([acme, personal.id]);
     expect(await service.listOrganizations({ sub: sub('eve') }, fullyConsistent)).toEqual([]);
@@ -197,39 +220,98 @@ describe('setMembership', () => {
     ).rejects.toMatchObject({ code: 'personal_organization' });
   });
 
-  it('grants, switches, and removes a role, administrators only', async () => {
-    const acme = await sharedOrganization('Acme', sub('alice'));
+  it('switches and removes a current member, administrators only, never the last one', async () => {
+    const acme = await sharedOrganization('Acme', [
+      { sub: sub('alice'), role: 'admin' },
+      { sub: sub('bob'), role: 'member' },
+      { sub: sub('carol'), role: 'member' },
+    ]);
     const alice = { sub: sub('alice') };
     const bob = { sub: sub('bob') };
+    const carol = { sub: sub('carol') };
 
-    await expect(service.setMembership(bob, acme, sub('carol'), 'member')).rejects.toMatchObject({
-      code: 'not_found',
-    });
-    await service.setMembership(alice, acme, sub('bob'), 'member');
-    expect((await service.getOrganization(bob, acme, fullyConsistent))?.id).toBe(acme);
-    await expect(service.setMembership(bob, acme, sub('carol'), 'member')).rejects.toMatchObject({
+    // Who may: an administrator. A member is refused, a stranger learns nothing.
+    await expect(service.setMembership(bob, acme, sub('carol'), 'admin')).rejects.toMatchObject({
       code: 'forbidden',
     });
+    await expect(
+      service.setMembership({ sub: sub('eve') }, acme, sub('carol'), 'admin'),
+    ).rejects.toMatchObject({ code: 'not_found' });
 
+    // Promote, and the new administrator may change roles too; demote, and may not.
     await service.setMembership(alice, acme, sub('bob'), 'admin');
-    await service.setMembership(bob, acme, sub('carol'), 'member');
-    expect((await service.getOrganization({ sub: sub('carol') }, acme, fullyConsistent))?.id).toBe(
-      acme,
-    );
+    await service.setMembership(bob, acme, sub('carol'), 'admin');
+    await service.setMembership(alice, acme, sub('carol'), 'member');
+    await expect(service.setMembership(carol, acme, sub('bob'), 'member')).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+    expect(
+      (await service.listMembers(alice, acme, fullyConsistent))?.map((m) => [m.sub, m.role]),
+    ).toEqual([
+      [sub('alice'), 'admin'],
+      [sub('bob'), 'admin'],
+      [sub('carol'), 'member'],
+    ]);
 
+    // Remove: the former member sees nothing and cannot be granted a role from here again (§6.8).
     await service.setMembership(alice, acme, sub('bob'), null);
     expect(await service.getOrganization(bob, acme, fullyConsistent)).toBeUndefined();
+    await expect(service.setMembership(alice, acme, sub('bob'), 'member')).rejects.toMatchObject({
+      code: 'not_a_member',
+    });
+
+    // The last administrator can be neither demoted nor removed.
+    await expect(service.setMembership(alice, acme, sub('alice'), 'member')).rejects.toMatchObject({
+      code: 'last_admin',
+    });
+    await expect(service.setMembership(alice, acme, sub('alice'), null)).rejects.toMatchObject({
+      code: 'last_admin',
+    });
     await expect(
-      service.setMembership(alice, randomUUID(), sub('bob'), 'member'),
+      service.setMembership(alice, randomUUID(), sub('carol'), 'member'),
     ).rejects.toBeInstanceOf(TenancyError);
+  });
+});
+
+describe('listMembers', () => {
+  it('joins the roles in SpiceDB to the users mirror, admins first, for members only', async () => {
+    // Subs of their own: a mirror row that exists (an earlier login) keeps what it has, by design (§6.3).
+    const acme = await sharedOrganization('Acme', [
+      { sub: sub('list-zed'), displayName: 'Zed Member', role: 'member' },
+      { sub: sub('list-alice'), displayName: 'Alice Adams', role: 'admin' },
+      // A role with no mirror row (a sub that changed with a reset IdP, §6.3) is still a member.
+      { sub: sub('list-ghost'), role: 'member' },
+    ]);
+    const members = await service.listMembers({ sub: sub('list-zed') }, acme, fullyConsistent);
+    expect(members).toEqual([
+      {
+        sub: sub('list-alice'),
+        email: `${sub('list-alice')}@example.com`,
+        displayName: 'Alice Adams',
+        role: 'admin',
+      },
+      { sub: sub('list-ghost'), role: 'member' },
+      {
+        sub: sub('list-zed'),
+        email: `${sub('list-zed')}@example.com`,
+        displayName: 'Zed Member',
+        role: 'member',
+      },
+    ]);
+    expect(await service.listMembers({ sub: sub('eve') }, acme, fullyConsistent)).toBeUndefined();
+    expect(
+      await service.listMembers({ sub: sub('list-alice') }, randomUUID(), fullyConsistent),
+    ).toBeUndefined();
   });
 });
 
 describe('setPolicy', () => {
   it('validates and stores the policy for administrators', async () => {
-    const acme = await sharedOrganization('Acme', sub('alice'));
+    const acme = await sharedOrganization('Acme', [
+      { sub: sub('alice'), role: 'admin' },
+      { sub: sub('bob'), role: 'member' },
+    ]);
     const alice = { sub: sub('alice') };
-    await service.setMembership(alice, acme, sub('bob'), 'member');
 
     const updated = await service.setPolicy(alice, acme, { max_auth_age_seconds: 600 });
     expect(updated.policy).toEqual({ max_auth_age_seconds: 600 });
@@ -355,5 +437,6 @@ describeTenancyClientContract('in-process', () => ({
     Promise.resolve({ sub: user.sub, email: `${user.sub}@example.com`, name: user.sub }),
   ),
   user: (name) => Promise.resolve({ sub: sub(`contract-${name}`), accessToken: 'unused' }),
+  sharedOrganization,
   track: (id) => organizationIds.add(id),
 }));

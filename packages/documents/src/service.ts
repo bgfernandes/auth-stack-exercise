@@ -66,7 +66,8 @@ export const WELCOME_DOCUMENT = { name: 'Welcome', value1: 'Hello', value2: 'Wor
 export function createDocumentsService(deps: {
   db: DocumentsDb;
   authz: Authz;
-  tenancy: TenancyClient;
+  /** Organization names and the owning organization's existence (§6.6): the one call the domain makes. */
+  tenancy: Pick<TenancyClient, 'getOrganization'>;
 }): DocumentsService {
   const { db, authz, tenancy } = deps;
 

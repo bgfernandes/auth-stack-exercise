@@ -12,9 +12,12 @@ import { type FastifyInstance } from 'fastify';
 import { createBearerVerifier, type ScopeResolver } from '@auth-stack/auth';
 import { createFakeOp, type FakeOp } from '@auth-stack/auth/testing';
 import {
+  parsePolicy,
   TenancyError,
+  type Member,
   type Organization,
   type ProvisionClaims,
+  type Role,
   type TenancyService,
   type User,
 } from '@auth-stack/tenancy';
@@ -26,10 +29,46 @@ const PROJECT = 'project-1';
 const DASHBOARD_WEB = 'dashboard-web';
 const READ_ONLY = 'read-only-client';
 
-/** Users, personal organizations, and nothing else: what the three routes of this ticket touch. */
+/**
+ * Users, organizations, and roles in memory, with the service's rules reduced to what the routes need to show:
+ * a personal organization is visible to its owner alone; a shared one (`share`) to its members, administered
+ * by its admins; the real rules are the service's own integration test.
+ */
 class FakeTenancy implements TenancyService {
   readonly users = new Map<string, User>();
   readonly organizations = new Map<string, Organization>();
+  /** Organization ID → member sub → role. */
+  readonly roles = new Map<string, Map<string, Role>>();
+
+  /** A shared organization with these roles, the way the seed writes one. */
+  share(name: string, members: Record<string, Role>): string {
+    const id = randomUUID();
+    this.organizations.set(id, {
+      id,
+      name,
+      isPersonal: false,
+      ownerId: null,
+      policy: {},
+      createdAt: new Date(),
+    });
+    this.roles.set(id, new Map(Object.entries(members)));
+    return id;
+  }
+
+  private roleOf(sub: string, organizationId: string): Role | undefined {
+    const organization = this.organizations.get(organizationId);
+    if (!organization) return undefined;
+    if (organization.isPersonal) return organization.ownerId === sub ? 'admin' : undefined;
+    return this.roles.get(organizationId)?.get(sub);
+  }
+
+  private administered(sub: string, organizationId: string): Organization {
+    const organization = this.organizations.get(organizationId);
+    const role = this.roleOf(sub, organizationId);
+    if (!organization || !role) throw new TenancyError('not_found', 'organization not found');
+    if (role !== 'admin') throw new TenancyError('forbidden', 'organization#administer required');
+    return organization;
+  }
 
   provisionUser(claims: ProvisionClaims): Promise<{
     user: User;
@@ -70,22 +109,68 @@ class FakeTenancy implements TenancyService {
   }
 
   getOrganization(principal: { sub: string }, id: string): Promise<Organization | undefined> {
-    const organization = this.organizations.get(id);
-    return Promise.resolve(organization?.ownerId === principal.sub ? organization : undefined);
+    return Promise.resolve(this.roleOf(principal.sub, id) ? this.organizations.get(id) : undefined);
   }
 
   listOrganizations(principal: { sub: string }): Promise<Organization[]> {
     return Promise.resolve(
-      [...this.organizations.values()].filter((candidate) => candidate.ownerId === principal.sub),
+      [...this.organizations.values()].filter((candidate) =>
+        this.roleOf(principal.sub, candidate.id),
+      ),
     );
   }
 
-  setMembership(): Promise<never> {
-    return Promise.reject(new Error('not in this ticket'));
+  listMembers(principal: { sub: string }, id: string): Promise<Member[] | undefined> {
+    if (!this.roleOf(principal.sub, id)) return Promise.resolve(undefined);
+    const organization = this.organizations.get(id);
+    if (organization?.isPersonal) {
+      return Promise.resolve([{ sub: principal.sub, role: 'admin' }]);
+    }
+    const members: Member[] = [];
+    for (const [sub, role] of this.roles.get(id) ?? []) {
+      const user = this.users.get(sub);
+      members.push({
+        sub,
+        ...(user ? { email: user.email, displayName: user.displayName } : {}),
+        role,
+      });
+    }
+    return Promise.resolve(
+      members.sort((a, b) => (a.role === b.role ? 0 : a.role === 'admin' ? -1 : 1)),
+    );
   }
 
-  setPolicy(): Promise<never> {
-    return Promise.reject(new Error('not in this ticket'));
+  setMembership(
+    principal: { sub: string },
+    organizationId: string,
+    memberSub: string,
+    role: Role | null,
+  ): Promise<string> {
+    const organization = this.administered(principal.sub, organizationId);
+    if (organization.isPersonal) {
+      throw new TenancyError('personal_organization', 'no membership on a personal organization');
+    }
+    const roles = this.roles.get(organizationId) ?? new Map<string, Role>();
+    const held = roles.get(memberSub);
+    if (!held) throw new TenancyError('not_a_member', 'no role');
+    const admins = [...roles.values()].filter((candidate) => candidate === 'admin').length;
+    if (held === 'admin' && role !== 'admin' && admins === 1) {
+      throw new TenancyError('last_admin', 'last admin');
+    }
+    if (role) roles.set(memberSub, role);
+    else roles.delete(memberSub);
+    return Promise.resolve('token');
+  }
+
+  setPolicy(
+    principal: { sub: string },
+    organizationId: string,
+    policy: unknown,
+  ): Promise<Organization> {
+    const organization = this.administered(principal.sub, organizationId);
+    const updated = { ...organization, policy: parsePolicy(policy) };
+    this.organizations.set(organizationId, updated);
+    return Promise.resolve(updated);
   }
 }
 
@@ -342,6 +427,151 @@ describe('tenancy-api', () => {
         'Bearer error="insufficient_scope", scope="tenancy:read"',
       );
       await bare.close();
+    });
+  });
+
+  describe('members and policy', () => {
+    let alice: string;
+    let bob: string;
+    let carol: string;
+    let acme: string;
+    const json = (token: string) => ({ ...bearer(token), 'content-type': 'application/json' });
+
+    beforeEach(async () => {
+      alice = await tokenFor('alice');
+      bob = await tokenFor('bob');
+      carol = await tokenFor('carol');
+      // Alice and Bob have mirror rows (they logged in once); Carol holds a role with no row.
+      for (const token of [alice, bob]) {
+        await app.inject({ method: 'POST', url: '/me/provision', headers: bearer(token) });
+      }
+      acme = service.share('Acme', { alice: 'admin', bob: 'member', carol: 'member' });
+    });
+
+    it('lists the members to every member in the wire format and 404 to anyone else', async () => {
+      const response = await app.inject({
+        url: `/organizations/${acme}/members`,
+        headers: bearer(bob),
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({
+        members: [
+          { sub: 'alice', email: 'alice@example.com', display_name: 'User alice', role: 'admin' },
+          { sub: 'bob', email: 'bob@example.com', display_name: 'User bob', role: 'member' },
+          { sub: 'carol', email: null, display_name: null, role: 'member' },
+        ],
+      });
+      for (const [token, id] of [
+        [await tokenFor('eve'), acme],
+        [alice, randomUUID()],
+        [alice, 'not-a-uuid'],
+      ] as const) {
+        const denied = await app.inject({
+          url: `/organizations/${id}/members`,
+          headers: bearer(token),
+        });
+        expect(denied.statusCode).toBe(404);
+        expect(denied.json()).toEqual({ error: 'not_found' });
+      }
+    });
+
+    it('changes and removes a member for an administrator, with the service refusals as statuses', async () => {
+      const put = (token: string, id: string, payload: object | string) =>
+        app.inject({
+          method: 'PUT',
+          url: `/organizations/${id}/members`,
+          headers: json(token),
+          payload,
+        });
+      const promoted = await put(alice, acme, { member_id: 'bob', role: 'admin' });
+      expect(promoted.statusCode).toBe(204);
+      expect(promoted.body).toBe('');
+      expect(service.roles.get(acme)?.get('bob')).toBe('admin');
+      expect((await put(alice, acme, { member_id: 'bob', role: null })).statusCode).toBe(204);
+      expect(service.roles.get(acme)?.has('bob')).toBe(false);
+
+      const cases: [string, string, object | string, number, string][] = [
+        [carol, acme, { member_id: 'alice', role: 'member' }, 403, 'forbidden'],
+        [await tokenFor('eve'), acme, { member_id: 'carol', role: 'admin' }, 404, 'not_found'],
+        [alice, randomUUID(), { member_id: 'carol', role: 'admin' }, 404, 'not_found'],
+        [alice, 'not-a-uuid', { member_id: 'carol', role: 'admin' }, 404, 'not_found'],
+        [alice, acme, { member_id: 'bob', role: 'member' }, 400, 'not_a_member'],
+        [alice, acme, { member_id: 'alice', role: 'member' }, 409, 'last_admin'],
+        [alice, acme, { member_id: 'carol', role: 'owner' }, 400, 'invalid_input'],
+        [alice, acme, { member_id: 'carol' }, 400, 'invalid_input'],
+        [alice, acme, { member_id: 'carol', role: 'admin', extra: 1 }, 400, 'invalid_input'],
+      ];
+      for (const [token, id, payload, status, code] of cases) {
+        const response = await put(token, id, payload);
+        expect([response.statusCode, response.json()]).toEqual([status, { error: code }]);
+      }
+      expect(service.roles.get(acme)?.get('carol')).toBe('member');
+    });
+
+    it('refuses membership changes on a personal organization', async () => {
+      const provisioned = await app.inject({
+        method: 'POST',
+        url: '/me/provision',
+        headers: bearer(alice),
+      });
+      const personal = provisioned.json<{ organization: { id: string } }>().organization.id;
+      const response = await app.inject({
+        method: 'PUT',
+        url: `/organizations/${personal}/members`,
+        headers: json(alice),
+        payload: { member_id: 'alice', role: 'member' },
+      });
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toEqual({ error: 'personal_organization' });
+    });
+
+    it('replaces the policy for an administrator and validates it', async () => {
+      const put = (token: string, id: string, payload: object | string) =>
+        app.inject({
+          method: 'PUT',
+          url: `/organizations/${id}/policy`,
+          headers: json(token),
+          payload,
+        });
+      const policy = { require_mfa: true, max_auth_age_seconds: 600, require_idp: 'idp-1' };
+      const updated = await put(alice, acme, policy);
+      expect(updated.statusCode).toBe(200);
+      expect(updated.json()).toEqual({ id: acme, name: 'Acme', is_personal: false, policy });
+      expect(
+        (await app.inject({ url: `/organizations/${acme}`, headers: bearer(bob) })).json(),
+      ).toMatchObject({ policy });
+
+      const cases: [string, string, object | string, number, string][] = [
+        [bob, acme, {}, 403, 'forbidden'],
+        [await tokenFor('eve'), acme, {}, 404, 'not_found'],
+        [alice, 'not-a-uuid', {}, 404, 'not_found'],
+        [alice, acme, { max_auth_age_seconds: -1 }, 400, 'invalid_input'],
+        [alice, acme, { require_idp: '' }, 400, 'invalid_input'],
+        [alice, acme, { unknown: true }, 400, 'invalid_input'],
+        // A body that is not JSON at all is Fastify's own verdict, with the generic body.
+        [alice, acme, 'not an object', 400, 'bad_request'],
+      ];
+      for (const [token, id, payload, status, code] of cases) {
+        const response = await put(token, id, payload);
+        expect([response.statusCode, response.json()]).toEqual([status, { error: code }]);
+      }
+      expect(service.organizations.get(acme)?.policy).toEqual(policy);
+    });
+
+    it('needs tenancy:write on both writes', async () => {
+      const token = await tokenFor('alice', READ_ONLY);
+      for (const url of [`/organizations/${acme}/members`, `/organizations/${acme}/policy`]) {
+        const response = await app.inject({
+          method: 'PUT',
+          url,
+          headers: json(token),
+          payload: {},
+        });
+        expect(response.statusCode).toBe(403);
+        expect(response.headers['www-authenticate']).toBe(
+          'Bearer error="insufficient_scope", scope="tenancy:write"',
+        );
+      }
     });
   });
 

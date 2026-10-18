@@ -55,8 +55,7 @@ const ACME = randomUUID();
 /** The organization of the seeded scenario (§6.3), with users of its own so the lists above stay exact. */
 const SEEDED = randomUUID();
 
-const fakeTenancy: TenancyClient = {
-  provisionUser: () => Promise.reject(new Error('not used here')),
+const fakeTenancy: Pick<TenancyClient, 'getOrganization'> = {
   getOrganization: (_user, id) => {
     const known: Record<string, OrganizationSummary> = {
       [ACME]: { id: ACME, name: 'Acme', isPersonal: false, policy: {} },
@@ -64,7 +63,6 @@ const fakeTenancy: TenancyClient = {
     };
     return Promise.resolve(known[id]);
   },
-  listOrganizations: () => Promise.reject(new Error('not used here')),
 };
 
 let authz: Authz;

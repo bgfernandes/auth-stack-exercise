@@ -61,15 +61,13 @@ const CLIENT = `it-${RUN}-dashboard-web`;
 const ACME = randomUUID();
 const sub = (name: string) => `it-${RUN}-${name}`;
 
-const fakeTenancy: TenancyClient = {
-  provisionUser: () => Promise.reject(new Error('not used here')),
+const fakeTenancy: Pick<TenancyClient, 'getOrganization'> = {
   getOrganization: (_user, id) => {
     const known: Record<string, OrganizationSummary> = {
       [ACME]: { id: ACME, name: 'Acme', isPersonal: false, policy: {} },
     };
     return Promise.resolve(known[id]);
   },
-  listOrganizations: () => Promise.reject(new Error('not used here')),
 };
 
 let op: FakeOp;

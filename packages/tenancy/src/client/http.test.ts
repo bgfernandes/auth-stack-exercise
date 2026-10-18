@@ -94,6 +94,55 @@ describe('createHttpTenancyClient', () => {
     expect(api.requests).toHaveLength(4);
   });
 
+  it('sends the writes as JSON, reads members uncached, and lets a policy answer refresh the cache', async () => {
+    const bodies: string[] = [];
+    const updated = { ...organization, policy: { require_mfa: true } };
+    const members = [
+      { sub: 'alice', email: 'alice@example.com', display_name: 'Alice Adams', role: 'admin' },
+      { sub: 'ghost', email: null, display_name: null, role: 'member' },
+    ];
+    const fetchStub: typeof fetch = (input, init) => {
+      const url = new URL(typeof input === 'string' ? input : (input as Request).url);
+      const method = init?.method ?? 'GET';
+      bodies.push(
+        `${method} ${url.pathname} ${new Headers(init?.headers).get('content-type')} ${typeof init?.body === 'string' ? init.body : 'undefined'}`,
+      );
+      if (method === 'PUT' && url.pathname.endsWith('/members'))
+        return Promise.resolve(new Response(null, { status: 204 }));
+      if (method === 'PUT' && url.pathname.endsWith('/policy'))
+        return Promise.resolve(Response.json(updated));
+      if (url.pathname.endsWith('/members')) return Promise.resolve(Response.json({ members }));
+      return Promise.resolve(Response.json(organization));
+    };
+    const client = createHttpTenancyClient({
+      baseUrl: 'http://tenancy-api:4001',
+      fetch: fetchStub,
+    });
+    expect(await client.getOrganization(alice, organization.id)).toEqual(summary);
+    expect(await client.listMembers(alice, organization.id)).toEqual([
+      { sub: 'alice', email: 'alice@example.com', displayName: 'Alice Adams', role: 'admin' },
+      { sub: 'ghost', role: 'member' },
+    ]);
+    await client.listMembers(alice, organization.id);
+    await client.setMembership(alice, organization.id, 'bob', null);
+    expect(await client.setPolicy(alice, organization.id, { require_mfa: true })).toEqual({
+      ...summary,
+      policy: { require_mfa: true },
+    });
+    // The cached organization is the one the policy write answered, not the one read before it.
+    expect(await client.getOrganization(alice, organization.id)).toEqual({
+      ...summary,
+      policy: { require_mfa: true },
+    });
+    expect(bodies).toEqual([
+      `GET /organizations/${organization.id} null undefined`,
+      `GET /organizations/${organization.id}/members null undefined`,
+      `GET /organizations/${organization.id}/members null undefined`,
+      `PUT /organizations/${organization.id}/members application/json {"member_id":"bob","role":null}`,
+      `PUT /organizations/${organization.id}/policy application/json {"require_mfa":true}`,
+    ]);
+  });
+
   it('throws TenancyClientError with the status and the API code on any other answer', async () => {
     const api = stubApi({
       '/me/organizations': () => ({ status: 401, body: { error: 'invalid_token' } }),

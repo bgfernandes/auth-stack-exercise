@@ -11,13 +11,16 @@ import {
   fullyConsistent,
   ref,
   relationship,
+  remove,
   touch,
   type Authz,
   type Consistency,
+  type RelationshipUpdate,
   type ZedToken,
 } from '@auth-stack/authz';
 import { type Db } from '@auth-stack/db-core';
 
+import { type Member, type Role } from './client/index';
 import { parsePolicy } from './client/policy';
 import { TenancyError } from './errors';
 import { organizations, users, type Organization, type TenancySchema, type User } from './schema';
@@ -42,8 +45,6 @@ export interface ProvisionOutcome {
   created: boolean;
 }
 
-export type Role = 'admin' | 'member';
-
 export interface TenancyService {
   /**
    * Idempotent and race-safe (§6.4): the users row with `ON CONFLICT DO NOTHING`, the personal organization
@@ -62,8 +63,19 @@ export interface TenancyService {
   /** Every organization the principal may view, by name. */
   listOrganizations(principal: Principal, consistency: Consistency): Promise<Organization[]>;
   /**
-   * Grants `role` to the member (replacing the other role) or, with null, removes both; `organization#administer`
-   * at full consistency. Not on a personal organization. Returns the token of the write.
+   * The members of an organization the principal may view (§6.8: every member sees the list), admins first,
+   * each with what the `users` mirror knows; undefined when the principal may not view it or it does not exist.
+   */
+  listMembers(
+    principal: Principal,
+    organizationId: string,
+    consistency: Consistency,
+  ): Promise<Member[] | undefined>;
+  /**
+   * Changes a current member's role, or removes the member with null; `organization#administer` at full
+   * consistency, not on a personal organization. A user who holds no role is refused (`not_a_member`): a first
+   * role comes from an invitation (§6.8, ticket 17a) or the seed, never from an administrator naming a `sub`.
+   * The last administrator cannot be demoted or removed (`last_admin`). Returns the token of the write.
    */
   setMembership(
     principal: Principal,
@@ -78,6 +90,10 @@ export interface TenancyService {
 export const PERSONAL_ORGANIZATION_NAME = 'Personal';
 
 const ROLES: readonly Role[] = ['admin', 'member'];
+
+function isRole(relation: string): relation is Role {
+  return (ROLES as readonly string[]).includes(relation);
+}
 
 export function createTenancyService(deps: { db: TenancyDb; authz: Authz }): TenancyService {
   const { db, authz } = deps;
@@ -100,6 +116,25 @@ export function createTenancyService(deps: { db: TenancyDb; authz: Authz }): Ten
   async function load(id: string): Promise<Organization | undefined> {
     const rows = await db.select().from(organizations).where(eq(organizations.id, id)).limit(1);
     return rows[0];
+  }
+
+  /** The organization-level roles as SpiceDB holds them: by `sub`, the relations (`admin`, `member`) held. */
+  async function organizationRoles(
+    organizationId: string,
+    consistency: Consistency,
+  ): Promise<Map<string, Set<Role>>> {
+    const found = await authz.readRelationships(
+      { resourceType: 'organization', resourceId: organizationId },
+      consistency,
+    );
+    const roles = new Map<string, Set<Role>>();
+    for (const { relation, subject } of found) {
+      if (subject.type !== 'user' || !isRole(relation)) continue;
+      const held = roles.get(subject.id) ?? new Set<Role>();
+      held.add(relation);
+      roles.set(subject.id, held);
+    }
+    return roles;
   }
 
   /** The organization the principal administers, or the error the caller gets instead. */
@@ -177,29 +212,54 @@ export function createTenancyService(deps: { db: TenancyDb; authz: Authz }): Ten
         .orderBy(organizations.name, organizations.id);
     },
 
+    async listMembers(principal, organizationId, consistency) {
+      if (!(await allowed(principal, organizationId, 'view', consistency))) return undefined;
+      const roles = await organizationRoles(organizationId, consistency);
+      const subs = [...roles.keys()];
+      const rows =
+        subs.length === 0 ? [] : await db.select().from(users).where(inArray(users.id, subs));
+      const known = new Map(rows.map((row) => [row.id, row]));
+      const members: Member[] = [];
+      for (const [sub, held] of roles) {
+        const row = known.get(sub);
+        members.push({
+          sub,
+          ...(row ? { email: row.email, displayName: row.displayName } : {}),
+          // A member who holds both relations (a repaired seed, a race) is an admin: `administer = admin`.
+          role: held.has('admin') ? 'admin' : 'member',
+        });
+      }
+      return members.sort(compareMembers);
+    },
+
     async setMembership(principal, organizationId, memberSub, role) {
       const organization = await administered(principal, organizationId);
       if (organization.isPersonal) {
         throw new TenancyError('personal_organization', 'no membership on a personal organization');
       }
-      const member = { type: 'user', id: memberSub } as const;
       const resource = ref('organization', organizationId);
-      // The roles the member must not hold afterwards go first, by filter, so a missing one is a no-op.
-      let token: ZedToken | undefined;
-      for (const other of ROLES.filter((candidate) => candidate !== role)) {
-        token = await authz.deleteRelationships({
-          resourceType: 'organization',
-          resourceId: organizationId,
-          relation: other,
-          subject: member,
-        });
+      const member = ref('user', memberSub);
+      // Full consistency, like the check above: the roles a change is based on are the ones really there.
+      const roles = await organizationRoles(organizationId, fullyConsistent);
+      const held = roles.get(memberSub);
+      if (!held)
+        throw new TenancyError('not_a_member', 'the user holds no role in the organization');
+      if (held.has('admin') && role !== 'admin') {
+        const admins = [...roles].filter(([, relations]) => relations.has('admin'));
+        if (admins.length === 1) {
+          throw new TenancyError(
+            'last_admin',
+            'the organization would be left with no administrator',
+          );
+        }
       }
-      if (role)
-        token = await authz.writeRelationships([
-          touch(relationship(resource, role, ref('user', memberSub))),
-        ]);
-      if (!token) throw new Error('membership change produced no token');
-      return token;
+      // One atomic write: the role to hold TOUCHed, the roles held and no longer wanted deleted.
+      const updates: RelationshipUpdate[] = [];
+      if (role) updates.push(touch(relationship(resource, role, member)));
+      for (const other of held) {
+        if (other !== role) updates.push(remove(relationship(resource, other, member)));
+      }
+      return authz.writeRelationships(updates);
     },
 
     async setPolicy(principal, organizationId, policy) {
@@ -217,6 +277,13 @@ export function createTenancyService(deps: { db: TenancyDb; authz: Authz }): Ten
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Admins first, then by what the list shows (name, else email, else `sub`), then by `sub` for a stable order. */
+function compareMembers(a: Member, b: Member): number {
+  if (a.role !== b.role) return a.role === 'admin' ? -1 : 1;
+  const label = (member: Member) => member.displayName ?? member.email ?? member.sub;
+  return label(a).localeCompare(label(b)) || a.sub.localeCompare(b.sub);
+}
 
 /** SpiceDB may hold IDs that are not rows here (another environment's, a test's); never let one reach a uuid column. */
 function isUuid(id: string): boolean {

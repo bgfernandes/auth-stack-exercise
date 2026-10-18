@@ -9,9 +9,10 @@ import { eq } from 'drizzle-orm';
 
 import { ref, relationship, touch, type Authz, type ZedToken } from '@auth-stack/authz';
 
+import { type Role } from './client/index';
 import { type Policy } from './client/policy';
 import { organizations, users, type Organization } from './schema';
-import { type Role, type TenancyDb } from './service';
+import { type TenancyDb } from './service';
 
 export interface SeedUser {
   /** The Zitadel `sub`. */

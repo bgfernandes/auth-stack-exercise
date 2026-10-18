@@ -5,9 +5,23 @@
  * well as the organization: an answer is a permission decision for that user, and reusing it for another would
  * tell a non-member what a member sees.
  */
-import { fromWire, organizationsWire, organizationWire, provisionWire } from './wire';
+import {
+  fromMemberWire,
+  fromWire,
+  membersWire,
+  organizationsWire,
+  organizationWire,
+  provisionWire,
+  type MembershipWire,
+} from './wire';
 
-import type { OrganizationSummary, ProvisionResult, TenancyClient, UserContext } from './index';
+import type {
+  Member,
+  OrganizationSummary,
+  ProvisionResult,
+  TenancyClient,
+  UserContext,
+} from './index';
 
 export interface HttpTenancyClientOptions {
   /** `http://tenancy-api:4001` in compose, `http://localhost:4001` under Tilt (`TENANCY_API_URL`). */
@@ -31,6 +45,23 @@ export class TenancyClientError extends Error {
   }
 }
 
+/**
+ * Whether an error is the client's refusal, by shape rather than by `instanceof`: a bundler that builds a
+ * route handler and a server component as separate layers gives each its own copy of this module while the
+ * client they share was built by one of them, so `instanceof` fails across that line; the name and the fields
+ * do not (the documents package has the same guard, for the same reason).
+ */
+export function isTenancyClientError(error: unknown): error is TenancyClientError {
+  return (
+    error instanceof Error &&
+    error.name === 'TenancyClientError' &&
+    'status' in error &&
+    typeof error.status === 'number' &&
+    'code' in error &&
+    typeof error.code === 'string'
+  );
+}
+
 export interface HttpTenancyClient extends TenancyClient {
   /** Drops the cached organization answers of one user, or of everyone. */
   invalidate(sub?: string): void;
@@ -52,13 +83,19 @@ export function createHttpTenancyClient(options: HttpTenancyClientOptions): Http
 
   async function call(
     user: UserContext,
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'PUT',
     path: string,
     accepted: number[],
+    payload?: unknown,
   ): Promise<{ status: number; body: unknown }> {
     const response = await doFetch(`${baseUrl}${path}`, {
       method,
-      headers: { authorization: `Bearer ${user.accessToken}`, accept: 'application/json' },
+      headers: {
+        authorization: `Bearer ${user.accessToken}`,
+        accept: 'application/json',
+        ...(payload === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
     });
     const text = await response.text();
     // A body that is not JSON (a proxy's error page) is reported through the status, not as a parse error.
@@ -92,16 +129,24 @@ export function createHttpTenancyClient(options: HttpTenancyClientOptions): Http
     return status === 404 ? undefined : fromWire(organizationWire.parse(body));
   }
 
+  /** What the API just answered about an organization is fresher than anything cached for this user. */
+  function remember(user: UserContext, organization: OrganizationSummary): OrganizationSummary {
+    cache.set(keyOf(user.sub, organization.id), {
+      value: organization,
+      expiresAt: now() + ttlMs,
+    });
+    return organization;
+  }
+
   return {
     async provisionUser(user): Promise<ProvisionResult> {
       const { body } = await call(user, 'POST', '/me/provision', [200]);
       const parsed = provisionWire.parse(body);
       // The personal organization is now known for this user; whatever was cached for it is stale.
-      cache.set(keyOf(user.sub, parsed.organization.id), {
-        value: fromWire(parsed.organization),
-        expiresAt: now() + ttlMs,
-      });
-      return { organization: fromWire(parsed.organization), created: parsed.created };
+      return {
+        organization: remember(user, fromWire(parsed.organization)),
+        created: parsed.created,
+      };
     },
 
     getOrganization(user, id) {
@@ -124,6 +169,40 @@ export function createHttpTenancyClient(options: HttpTenancyClientOptions): Http
     async listOrganizations(user) {
       const { body } = await call(user, 'GET', '/me/organizations', [200]);
       return organizationsWire.parse(body).organizations.map(fromWire);
+    },
+
+    async listMembers(user, organizationId): Promise<Member[] | undefined> {
+      // Never cached: the list is what an administrator reads back right after changing it.
+      const { status, body } = await call(
+        user,
+        'GET',
+        `/organizations/${encodeURIComponent(organizationId)}/members`,
+        [200, 404],
+      );
+      return status === 404 ? undefined : membersWire.parse(body).members.map(fromMemberWire);
+    },
+
+    async setMembership(user, organizationId, memberSub, role) {
+      const payload: MembershipWire = { member_id: memberSub, role };
+      await call(
+        user,
+        'PUT',
+        `/organizations/${encodeURIComponent(organizationId)}/members`,
+        [204],
+        payload,
+      );
+    },
+
+    async setPolicy(user, organizationId, policy) {
+      const { body } = await call(
+        user,
+        'PUT',
+        `/organizations/${encodeURIComponent(organizationId)}/policy`,
+        [200],
+        policy,
+      );
+      // The caller reads the organization back on the next render: the answer replaces the cached one.
+      return remember(user, fromWire(organizationWire.parse(body)));
     },
 
     invalidate(sub) {
