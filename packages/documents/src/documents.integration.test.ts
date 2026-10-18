@@ -30,7 +30,7 @@ import { type OrganizationSummary, type TenancyClient } from '@auth-stack/tenanc
 
 import { documents, projects, schema, type DocumentsSchema } from './schema';
 
-import { createDocumentsService, type DocumentsService } from './index';
+import { createDocumentsService, seedDocuments, type DocumentsService } from './index';
 
 // Not process.loadEnvFile: Jest gives each test file its own copy of `process.env`, and loadEnvFile writes to the real one.
 function loadStackDefaults(): void {
@@ -52,12 +52,17 @@ const alice = user('alice');
 const bob = user('bob');
 const carol = user('carol');
 const ACME = randomUUID();
+/** The organization of the seeded scenario (§6.3), with users of its own so the lists above stay exact. */
+const SEEDED = randomUUID();
 
 const fakeTenancy: TenancyClient = {
   provisionUser: () => Promise.reject(new Error('not used here')),
   getOrganization: (_user, id) => {
-    const acme: OrganizationSummary = { id: ACME, name: 'Acme', isPersonal: false, policy: {} };
-    return Promise.resolve(id === ACME ? acme : undefined);
+    const known: Record<string, OrganizationSummary> = {
+      [ACME]: { id: ACME, name: 'Acme', isPersonal: false, policy: {} },
+      [SEEDED]: { id: SEEDED, name: 'Seeded', isPersonal: false, policy: {} },
+    };
+    return Promise.resolve(known[id]);
   },
   listOrganizations: () => Promise.reject(new Error('not used here')),
 };
@@ -85,12 +90,15 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  const rows = await database.db.select({ id: projects.id }).from(projects);
-  for (const { id } of rows) {
-    await authz.deleteRelationships({ resourceType: 'document', subject: { type: 'project', id } });
+  for (const { id } of await database.db.select({ id: documents.id }).from(documents)) {
+    await authz.deleteRelationships({ resourceType: 'document', resourceId: id });
+  }
+  for (const { id } of await database.db.select({ id: projects.id }).from(projects)) {
     await authz.deleteRelationships({ resourceType: 'project', resourceId: id });
   }
-  await authz.deleteRelationships({ resourceType: 'organization', resourceId: ACME });
+  for (const id of [ACME, SEEDED]) {
+    await authz.deleteRelationships({ resourceType: 'organization', resourceId: id });
+  }
   await database.drop();
   authz.close();
 });
@@ -227,5 +235,163 @@ describe('listVisibleDocuments, getDocumentForEdit, updateDocument', () => {
     await expect(service.updateDocument(alice, 'not-a-uuid', values)).rejects.toMatchObject({
       code: 'not_found',
     });
+  });
+});
+
+describe('seedDocuments', () => {
+  // The §6.3 scenario under IDs of this run: Alice administers, Bob and Carol are members (tenancy's part).
+  const seedAlice = user('seed-alice');
+  const seedBob = user('seed-bob');
+  const seedCarol = user('seed-carol');
+  const marketing = randomUUID();
+  const finance = randomUUID();
+  const launchPlan = randomUUID();
+  const budget = randomUUID();
+  const payroll = randomUUID();
+  const scenario = {
+    organizationId: SEEDED,
+    createdBy: seedAlice.sub,
+    projects: [
+      {
+        id: marketing,
+        name: 'Marketing',
+        roles: [
+          { sub: seedBob.sub, role: 'editor' as const },
+          { sub: seedCarol.sub, role: 'viewer' as const },
+        ],
+      },
+      { id: finance, name: 'Finance' },
+    ],
+    documents: [
+      {
+        id: launchPlan,
+        projectId: marketing,
+        name: 'Launch plan',
+        value1: 'a',
+        value2: 'b',
+        roles: [{ sub: seedCarol.sub, role: 'editor' as const }],
+      },
+      { id: budget, projectId: marketing, name: 'Budget', value1: 'c', value2: 'd' },
+      { id: payroll, projectId: finance, name: 'Payroll', value1: 'e', value2: 'f' },
+    ],
+  };
+
+  beforeAll(async () => {
+    await authz.writeRelationships([
+      touch(relationship(ref('organization', SEEDED), 'admin', ref('user', seedAlice.sub))),
+      touch(relationship(ref('organization', SEEDED), 'member', ref('user', seedBob.sub))),
+      touch(relationship(ref('organization', SEEDED), 'member', ref('user', seedCarol.sub))),
+    ]);
+  });
+
+  it('creates the projects and documents once, with the write token on every document', async () => {
+    const first = await seedDocuments({ db: database.db, authz }, scenario);
+    expect(first.createdProjects.sort()).toEqual([marketing, finance].sort());
+    expect(first.createdDocuments.sort()).toEqual([launchPlan, budget, payroll].sort());
+    expect(first.token).not.toBe('');
+    const rows = await database.db
+      .select()
+      .from(documents)
+      .where(eq(documents.organizationId, SEEDED));
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      expect(row).toMatchObject({ zedtoken: first.token, updatedBy: seedAlice.sub });
+    }
+
+    // A rerun creates nothing, keeps an edit a user made, and moves every document's token forward.
+    const edited = await service.updateDocument(seedAlice, budget, { value1: 'x', value2: 'y' });
+    const second = await seedDocuments({ db: database.db, authz }, scenario);
+    expect(second.createdProjects).toEqual([]);
+    expect(second.createdDocuments).toEqual([]);
+    expect(second.token).not.toBe(first.token);
+    const [budgetRow] = await database.db.select().from(documents).where(eq(documents.id, budget));
+    expect(budgetRow).toEqual({ ...edited, zedtoken: second.token });
+    expect(
+      await database.db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.organizationId, SEEDED)),
+    ).toHaveLength(2);
+  });
+
+  it('gives the three users the dashboards of §6.3', async () => {
+    const table = async (who: typeof seedAlice) =>
+      (await service.listVisibleDocuments(who, fullyConsistent)).map((row) => [
+        row.project.name,
+        row.name,
+        row.canEdit,
+      ]);
+    expect(await table(seedAlice)).toEqual([
+      ['Finance', 'Payroll', true],
+      ['Marketing', 'Budget', true],
+      ['Marketing', 'Launch plan', true],
+    ]);
+    expect(await table(seedBob)).toEqual([
+      ['Marketing', 'Budget', true],
+      ['Marketing', 'Launch plan', true],
+    ]);
+    expect(await table(seedCarol)).toEqual([
+      ['Marketing', 'Budget', false],
+      ['Marketing', 'Launch plan', true],
+    ]);
+    expect(
+      (await service.listVisibleDocuments(seedAlice, fullyConsistent))[0]?.organization,
+    ).toEqual({
+      id: SEEDED,
+      name: 'Seeded',
+    });
+
+    for (const id of [launchPlan, budget, payroll]) {
+      expect((await service.getDocumentForEdit(seedAlice, id)).id).toBe(id);
+    }
+    expect((await service.getDocumentForEdit(seedCarol, launchPlan)).id).toBe(launchPlan);
+    await expect(service.getDocumentForEdit(seedCarol, budget)).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+    await expect(service.getDocumentForEdit(seedCarol, payroll)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    await expect(service.getDocumentForEdit(seedBob, payroll)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    const values = { value1: 'p', value2: 'q' };
+    await expect(service.updateDocument(seedCarol, budget, values)).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+    await expect(service.updateDocument(seedCarol, payroll, values)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+  });
+
+  it('repairs a share removed by hand on the next run, visibly to the edit page', async () => {
+    await authz.deleteRelationships({
+      resourceType: 'document',
+      resourceId: launchPlan,
+      relation: 'editor',
+      subject: { type: 'user', id: seedCarol.sub },
+    });
+    await expect(
+      service.updateDocument(seedCarol, launchPlan, { value1: 'p', value2: 'q' }),
+    ).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+    await seedDocuments({ db: database.db, authz }, scenario);
+    expect((await service.getDocumentForEdit(seedCarol, launchPlan)).id).toBe(launchPlan);
+  });
+
+  it('refuses a document whose project the seed does not name, before writing anything', async () => {
+    const id = randomUUID();
+    await expect(
+      seedDocuments(
+        { db: database.db, authz },
+        {
+          organizationId: SEEDED,
+          createdBy: seedAlice.sub,
+          projects: [],
+          documents: [{ id, projectId: randomUUID(), name: 'Orphan', value1: 'a', value2: 'b' }],
+        },
+      ),
+    ).rejects.toThrow(/names a project the seed does not/);
+    expect(await database.db.select().from(documents).where(eq(documents.id, id))).toHaveLength(0);
   });
 });

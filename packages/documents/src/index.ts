@@ -20,4 +20,11 @@ export {
   type PersonalWorkspace,
   type VisibleDocument,
 } from './service';
+export {
+  seedDocuments,
+  type DocumentSeed,
+  type DocumentsSeed,
+  type DocumentsSeedOutcome,
+  type ProjectSeed,
+} from './seed';
 export { documentValuesSchema, parseDocumentValues, type DocumentValues } from './values';
