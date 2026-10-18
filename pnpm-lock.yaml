@@ -67,6 +67,43 @@ importers:
         specifier: 0.28.2
         version: 0.28.2
 
+  apps/dashboard-api:
+    dependencies:
+      '@auth-stack/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
+      '@auth-stack/authz':
+        specifier: workspace:*
+        version: link:../../packages/authz
+      '@auth-stack/client-scopes':
+        specifier: workspace:*
+        version: link:../../packages/client-scopes
+      '@auth-stack/db-core':
+        specifier: workspace:*
+        version: link:../../packages/db-core
+      '@auth-stack/documents':
+        specifier: workspace:*
+        version: link:../../packages/documents
+      '@auth-stack/tenancy':
+        specifier: workspace:*
+        version: link:../../packages/tenancy
+      fastify:
+        specifier: 5.12.7
+        version: 5.12.7
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@auth-stack/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
+
   apps/dashboard-web:
     dependencies:
       '@auth-stack/auth':

@@ -1,0 +1,27 @@
+{
+  "name": "dashboard-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "node build.mjs",
+    "start": "node dist/index.js",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@auth-stack/auth": "workspace:*",
+    "@auth-stack/authz": "workspace:*",
+    "@auth-stack/client-scopes": "workspace:*",
+    "@auth-stack/db-core": "workspace:*",
+    "@auth-stack/documents": "workspace:*",
+    "@auth-stack/tenancy": "workspace:*",
+    "fastify": "5.12.7",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@auth-stack/config": "workspace:*",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.15"
+  }
+}

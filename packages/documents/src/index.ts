@@ -1,7 +1,9 @@
 /**
  * `@auth-stack/documents`: schema, migrations, and the service of the documents domain (docs/README.md §3.1).
- * Imported by `dashboard-web` in phase 1 and only by `dashboard-api` from phase 2.
+ * Imported by `dashboard-web` in phase 1 and only by `dashboard-api` from phase 2; what a caller of the API
+ * needs is on the subpath `@auth-stack/documents/client`.
  */
+export { type VisibleDocument } from './client';
 export { DocumentsError, isDocumentsError, type DocumentsErrorCode } from './errors';
 export {
   documents,
@@ -18,7 +20,6 @@ export {
   type DocumentsDb,
   type DocumentsService,
   type PersonalWorkspace,
-  type VisibleDocument,
 } from './service';
 export {
   seedDocuments,

@@ -23,6 +23,7 @@ import {
 import { type Db } from '@auth-stack/db-core';
 import { type TenancyClient, type UserContext } from '@auth-stack/tenancy/client';
 
+import { type VisibleDocument } from './client';
 import { DocumentsError } from './errors';
 import { documents, projects, type Document, type DocumentsSchema, type Project } from './schema';
 import { parseDocumentShares, type DocumentShares } from './shares';
@@ -35,17 +36,6 @@ export interface PersonalWorkspace {
   document: Document;
   /** Whether this call created them; false on every call after the first. */
   created: boolean;
-}
-
-/** One dashboard row (§6.5): the document, where it sits, and whether the "Edit" hint applies. */
-export interface VisibleDocument {
-  id: string;
-  name: string;
-  project: { id: string; name: string };
-  /** The name is undefined when tenancy does not show the organization to the user. */
-  organization: { id: string; name: string | undefined };
-  canEdit: boolean;
-  updatedAt: Date;
 }
 
 export interface DocumentsService {
