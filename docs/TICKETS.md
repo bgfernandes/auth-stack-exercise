@@ -494,7 +494,7 @@ Fill gaps in unit and integration coverage, `pnpm audit` in CI (non-blocking), r
 
 ### Ticket 26 — Zitadel spike: RFC 9068 claims through Actions 🔬 spike (1.5 h, timeboxed)
 
-Try a Zitadel Action that adds `auth_time` and `amr` to the JWT access token; record the outcome in `docs/README.md` §9.1 as a dated note (if it works, ticket 28 enforces policies in the APIs; if not, the limitation stands).
+Try a Zitadel Action that adds `auth_time` and `amr` to the JWT access token; record the outcome in `docs/README.md` §9.1, rewriting the section in place with a decision-log entry (if it works, ticket 28 enforces policies in the APIs; if not, the limitation stands).
 
 **Status:** Open.
 
