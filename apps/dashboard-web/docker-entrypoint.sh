@@ -1,7 +1,8 @@
 #!/bin/sh
 # Loads the configuration the bootstrap container generated (the OIDC application, APP_URL, TENANCY_API_URL), then
 # starts the standalone Next.js server. The file is sourced, so its values win over variables of the same name
-# already in the environment; SESSION_SECRET and REDIS_URL come from the compose service's environment.
+# already in the environment; SESSION_SECRET, REDIS_URL, DOCUMENTS_DATABASE_URL, and SPICEDB_* come from the
+# compose service's environment.
 set -eu
 CONFIG_FILE=/config/dashboard-web.env
 if [ -f "$CONFIG_FILE" ]; then

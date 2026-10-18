@@ -69,6 +69,18 @@ importers:
       '@auth-stack/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@auth-stack/authz':
+        specifier: workspace:*
+        version: link:../../packages/authz
+      '@auth-stack/db-core':
+        specifier: workspace:*
+        version: link:../../packages/db-core
+      '@auth-stack/documents':
+        specifier: workspace:*
+        version: link:../../packages/documents
+      '@auth-stack/tenancy':
+        specifier: workspace:*
+        version: link:../../packages/tenancy
       ioredis:
         specifier: ^6.0.0
         version: 6.0.0
