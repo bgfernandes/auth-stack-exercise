@@ -9,6 +9,7 @@ import path from 'node:path';
 export interface Handoff {
   issuer: string;
   jwksUrl: string;
+  userinfoUrl: string;
   projectId: string;
   dashboardWeb: { clientId: string; url: string };
   tenancyApiUrl: string;
@@ -32,6 +33,8 @@ export function apisEnv(handoff: Handoff): Record<string, string> {
     OIDC_ISSUER: handoff.issuer,
     OIDC_PROJECT_ID: handoff.projectId,
     OIDC_JWKS_URL: handoff.jwksUrl,
+    // Where tenancy-api resolves a new user's email and name from the token (docs/README.md §6.4).
+    OIDC_USERINFO_URL: handoff.userinfoUrl,
   };
 }
 

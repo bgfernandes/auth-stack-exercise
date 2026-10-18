@@ -29,6 +29,7 @@ import {
 
 import { createInProcessTenancyClient } from './in-process-client';
 import { organizations, schema, users, type TenancySchema } from './schema';
+import { describeTenancyClientContract } from './testing/contract';
 
 import { createTenancyService, TenancyError, type TenancyService } from './index';
 
@@ -102,9 +103,11 @@ describe('migrations', () => {
 
 describe('provisionUser', () => {
   it('creates the mirror row and the personal organization once', async () => {
+    expect(await service.getUser(sub('alice'))).toBeUndefined();
     const first = await service.provisionUser(claims('alice'));
     organizationIds.add(first.organization.id);
     expect(first.created).toBe(true);
+    expect(await service.getUser(sub('alice'))).toEqual(first.user);
     expect(first.user).toMatchObject({
       id: sub('alice'),
       email: 'alice@example.com',
@@ -274,3 +277,11 @@ describe('in-process TenancyClient', () => {
     ).toBeUndefined();
   });
 });
+
+describeTenancyClientContract('in-process', () => ({
+  client: createInProcessTenancyClient(service, (user) =>
+    Promise.resolve({ sub: user.sub, email: `${user.sub}@example.com`, name: user.sub }),
+  ),
+  user: (name) => Promise.resolve({ sub: sub(`contract-${name}`), accessToken: 'unused' }),
+  track: (id) => organizationIds.add(id),
+}));

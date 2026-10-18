@@ -9,6 +9,7 @@ import { apisEnv, dashboardWebEnv, renderEnvFile, writeHandoff, type Handoff } f
 const handoff: Handoff = {
   issuer: 'http://auth.localtest.me:8080',
   jwksUrl: 'http://auth.localtest.me:8080/oauth/v2/keys',
+  userinfoUrl: 'http://auth.localtest.me:8080/oidc/v1/userinfo',
   projectId: '123',
   dashboardWeb: { clientId: '456', url: 'http://dashboard.localtest.me:3000' },
   tenancyApiUrl: 'http://tenancy-api:4001',
@@ -41,11 +42,12 @@ describe('env files', () => {
     });
   });
 
-  it('gives the APIs the issuer, the project ID as audience, and the JWKS URL', () => {
+  it('gives the APIs the issuer, the project ID as audience, the JWKS URL, and the userinfo URL', () => {
     expect(apisEnv(handoff)).toEqual({
       OIDC_ISSUER: 'http://auth.localtest.me:8080',
       OIDC_PROJECT_ID: '123',
       OIDC_JWKS_URL: 'http://auth.localtest.me:8080/oauth/v2/keys',
+      OIDC_USERINFO_URL: 'http://auth.localtest.me:8080/oidc/v1/userinfo',
     });
   });
 });

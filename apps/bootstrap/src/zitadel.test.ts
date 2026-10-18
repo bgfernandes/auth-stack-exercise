@@ -1,10 +1,13 @@
 import { describe, expect, it } from '@jest/globals';
 
 import {
+  ensureApiApp,
   ensureHumanUser,
   ensureOidcApp,
   ensureProject,
   oidcConfigMatches,
+  type ApiApp,
+  type ApiAppConfig,
   type NewHumanUser,
   type OidcApp,
   type OidcAppConfig,
@@ -29,6 +32,7 @@ class FakeZitadel implements ZitadelApi {
   readonly writes: string[] = [];
   readonly projects = new Map<string, string>();
   readonly apps = new Map<string, OidcApp>();
+  readonly apiApps = new Map<string, ApiApp>();
   readonly users = new Map<string, string>();
   private nextId = 1;
 
@@ -62,6 +66,27 @@ class FakeZitadel implements ZitadelApi {
       }
     }
     this.writes.push(`updateOidcAppConfig ${appId}`);
+    return Promise.resolve();
+  }
+
+  findApiAppByName(projectId: string, name: string): Promise<ApiApp | undefined> {
+    return Promise.resolve(this.apiApps.get(`${projectId}/${name}`));
+  }
+
+  createApiApp(projectId: string, name: string, config: ApiAppConfig): Promise<ApiApp> {
+    const app = { appId: this.id(), clientId: `client-${this.id()}`, config };
+    this.apiApps.set(`${projectId}/${name}`, app);
+    this.writes.push(`createApiApp ${name}`);
+    return Promise.resolve(app);
+  }
+
+  updateApiAppConfig(projectId: string, appId: string, config: ApiAppConfig): Promise<void> {
+    for (const [key, app] of this.apiApps) {
+      if (key.startsWith(`${projectId}/`) && app.appId === appId) {
+        this.apiApps.set(key, { ...app, config });
+      }
+    }
+    this.writes.push(`updateApiAppConfig ${appId}`);
     return Promise.resolve();
   }
 
@@ -122,6 +147,32 @@ describe('ensureOidcApp', () => {
       'createOidcApp dashboard-web',
       `updateOidcAppConfig ${created.appId}`,
     ]);
+  });
+});
+
+describe('ensureApiApp', () => {
+  const privateKeyJwt: ApiAppConfig = { authMethodType: 'API_AUTH_METHOD_TYPE_PRIVATE_KEY_JWT' };
+
+  it('creates a missing API application and leaves it alone on the next run', async () => {
+    const api = new FakeZitadel();
+    const first = await ensureApiApp(api, 'p1', 'tenancy-api', privateKeyJwt);
+    const second = await ensureApiApp(api, 'p1', 'tenancy-api', privateKeyJwt);
+    expect(first.action).toBe('created');
+    expect(second).toEqual({ appId: first.appId, clientId: first.clientId, action: 'unchanged' });
+    expect(api.writes).toEqual(['createApiApp tenancy-api']);
+  });
+
+  it('reconciles the auth method, reading an omitted one as the basic zero value', async () => {
+    const api = new FakeZitadel();
+    const created = await ensureApiApp(api, 'p1', 'tenancy-api', privateKeyJwt);
+    api.apiApps.set('p1/tenancy-api', { ...created, config: {} });
+    const updated = await ensureApiApp(api, 'p1', 'tenancy-api', privateKeyJwt);
+    expect(updated).toEqual({
+      appId: created.appId,
+      clientId: created.clientId,
+      action: 'updated',
+    });
+    expect(api.writes).toEqual(['createApiApp tenancy-api', `updateApiAppConfig ${created.appId}`]);
   });
 });
 

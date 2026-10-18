@@ -42,6 +42,7 @@ local_resource(
         'apps/bootstrap/package.json',
         'packages/authz/schema.zed',
         'packages/authz/src',
+        'packages/client-scopes/src',
         'packages/db-core/src',
         'packages/tenancy/src',
         'packages/tenancy/migrations',
@@ -53,20 +54,39 @@ local_resource(
 )
 
 
-def host_app(name, url, port, env_overrides={}):
+def stack_env():
+    """The committed development defaults of .env, as a dict, for the processes that run on the host.
+
+    Compose reads the file itself and passes each service the keys it needs; the host-run apps below get the
+    same keys, with the hosts that differ outside the compose network replaced. Values are exported
+    single-quoted, since some hold spaces.
+    """
+    values = {}
+    for line in str(read_file('.env')).splitlines():
+        line = line.strip()
+        if line and not line.startswith('#') and '=' in line:
+            key, value = line.split('=', 1)
+            values[key.strip()] = value.strip()
+    return values
+
+
+STACK_ENV = stack_env()
+
+
+def host_app(name, url, port, env={}, config=None, path='/'):
     """Runs an app on the host with its dev server, configured like its container.
 
-    The serve command sources ./.local/config/<name>.env, the file bootstrap wrote, the way the app's
-    docker-entrypoint.sh does, then applies the overrides: values that differ because the process is on the host
-    rather than in the compose network. The file is read when the process starts, after bootstrap, so a fresh clone
-    needs no Tiltfile reload.
+    The serve command exports `env` (the keys the app's compose service gets, with host-side values), then
+    sources ./.local/config/<config>.env (the file bootstrap wrote for the app, <name>.env by default; apis.env
+    for an API), the way the app's docker-entrypoint.sh does. The file is read when the process starts, after
+    bootstrap, so a fresh clone needs no Tiltfile reload.
     """
-    exports = ''.join(['export %s=%s; ' % (key, value) for key, value in env_overrides.items()])
+    exports = ''.join(["export %s='%s'; " % (key, value) for key, value in env.items()])
     local_resource(
         name,
-        serve_cmd='set -a; . ./.local/config/%s.env; set +a; %sexec pnpm --filter %s dev' % (name, exports, name),
+        serve_cmd='%sset -a; . ./.local/config/%s.env; set +a; exec pnpm --filter %s dev' % (exports, config or name, name),
         resource_deps=['pnpm-install', 'bootstrap'],
-        readiness_probe=probe(http_get=http_get_action(port, path='/'), period_secs=5, timeout_secs=10),
+        readiness_probe=probe(http_get=http_get_action(port, path=path), period_secs=5, timeout_secs=10),
         links=[url],
         labels=['apps'],
     )
@@ -74,3 +94,16 @@ def host_app(name, url, port, env_overrides={}):
 
 # One hostname per app (docs/README.md §4.3); the port is the one the app's compose service publishes.
 host_app('dashboard-web', 'http://dashboard.localtest.me:3000', 3000, {'TENANCY_API_URL': 'http://localhost:4001'})
+host_app(
+    'tenancy-api',
+    'http://localhost:4001/health',
+    4001,
+    {
+        'TENANCY_DATABASE_URL': 'postgres://tenancy:tenancy@localhost:5432/tenancy',
+        'SPICEDB_ENDPOINT': 'localhost:50051',
+        'SPICEDB_PRESHARED_KEY': STACK_ENV['SPICEDB_PRESHARED_KEY'],
+        'SPICEDB_INSECURE': STACK_ENV['SPICEDB_INSECURE'],
+    },
+    config='apis',
+    path='/health',
+)

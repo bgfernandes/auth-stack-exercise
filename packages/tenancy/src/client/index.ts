@@ -1,12 +1,36 @@
 /**
  * `@auth-stack/tenancy/client`: the `TenancyClient` interface and its types, and nothing from the package root
  * (no schema, no database), so that domain packages and BFFs import this subpath alone (docs/README.md §3.1).
- * The HTTP implementation arrives with `tenancy-api` (ticket 16); the in-process one, for tests, lives in the
- * package root.
+ * The HTTP implementation (`createHttpTenancyClient`) lives here; the in-process one, for tests, in the package
+ * root.
  */
 import { type Policy } from './policy';
 
+export {
+  createHttpTenancyClient,
+  httpTenancyClientFromEnv,
+  TenancyClientError,
+  type HttpTenancyClient,
+  type HttpTenancyClientOptions,
+} from './http';
 export { parsePolicy, policySchema, type Policy } from './policy';
+export {
+  fromWire,
+  organizationsWire,
+  organizationWire,
+  provisionWire,
+  toWire,
+  type OrganizationWire,
+} from './wire';
+
+/**
+ * The scope vocabulary of `tenancy-api` (docs/README.md §6.7): what its routes require and what bootstrap grants
+ * to every first-party client that calls it.
+ */
+export const TENANCY_API_SCOPES = {
+  read: 'tenancy:read',
+  write: 'tenancy:write',
+} as const;
 
 /** The user a BFF or domain acts for: the `sub` of the session and the access token it forwards to the APIs. */
 export interface UserContext {
