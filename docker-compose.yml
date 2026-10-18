@@ -412,6 +412,48 @@ services:
       spicedb:
         condition: service_healthy
 
+  # The documents service (ticket 19a): the documents domain behind bearer tokens, on its own database and
+  # SpiceDB, with tenancy over HTTP for organization names. Reached by service name only; dashboard-web keeps
+  # calling the domain in-process until ticket 19 switches it to this API.
+  dashboard-api:
+    profiles:
+      - apps
+    build:
+      context: .
+      dockerfile: apps/dashboard-api/Dockerfile
+    image: auth-stack/dashboard-api:dev
+    restart: unless-stopped
+    environment:
+      PORT: 4002
+      DOCUMENTS_DATABASE_URL: ${DOCUMENTS_DATABASE_URL}
+      SPICEDB_ENDPOINT: spicedb:50051
+      SPICEDB_PRESHARED_KEY: ${SPICEDB_PRESHARED_KEY}
+      SPICEDB_INSECURE: ${SPICEDB_INSECURE}
+      TENANCY_API_URL: ${TENANCY_API_URL}
+    # The JWKS URL is the public issuer's (docs/README.md §4.3, option (a)).
+    extra_hosts:
+      - auth.localtest.me:host-gateway
+    volumes:
+      # Generated configuration (issuer, project ID, JWKS URL), written by the bootstrap container.
+      - ./.local/config:/config:ro
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--spider', 'http://127.0.0.1:4002/health']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    networks:
+      - auth-stack
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      spicedb:
+        condition: service_healthy
+      tenancy-api:
+        condition: service_healthy
+
   # Tools profile: not started by `up`. `pnpm authz:zed <args>` runs SpiceDB's CLI against the stack.
   zed:
     image: ${ZED_IMAGE}

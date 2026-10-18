@@ -124,3 +124,19 @@ host_app(
     config='apis',
     path='/health',
 )
+host_app(
+    'dashboard-api',
+    'http://localhost:4002/health',
+    4002,
+    {
+        'DOCUMENTS_DATABASE_URL': 'postgres://documents:documents@localhost:5432/documents',
+        'SPICEDB_ENDPOINT': 'localhost:50051',
+        'SPICEDB_PRESHARED_KEY': STACK_ENV['SPICEDB_PRESHARED_KEY'],
+        'SPICEDB_INSECURE': STACK_ENV['SPICEDB_INSECURE'],
+        'TENANCY_API_URL': 'http://localhost:4001',
+    },
+    config='apis',
+    path='/health',
+    # Organization names come from tenancy-api (§6.6); in compose, dashboard-api depends on it the same way.
+    deps=['tenancy-api'],
+)

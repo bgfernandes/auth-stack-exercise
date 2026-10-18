@@ -1,8 +1,9 @@
 /**
  * Bootstrap (ticket 4): a one-shot, idempotent configuration of the stack. It writes the SpiceDB schema
  * (ticket 6), runs the service packages' database migrations (ticket 7), creates the single Zitadel project,
- * the dashboard-web application, and the tenancy-api API application, grants the first-party clients the
- * scopes of the APIs they call (§6.7, ticket 16), seeds the users of docs/README.md §6.3 in Zitadel and the
+ * the dashboard-web application, and the tenancy-api and dashboard-api API applications, grants the
+ * first-party clients the scopes of the APIs they call (§6.7, tickets 16 and 19a), seeds the users of
+ * docs/README.md §6.3 in Zitadel and the
  * Acme scenario in the tenancy and documents databases and SpiceDB (ticket 12), and writes the handoff files
  * the apps start from. Every object is matched by name or fixed ID first and every migration is recorded, so
  * running it again creates nothing. Any failure exits non-zero so compose surfaces it and the apps that depend
@@ -22,6 +23,7 @@ import { ensureSchema } from '@auth-stack/authz/schema';
 import { apiScope, client } from '@auth-stack/client-scopes';
 import { closeDb, createDb, runMigrations } from '@auth-stack/db-core';
 import { schema as documentsSchema, seedDocuments } from '@auth-stack/documents';
+import { DOCUMENTS_API_SCOPES } from '@auth-stack/documents/client';
 import { schema as tenancySchema, seedOrganization, TENANCY_API_SCOPES } from '@auth-stack/tenancy';
 
 import { writeHandoff, type Handoff } from './handoff';
@@ -42,6 +44,7 @@ import {
 const PROJECT_NAME = 'auth-stack-exercise';
 const DASHBOARD_WEB_APP = 'dashboard-web';
 const TENANCY_API_APP = 'tenancy-api';
+const DASHBOARD_API_APP = 'dashboard-api';
 const READY_TIMEOUT_MS = 120_000;
 
 function required(name: string): string {
@@ -82,10 +85,12 @@ export const API_APP_CONFIG: ApiAppConfig = {
 /**
  * Client authority (docs/README.md §6.7): every first-party client is granted every scope of every API it calls,
  * as `api_scope:<scope>#grantee@client:<client_id>` with TOUCH, so a repeat run writes nothing new. The scopes of
- * each API join here with the API (dashboard-api in ticket 19a).
+ * each API join here with the API; dashboard-web calls both.
  */
 export function scopeGrants(clients: { dashboardWeb: string }): [string, string][] {
-  return Object.values(TENANCY_API_SCOPES).map((scope) => [scope, clients.dashboardWeb]);
+  return [...Object.values(TENANCY_API_SCOPES), ...Object.values(DOCUMENTS_API_SCOPES)].map(
+    (scope) => [scope, clients.dashboardWeb],
+  );
 }
 
 async function writeScopeGrants(authz: Authz, grants: [string, string][]): Promise<void> {
@@ -152,8 +157,10 @@ async function configure(authz: Authz): Promise<void> {
   );
   log('application', { name: DASHBOARD_WEB_APP, id: app.appId, action: app.action });
 
-  const tenancyApi = await ensureApiApp(api, project.id, TENANCY_API_APP, API_APP_CONFIG);
-  log('application', { name: TENANCY_API_APP, id: tenancyApi.appId, action: tenancyApi.action });
+  for (const name of [TENANCY_API_APP, DASHBOARD_API_APP]) {
+    const apiApp = await ensureApiApp(api, project.id, name, API_APP_CONFIG);
+    log('application', { name, id: apiApp.appId, action: apiApp.action });
+  }
 
   const grants = scopeGrants({ dashboardWeb: app.clientId });
   await writeScopeGrants(authz, grants);
