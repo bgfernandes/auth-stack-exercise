@@ -2,7 +2,8 @@
  * What the specs share: where the app is, who the seeded users are (docs/README.md §6.3, from the seed.json
  * bootstrap wrote), and the steps every flow repeats: logging in through Zitadel's login page, reading the
  * member table, logging out. The seed and password readers mirror apps/dashboard-web/e2e/stack.ts; the two
- * suites stay independent on purpose, each running against its own app.
+ * suites share no code on purpose. The one spec that opens both apps, single sign-on and sign-out (ticket 20),
+ * is in the dashboard-web suite, since its assertions are on that app.
  */
 import { readFileSync } from 'node:fs';
 import { parseEnv } from 'node:util';

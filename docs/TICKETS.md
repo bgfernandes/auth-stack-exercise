@@ -509,7 +509,9 @@
 
 **Acceptance criteria:** green locally and in CI.
 
-**Status:** Open.
+> **2026-10-18 (built):** One spec in the `dashboard-web` suite (`apps/dashboard-web/e2e/sso.spec.ts`), at the maintainer's choice over a third suite at the workspace root, since the assertions are on that app and the tooling already covers the directory; it reads `E2E_TENANCY_WEB_URL` as the other suite does, and the suite's global setup now checks that both apps answer. Bob, as whom no other spec edits, logs in on `dashboard-web`, opens `tenancy-web`'s login, and lands on `/organizations` having visited the identity provider at `/oauth/v2/authorize` and `/ui/v2/login/login` alone, the navigation log being the proof of "without a prompt"; he logs out on `tenancy-web`, and the spec waits for `dashboard-web`'s `/dashboard` to answer `307`, with a bound of five seconds inside which nothing but the sink ends a session (observed: still `200` 30 ms after `tenancy-web`'s landing page showed, `307` 100 ms later, since Zitadel posts the logout token after answering the browser); the browser's next request then goes through the login to Zitadel's account picker, where the ended session asks for the password. The "re-validation backstop as the fallback assertion" has nothing to fall back to: nothing re-validates a session on an interval, and the token refresh is no backstop either, since Zitadel honoured the refresh token of the ended IdP session five seconds after the sign-out, on its first use (a probe outside the suite; nothing committed reads a token). §4.4 step 6 is rewritten in place, the decision log records the old sentence, and ticket 20a in phase 4 is the stub for the backstop. Verified: lint, Prettier, type-check, the spec alone and five times in parallel (each browser context has its own IdP session, so each sign-out touched its own sessions only; `dashboard-web` logged `auth.backchannel_logout` with `deleted: 1` for each run, `tenancy-web` with `deleted: 0`, its own logout having run first), then `pnpm test:e2e` in CI's order with both suites green against the compose stack, and no token in any app's log.
+
+**Status:** Done (2026-10-18).
 
 ---
 
@@ -546,6 +548,16 @@ Per-session synchronizer token in forms (the origin checks exist since phase 1);
 `organizations.policy` (from tenancy, cached) honoured by the BFFs: `requireAuthContext({ maxAge, amr })` in `packages/auth` reads `auth_time` and `amr` from the session, produces the RFC 9470 challenge, and the web apps turn it into a re-authentication (`prompt=login`, `max_age`) and retry. The seeded Acme organization gets `policy.max_auth_age_seconds: 600` (policy is per organization, §5.1) so a reviewer who logged in more than ten minutes earlier sees a step-up on their next write; personal organizations keep `{}`. README section on where policies live (§9.1).
 
 > **2026-10-17:** Per the preamble rule added in ticket 6, this ticket writes or updates the README of every package it implements or changes (`packages/auth`) in the same PR.
+
+**Status:** Open.
+
+### Ticket 20a — Re-validation of the IdP session: the backstop for a missed back-channel logout (2 h)
+
+**Read first:** `docs/README.md` §4.4 (steps 6 and 7).
+
+Found while building ticket 20: nothing backs up a logout token that never arrives (a BFF that was down, a delivery Zitadel gave up on), and the token refresh is no backstop, since Zitadel keeps honouring a refresh token after `end_session` ended the session that issued it (observed 2026-10-18, five seconds after the sign-out, on the token's first use); §4.4 said silent re-validation on an interval was the backstop, and nothing implemented it. The shape: `packages/auth` re-validates a session against the IdP's own session state on an interval (throttled the way the rolling `touch` is), deletes a session the IdP no longer knows, and sends the user to the login on the next request; the mechanism to weigh is Zitadel's session API (`GET /v2/sessions/{id}` with a service user's token, if the `sid` of the ID token is the session API's ID, which ticket 18 did not establish) against token introspection (RFC 7662; only a backstop if Zitadel reports the tokens of an ended session inactive, to be checked). The decision log records the mechanism and the window the interval leaves open.
+
+**Acceptance criteria:** with `dashboard-web`'s sink route answering `404` (the state before ticket 18), a logout on `tenancy-web` still ends `dashboard-web`'s session within the interval; the ticket 20 spec unchanged, since the sink stays the first line.
 
 **Status:** Open.
 
