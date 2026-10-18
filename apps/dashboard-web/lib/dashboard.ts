@@ -1,5 +1,5 @@
 /** The dashboard's shape (docs/README.md §6.5): one row per document, grouped by organization and project. */
-import { type VisibleDocument } from '@auth-stack/documents';
+import { type VisibleDocument } from '@auth-stack/documents/client';
 
 export interface ProjectGroup {
   id: string;

@@ -24,10 +24,10 @@ import { type Db } from '@auth-stack/db-core';
 import { type TenancyClient, type UserContext } from '@auth-stack/tenancy/client';
 
 import { type VisibleDocument } from './client';
+import { parseDocumentValues } from './client/values';
 import { DocumentsError } from './errors';
 import { documents, projects, type Document, type DocumentsSchema, type Project } from './schema';
 import { parseDocumentShares, type DocumentShares } from './shares';
-import { parseDocumentValues } from './values';
 
 export type DocumentsDb = Db<DocumentsSchema>;
 

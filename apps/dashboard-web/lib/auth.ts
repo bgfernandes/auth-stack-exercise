@@ -12,9 +12,9 @@ import { Redis } from 'ioredis';
 import { authOptionsFromEnv, createRedisSessionStore } from '@auth-stack/auth';
 import { createNextAuth, type NextAuth } from '@auth-stack/auth/next';
 
+import { clients } from './clients';
 import { log } from './log';
 import { createWorkspaceProvisioner } from './provisioning';
-import { services } from './services';
 
 const APP = 'dashboard-web';
 
@@ -32,7 +32,7 @@ function build(): AppAuth {
     log.warn('redis.error', { message: error.message });
   });
   const store = createRedisSessionStore(redis, { prefix: APP });
-  const onLogin = createWorkspaceProvisioner({ ...services(), logger: log });
+  const onLogin = createWorkspaceProvisioner({ ...clients(), logger: log });
   return {
     auth: createNextAuth({ options, store, afterLoginPath: '/dashboard', onLogin, logger: log }),
     appUrl: options.appUrl,

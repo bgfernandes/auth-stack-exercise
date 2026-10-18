@@ -13,6 +13,7 @@ const handoff: Handoff = {
   projectId: '123',
   dashboardWeb: { clientId: '456', url: 'http://dashboard.localtest.me:3000' },
   tenancyWeb: { clientId: '457', url: 'http://tenancy.localtest.me:3001' },
+  dashboardApiUrl: 'http://dashboard-api:4002',
   tenancyApiUrl: 'http://tenancy-api:4001',
   users: { alice: { id: '789', email: 'alice@example.com' } },
   scenario: {
@@ -44,12 +45,14 @@ describe('env files', () => {
       OIDC_REDIRECT_URI: 'http://dashboard.localtest.me:3000/auth/callback',
       OIDC_POST_LOGOUT_REDIRECT_URI: 'http://dashboard.localtest.me:3000/',
       APP_URL: 'http://dashboard.localtest.me:3000',
+      DASHBOARD_API_URL: 'http://dashboard-api:4002',
       TENANCY_API_URL: 'http://tenancy-api:4001',
     });
     expect(webAppEnv(handoff.tenancyWeb, handoff)).toMatchObject({
       OIDC_CLIENT_ID: '457',
       OIDC_REDIRECT_URI: 'http://tenancy.localtest.me:3001/auth/callback',
       APP_URL: 'http://tenancy.localtest.me:3001',
+      DASHBOARD_API_URL: 'http://dashboard-api:4002',
     });
   });
 

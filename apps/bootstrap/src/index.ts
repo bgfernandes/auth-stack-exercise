@@ -87,9 +87,11 @@ export const API_APP_CONFIG: ApiAppConfig = {
 };
 
 /**
- * Client authority (docs/README.md §6.7): every first-party client is granted every scope of every API it calls,
+ * Client authority (docs/README.md §6.7): every first-party client is granted the scopes of the calls it makes,
  * as `api_scope:<scope>#grantee@client:<client_id>` with TOUCH, so a repeat run writes nothing new. The scopes of
- * each API join here with the API; dashboard-web calls both APIs, tenancy-web calls tenancy-api only.
+ * each API join here with the API: dashboard-web calls both APIs in full; tenancy-web calls tenancy-api in full
+ * and dashboard-api for one write, the personal workspace of a first login (§6.4), so it gets `documents:write`
+ * and not `documents:read`.
  */
 export function scopeGrants(clients: {
   dashboardWeb: string;
@@ -99,7 +101,10 @@ export function scopeGrants(clients: {
   const documents = Object.values(DOCUMENTS_API_SCOPES);
   return [
     ...[...tenancy, ...documents].map((scope): [string, string] => [scope, clients.dashboardWeb]),
-    ...tenancy.map((scope): [string, string] => [scope, clients.tenancyWeb]),
+    ...[...tenancy, DOCUMENTS_API_SCOPES.write].map((scope): [string, string] => [
+      scope,
+      clients.tenancyWeb,
+    ]),
   ];
 }
 
@@ -130,6 +135,7 @@ async function configure(authz: Authz): Promise<void> {
   const configDir = required('CONFIG_DIR');
   const dashboardWebUrl = stripTrailingSlash(required('DASHBOARD_WEB_URL'));
   const tenancyWebUrl = stripTrailingSlash(required('TENANCY_WEB_URL'));
+  const dashboardApiUrl = stripTrailingSlash(required('DASHBOARD_API_URL'));
   const tenancyApiUrl = stripTrailingSlash(required('TENANCY_API_URL'));
   const seedPassword = required('SEED_USER_PASSWORD');
 
@@ -238,6 +244,7 @@ async function configure(authz: Authz): Promise<void> {
     projectId: project.id,
     dashboardWeb: clients.dashboardWeb,
     tenancyWeb: clients.tenancyWeb,
+    dashboardApiUrl,
     tenancyApiUrl,
     users,
     scenario: ACME,

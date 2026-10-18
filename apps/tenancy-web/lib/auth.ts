@@ -13,6 +13,7 @@ import { Redis } from 'ioredis';
 import { authOptionsFromEnv, createRedisSessionStore } from '@auth-stack/auth';
 import { createNextAuth, type NextAuth } from '@auth-stack/auth/next';
 
+import { documents } from './documents';
 import { log } from './log';
 import { createProvisioner } from './provisioning';
 import { tenancy } from './tenancy';
@@ -33,7 +34,7 @@ function build(): AppAuth {
     log.warn('redis.error', { message: error.message });
   });
   const store = createRedisSessionStore(redis, { prefix: APP });
-  const onLogin = createProvisioner({ tenancy: tenancy(), logger: log });
+  const onLogin = createProvisioner({ tenancy: tenancy(), documents: documents(), logger: log });
   return {
     auth: createNextAuth({
       options,

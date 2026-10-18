@@ -22,7 +22,7 @@ await app.register(bearerPlugin, {
 });
 ```
 
-Bootstrap grants every first-party client every scope of the APIs it calls, one relationship per scope:
+Bootstrap grants every first-party client the scopes of the calls it makes (`dashboard-web` both scopes of both APIs; `tenancy-web` both of `tenancy-api` and `documents:write`, for the one call of its login), one relationship per scope:
 
 ```ts
 import { relationship, touch } from '@auth-stack/authz';

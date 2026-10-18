@@ -1,7 +1,7 @@
-/** The composition of the two provisioning calls, with both services faked: order, arguments, outcome, failures. */
+/** The composition of the two provisioning calls, with both clients faked: order, arguments, outcome, failures. */
 import { describe, expect, it, jest } from '@jest/globals';
 
-import { type DocumentsService, type PersonalWorkspace } from '@auth-stack/documents';
+import { type DocumentsClient, type PersonalWorkspaceSummary } from '@auth-stack/documents/client';
 import { type ProvisionResult, type TenancyClient } from '@auth-stack/tenancy/client';
 
 import { createWorkspaceProvisioner } from './provisioning';
@@ -15,8 +15,8 @@ function provisionResult(created: boolean): ProvisionResult {
   return { organization: { id: ORG, name: 'Personal', isPersonal: true, policy: {} }, created };
 }
 
-function workspace(created: boolean): PersonalWorkspace {
-  return { project: { id: PROJECT }, document: { id: 'doc' }, created } as PersonalWorkspace;
+function workspace(created: boolean): PersonalWorkspaceSummary {
+  return { project: { id: PROJECT }, document: { id: 'doc' }, created } as PersonalWorkspaceSummary;
 }
 
 function setup(outcomes: { organizationCreated: boolean; projectCreated: boolean }) {
@@ -25,7 +25,7 @@ function setup(outcomes: { organizationCreated: boolean; projectCreated: boolean
     calls.push('provisionUser');
     return Promise.resolve(provisionResult(outcomes.organizationCreated));
   });
-  const ensurePersonalProject = jest.fn<DocumentsService['ensurePersonalProject']>(() => {
+  const ensurePersonalProject = jest.fn<DocumentsClient['ensurePersonalProject']>(() => {
     calls.push('ensurePersonalProject');
     return Promise.resolve(workspace(outcomes.projectCreated));
   });
@@ -89,7 +89,9 @@ describe('createWorkspaceProvisioner', () => {
       organizationCreated: true,
       projectCreated: true,
     });
-    ensurePersonalProject.mockRejectedValueOnce(new Error('organization not found'));
-    await expect(provision(session)).rejects.toThrow('organization not found');
+    ensurePersonalProject.mockRejectedValueOnce(
+      new Error('POST /organizations/x/personal-project: 404 not_found'),
+    );
+    await expect(provision(session)).rejects.toThrow('404 not_found');
   });
 });

@@ -1,21 +1,18 @@
 /**
  * The save route's handler (docs/README.md §6.5, §9): a same-origin `POST` of the edit form, as the signed-in
- * user, validated before anything is looked up, enforced by the domain at full consistency, answered with a
+ * user, validated before anything is looked up, enforced by `dashboard-api` at full consistency, answered with a
  * redirect the browser follows or with the status a replayed `curl` reads. Built with its dependencies so the
  * unit tests fake them; `app/documents/[id]/route.ts` binds it to the app.
  */
 import { assertSameOrigin } from '@auth-stack/auth';
-import {
-  documentValuesSchema,
-  isDocumentsError,
-  type DocumentsService,
-} from '@auth-stack/documents';
+import { documentValuesSchema, type DocumentsClient } from '@auth-stack/documents/client';
 import { type UserContext } from '@auth-stack/tenancy/client';
 
+import { refusalOf } from './api-refusal';
 import { type AppLogger } from './log';
 
 export interface DocumentSaverDeps {
-  documents: Pick<DocumentsService, 'updateDocument'>;
+  documents: Pick<DocumentsClient, 'updateDocument'>;
   /** The app's public URL: what the request's `Origin` must match, and the base of the redirects. */
   appUrl: string;
   /** The user behind the request's session cookie, with a live access token; undefined when there is none. */
@@ -24,6 +21,13 @@ export interface DocumentSaverDeps {
 }
 
 export type DocumentSaver = (request: Request, documentId: string) => Promise<Response>;
+
+const STATUS_OF = { unauthenticated: 401, forbidden: 403, not_found: 404 } as const;
+const TEXT_OF = {
+  unauthenticated: 'Unauthorized',
+  forbidden: 'Forbidden',
+  not_found: 'Not Found',
+} as const;
 
 export function createDocumentSaver(deps: DocumentSaverDeps): DocumentSaver {
   const { documents, appUrl, userFromRequest, logger } = deps;
@@ -54,11 +58,10 @@ export function createDocumentSaver(deps: DocumentSaverDeps): DocumentSaver {
     try {
       await documents.updateDocument(user, documentId, values.data);
     } catch (error) {
-      if (!isDocumentsError(error)) throw error;
-      logger.info('document.save_denied', { sub: user.sub, documentId, code: error.code });
-      return error.code === 'forbidden'
-        ? new Response('Forbidden', { status: 403 })
-        : new Response('Not Found', { status: 404 });
+      const refusal = refusalOf(error);
+      if (!refusal) throw error;
+      logger.info('document.save_denied', { sub: user.sub, documentId, code: refusal });
+      return new Response(TEXT_OF[refusal], { status: STATUS_OF[refusal] });
     }
     logger.info('document.updated', { sub: user.sub, documentId });
     return redirect(`/dashboard?saved=${encodeURIComponent(documentId)}`);

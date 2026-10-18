@@ -1,7 +1,7 @@
 /**
  * Who the request is for, read from the session once per request (React's `cache`, so the layout, the page,
  * and the domain calls share one store read). Components get `getCurrentUser()`, without the tokens; the
- * server code that calls the domain and the APIs (`lib/documents.ts`) gets `getCurrentUserContext()`, the
+ * server code that calls the APIs (`lib/documents.ts`, the save route) gets `getCurrentUserContext()`, the
  * `sub` with a live access token, and nothing renders it.
  */
 import { cache } from 'react';

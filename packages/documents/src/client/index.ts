@@ -1,9 +1,18 @@
 /**
  * `@auth-stack/documents/client`: what a caller of `dashboard-api` needs and nothing from the package root (no
- * schema, no database), in the shape of `@auth-stack/tenancy/client` (docs/README.md §3.1): the API's scope
- * vocabulary, its wire format, and the types a BFF works with. The HTTP client itself arrives with ticket 19,
- * when `dashboard-web` stops calling the service in-process.
+ * schema, no database), in the shape of `@auth-stack/tenancy/client` (docs/README.md §3.1): the `DocumentsClient`
+ * interface and its HTTP implementation, the API's scope vocabulary, its wire format, the values rule the BFF
+ * checks before calling, and the types a BFF works with.
  */
+export {
+  createHttpDocumentsClient,
+  DocumentsClientError,
+  httpDocumentsClientFromEnv,
+  isDocumentsClientError,
+  type DocumentsClient,
+  type HttpDocumentsClientOptions,
+} from './http';
+export { documentValuesSchema, parseDocumentValues, type DocumentValues } from './values';
 export {
   documentSharesWire,
   documentsWire,

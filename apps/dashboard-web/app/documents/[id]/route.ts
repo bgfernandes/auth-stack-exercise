@@ -1,12 +1,12 @@
 import { appUrl } from '../../../lib/auth';
+import { clients } from '../../../lib/clients';
 import { getCurrentUserContext } from '../../../lib/current-user';
 import { log } from '../../../lib/log';
 import { createDocumentSaver } from '../../../lib/save-document';
-import { services } from '../../../lib/services';
 
 /**
  * Saves the edit form (docs/README.md §6.5): `POST /documents/:id`, same-origin only (§9), validated, enforced
- * by the domain at full consistency, then back to the dashboard. A route handler rather than a Server Action so
+ * by `dashboard-api` at full consistency, then back to the dashboard. A route handler rather than a Server Action so
  * that the enforcement is an endpoint a reviewer can replay with `curl`. The edit page lives one segment down
  * because Next.js does not allow a page and a route handler in the same segment.
  */
@@ -20,7 +20,7 @@ let cached: ReturnType<typeof createDocumentSaver> | undefined;
 /** Built on first use, like the rest of `lib/`: `next build` evaluates this module with no configuration. */
 function saver() {
   cached ??= createDocumentSaver({
-    documents: services().documents,
+    documents: clients().documents,
     appUrl: appUrl('/').href,
     userFromRequest: () => getCurrentUserContext(),
     logger: log,
