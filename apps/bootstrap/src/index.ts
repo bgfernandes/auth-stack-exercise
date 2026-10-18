@@ -130,6 +130,7 @@ async function configure(authz: Authz): Promise<void> {
   const configDir = required('CONFIG_DIR');
   const dashboardWebUrl = stripTrailingSlash(required('DASHBOARD_WEB_URL'));
   const tenancyWebUrl = stripTrailingSlash(required('TENANCY_WEB_URL'));
+  const dashboardApiUrl = stripTrailingSlash(required('DASHBOARD_API_URL'));
   const tenancyApiUrl = stripTrailingSlash(required('TENANCY_API_URL'));
   const seedPassword = required('SEED_USER_PASSWORD');
 
@@ -238,6 +239,7 @@ async function configure(authz: Authz): Promise<void> {
     projectId: project.id,
     dashboardWeb: clients.dashboardWeb,
     tenancyWeb: clients.tenancyWeb,
+    dashboardApiUrl,
     tenancyApiUrl,
     users,
     scenario: ACME,

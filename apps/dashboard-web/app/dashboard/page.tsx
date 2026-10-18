@@ -5,7 +5,7 @@ import { displayName, getCurrentUser } from '../../lib/current-user';
 import { groupByPlace } from '../../lib/dashboard';
 import { listDocuments } from '../../lib/documents';
 
-import type { VisibleDocument } from '@auth-stack/documents';
+import type { VisibleDocument } from '@auth-stack/documents/client';
 
 interface Props {
   searchParams: Promise<{ saved?: string | string[] }>;

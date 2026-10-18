@@ -331,6 +331,7 @@ services:
       CONFIG_DIR: /config
       DASHBOARD_WEB_URL: ${DASHBOARD_WEB_URL}
       TENANCY_WEB_URL: ${TENANCY_WEB_URL}
+      DASHBOARD_API_URL: ${DASHBOARD_API_URL}
       TENANCY_API_URL: ${TENANCY_API_URL}
       SEED_USER_PASSWORD: ${SEED_USER_PASSWORD}
       # SpiceDB, for the schema write (ticket 6) and the seeded relationships (ticket 12).
@@ -371,16 +372,13 @@ services:
       - '3000:3000'
     environment:
       # The BFF session (packages/auth, ticket 9): the key of the login stash cookie and the session store. The
-      # OIDC application, APP_URL, and TENANCY_API_URL come from the handoff file the entrypoint sources.
+      # OIDC application, APP_URL, DASHBOARD_API_URL, and TENANCY_API_URL come from the handoff file the
+      # entrypoint sources. No database and no SpiceDB (ticket 19): every documents operation is a call to
+      # dashboard-api with the user's token, and Redis is the one connection of its own.
       SESSION_SECRET: ${SESSION_SECRET}
       REDIS_URL: ${REDIS_URL}
       # Node trusts the development CA that signed Zitadel's certificate (ticket 17b).
       NODE_EXTRA_CA_CERTS: /tls/ca.crt
-      # The documents domain runs in this process during phase 1 (docs/README.md §6.5): its database and SpiceDB.
-      DOCUMENTS_DATABASE_URL: ${DOCUMENTS_DATABASE_URL}
-      SPICEDB_ENDPOINT: spicedb:50051
-      SPICEDB_PRESHARED_KEY: ${SPICEDB_PRESHARED_KEY}
-      SPICEDB_INSECURE: ${SPICEDB_INSECURE}
     # Same Zitadel URL as the browser (docs/README.md §4.3, option (a)): the hostname maps to the host, where
     # Traefik publishes port 8443.
     extra_hosts:
@@ -404,9 +402,7 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
-      spicedb:
+      dashboard-api:
         condition: service_healthy
       tenancy-api:
         condition: service_healthy
@@ -496,8 +492,8 @@ services:
         condition: service_healthy
 
   # The documents service (ticket 19a): the documents domain behind bearer tokens, on its own database and
-  # SpiceDB, with tenancy over HTTP for organization names. Reached by service name only; dashboard-web keeps
-  # calling the domain in-process until ticket 19 switches it to this API.
+  # SpiceDB, with tenancy over HTTP for organization names. Reached by service name only: the BFFs call it with
+  # the user's token (ticket 19), and it is the one place that checks SpiceDB for documents.
   dashboard-api:
     profiles:
       - apps

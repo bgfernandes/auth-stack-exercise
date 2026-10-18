@@ -84,7 +84,7 @@ def host_app(name, url, port, env={}, config=None, path='/', deps=[]):
     default; apis.env for an API), the way the app's docker-entrypoint.sh does, then exports `env` (the keys the
     app's compose service gets, with host-side values) and NODE_EXTRA_CA_CERTS (the development CA, as the
     compose service gets it), which therefore win over the file's: the file names the compose-network hosts
-    (TENANCY_API_URL), and on the host they are replaced. The file is read when the process starts, after
+    (DASHBOARD_API_URL, TENANCY_API_URL), and on the host they are replaced. The file is read when the process starts, after
     bootstrap, so a fresh clone needs no Tiltfile reload. `deps` names the other apps this one calls, the way
     its compose service's depends_on does.
     """
@@ -107,16 +107,14 @@ host_app(
     'http://dashboard.localtest.me:3000',
     3000,
     {
+        'DASHBOARD_API_URL': 'http://localhost:4002',
         'TENANCY_API_URL': 'http://localhost:4001',
         'SESSION_SECRET': STACK_ENV['SESSION_SECRET'],
         'REDIS_URL': 'redis://localhost:6379',
-        'DOCUMENTS_DATABASE_URL': 'postgres://documents:documents@localhost:5432/documents',
-        'SPICEDB_ENDPOINT': 'localhost:50051',
-        'SPICEDB_PRESHARED_KEY': STACK_ENV['SPICEDB_PRESHARED_KEY'],
-        'SPICEDB_INSECURE': STACK_ENV['SPICEDB_INSECURE'],
     },
-    # The login callback calls tenancy-api (ticket 10); in compose, dashboard-web depends on it the same way.
-    deps=['tenancy-api'],
+    # Every documents operation is a call to dashboard-api and the login callback calls both APIs (tickets 10
+    # and 19); in compose, dashboard-web depends on them the same way.
+    deps=['dashboard-api', 'tenancy-api'],
 )
 host_app(
     'tenancy-web',

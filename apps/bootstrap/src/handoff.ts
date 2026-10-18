@@ -21,12 +21,13 @@ export interface Handoff {
   projectId: string;
   dashboardWeb: WebApp;
   tenancyWeb: WebApp;
+  dashboardApiUrl: string;
   tenancyApiUrl: string;
   users: Record<string, { id: string; email: string }>;
   scenario: Scenario;
 }
 
-/** The env contract of `packages/auth` (ticket 8) plus where the BFF reaches tenancy-api; one file per BFF. */
+/** The env contract of `packages/auth` (ticket 8) plus where the BFF reaches the two APIs; one file per BFF. */
 export function webAppEnv(app: WebApp, handoff: Handoff): Record<string, string> {
   return {
     OIDC_ISSUER: handoff.issuer,
@@ -35,6 +36,8 @@ export function webAppEnv(app: WebApp, handoff: Handoff): Record<string, string>
     OIDC_POST_LOGOUT_REDIRECT_URI: `${app.url}/`,
     // The app's public URL, for packages/auth: cookie attributes and the same-origin check (ticket 8).
     APP_URL: app.url,
+    // Both BFFs call both APIs (docs/README.md §6.4: the two provisioning calls; §6.5: every documents operation).
+    DASHBOARD_API_URL: handoff.dashboardApiUrl,
     TENANCY_API_URL: handoff.tenancyApiUrl,
   };
 }

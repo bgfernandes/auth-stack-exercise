@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { type VisibleDocument } from '@auth-stack/documents';
+import { type VisibleDocument } from '@auth-stack/documents/client';
 
 import { groupByPlace } from './dashboard';
 
