@@ -37,10 +37,10 @@ export default async function DashboardPage({ searchParams }: Props) {
       {groups.length === 0 && <p>No documents yet.</p>}
       {groups.map((organization) => (
         <section key={organization.id}>
-          <h2>{organization.name ?? 'An organization you are not a member of'}</h2>
+          <h2>{`Organization: ${organization.name ?? 'not a member'}`}</h2>
           {organization.projects.map((project) => (
             <section key={project.id}>
-              <h3>{project.name}</h3>
+              <h3>{`Project: ${project.name}`}</h3>
               <table>
                 <thead>
                   <tr>
