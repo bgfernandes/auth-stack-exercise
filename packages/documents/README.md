@@ -15,7 +15,7 @@ The service also needs a `TenancyClient` ([`@auth-stack/tenancy/client`](../tena
 ## Usage
 
 ```ts
-import { authzOptionsFromEnv, createAuthz, fullyConsistent } from '@auth-stack/authz';
+import { authzOptionsFromEnv, createAuthz, minimizeLatency } from '@auth-stack/authz';
 import { createDb } from '@auth-stack/db-core';
 import { createDocumentsService, DocumentsError, schema } from '@auth-stack/documents';
 
@@ -25,8 +25,9 @@ const documents = createDocumentsService({ db, authz: createAuthz(authzOptionsFr
 // Login callback (§6.4), after tenancy provisioned the personal organization: idempotent, race-safe.
 const { project, document, created } = await documents.ensurePersonalProject(user, organizationId);
 
-// Dashboard (§6.5): one lookup of `view`, one bulk check of `edit`; phase 1 lists at full consistency.
-const rows = await documents.listVisibleDocuments(user, fullyConsistent); // { id, name, project, organization, canEdit }
+// Dashboard (§6.5): one lookup of `view`, one bulk check of `edit`, at the listing level of §7.3: a cached
+// snapshot that may lag a write by up to one quantization window, for everyone including the writer.
+const rows = await documents.listVisibleDocuments(user, minimizeLatency); // { id, name, project, organization, canEdit }
 
 // Edit form and save (§6.5, §7.3): `edit` at least as fresh as the row's token to read, fully consistent to write.
 const row = await documents.getDocumentForEdit(user, id);

@@ -75,7 +75,7 @@ const shares = await authz.readRelationships(
 await authz.deleteRelationships({ resourceType: 'document', resourceId: documentId });
 ```
 
-Every call names its consistency explicitly: `fullyConsistent` on the write path, `atLeastAsFresh(token)` for content reads, `minimizeLatency` for listings (`fullyConsistent` for listings until ticket 21). `check` and the write calls return the ZedToken of the revision they ran at. A check right after a schema or relationship write at `minimizeLatency` may be served from an older snapshot; pass the write's token with `atLeastAsFresh` when the result must reflect it.
+Every call names its consistency explicitly: `fullyConsistent` on the write path, `atLeastAsFresh(token)` for content reads, `minimizeLatency` for listings. `check` and the write calls return the ZedToken of the revision they ran at. A check right after a schema or relationship write at `minimizeLatency` may be served from an older snapshot; pass the write's token with `atLeastAsFresh` when the result must reflect it.
 
 `ref(type, id)` validates the object ID (SpiceDB allows `[a-zA-Z0-9/_|\-=+]`, 1 to 1024 characters, no colon) and `relationship(resource, relation, subject)` only accepts a subject of the type the schema names for that relation. `VOCABULARY` is the constant the types derive from; a unit test keeps it equal to `schema.zed`.
 

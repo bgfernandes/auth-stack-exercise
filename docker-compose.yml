@@ -249,11 +249,14 @@ services:
   spicedb:
     image: ${SPICEDB_IMAGE}
     restart: unless-stopped
+    # The quantization interval is SpiceDB's default, pinned so that the window docs/README.md §7.1 quotes, which
+    # bounds how far a `minimize_latency` listing may lag, is a setting a reader can see rather than a default.
     command: >-
       serve
       --grpc-preshared-key "${SPICEDB_PRESHARED_KEY}"
       --datastore-engine postgres
       --datastore-conn-uri "${SPICEDB_DATASTORE_CONN_URI}"
+      --datastore-revision-quantization-interval 5s
       --telemetry-endpoint ""
     ports:
       # gRPC, published for processes run on the host by Tilt (ticket 5).

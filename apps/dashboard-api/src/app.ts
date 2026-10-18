@@ -21,7 +21,7 @@ import {
   type ScopeResolver,
 } from '@auth-stack/auth';
 import { apiServerOptions, bearerPlugin, echoRequestId } from '@auth-stack/auth/fastify';
-import { fullyConsistent } from '@auth-stack/authz';
+import { minimizeLatency } from '@auth-stack/authz';
 import {
   isDocumentsError,
   type DocumentsErrorCode,
@@ -111,8 +111,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     '/documents',
     { preHandler: app.requireScope(DOCUMENTS_API_SCOPES.read) },
     async (request) => {
-      // Phase 1 lists at full consistency (ticket 21 moves listings to `minimize_latency`, §7.3).
-      const rows = await service.listVisibleDocuments(userOf(request), fullyConsistent);
+      // The listing level of §7.3: a cached snapshot, stale by up to one quantization window, for everyone
+      // including the user who just wrote; every content read is gated per row with the row's token.
+      const rows = await service.listVisibleDocuments(userOf(request), minimizeLatency);
       return { documents: rows.map(toVisibleDocumentWire) };
     },
   );

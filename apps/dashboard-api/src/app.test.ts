@@ -266,7 +266,7 @@ describe('dashboard-api', () => {
   });
 
   describe('GET /documents', () => {
-    it('lists what the caller may view in the wire format, at full consistency, with the caller as context', async () => {
+    it('lists what the caller may view in the wire format, at minimize_latency, with the caller as context', async () => {
       const budget = service.add('Budget', { alice: 'edit', carol: 'view' });
       const payroll = service.add('Payroll', { alice: 'edit' });
       const response = await app.inject({ url: '/documents', headers: bearer(carol) });
@@ -294,7 +294,7 @@ describe('dashboard-api', () => {
         documents: [],
       });
       expect(service.calls.map((call) => call.consistency?.level)).toEqual(
-        Array.from({ length: 3 }, () => 'fully_consistent'),
+        Array.from({ length: 3 }, () => 'minimize_latency'),
       );
       expect(service.calls[0]?.user).toEqual({ sub: 'carol', accessToken: carol });
     });
