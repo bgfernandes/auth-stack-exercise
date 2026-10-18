@@ -76,15 +76,16 @@ STACK_ENV = stack_env()
 def host_app(name, url, port, env={}, config=None, path='/'):
     """Runs an app on the host with its dev server, configured like its container.
 
-    The serve command exports `env` (the keys the app's compose service gets, with host-side values), then
-    sources ./.local/config/<config>.env (the file bootstrap wrote for the app, <name>.env by default; apis.env
-    for an API), the way the app's docker-entrypoint.sh does. The file is read when the process starts, after
-    bootstrap, so a fresh clone needs no Tiltfile reload.
+    The serve command sources ./.local/config/<config>.env (the file bootstrap wrote for the app, <name>.env by
+    default; apis.env for an API), the way the app's docker-entrypoint.sh does, then exports `env` (the keys the
+    app's compose service gets, with host-side values), which therefore win over the file's: the file names the
+    compose-network hosts (TENANCY_API_URL), and on the host they are replaced. The file is read when the process
+    starts, after bootstrap, so a fresh clone needs no Tiltfile reload.
     """
     exports = ''.join(["export %s='%s'; " % (key, value) for key, value in env.items()])
     local_resource(
         name,
-        serve_cmd='%sset -a; . ./.local/config/%s.env; set +a; exec pnpm --filter %s dev' % (exports, config or name, name),
+        serve_cmd='set -a; . ./.local/config/%s.env; set +a; %sexec pnpm --filter %s dev' % (config or name, exports, name),
         resource_deps=['pnpm-install', 'bootstrap'],
         readiness_probe=probe(http_get=http_get_action(port, path=path), period_secs=5, timeout_secs=10),
         links=[url],
@@ -93,7 +94,16 @@ def host_app(name, url, port, env={}, config=None, path='/'):
 
 
 # One hostname per app (docs/README.md §4.3); the port is the one the app's compose service publishes.
-host_app('dashboard-web', 'http://dashboard.localtest.me:3000', 3000, {'TENANCY_API_URL': 'http://localhost:4001'})
+host_app(
+    'dashboard-web',
+    'http://dashboard.localtest.me:3000',
+    3000,
+    {
+        'TENANCY_API_URL': 'http://localhost:4001',
+        'SESSION_SECRET': STACK_ENV['SESSION_SECRET'],
+        'REDIS_URL': 'redis://localhost:6379',
+    },
+)
 host_app(
     'tenancy-api',
     'http://localhost:4001/health',

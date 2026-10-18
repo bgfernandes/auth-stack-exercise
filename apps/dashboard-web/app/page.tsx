@@ -1,35 +1,20 @@
-import { cookies } from 'next/headers';
+import Link from 'next/link';
 
-import { CLAIMS_COOKIE } from '../lib/oidc';
+import { getCurrentUser } from '../lib/current-user';
 
-const SHOWN_CLAIMS = ['sub', 'email', 'iss', 'aud', 'auth_time', 'amr', 'sid', 'name', 'exp'];
-
-export default async function Page() {
-  const raw = (await cookies()).get(CLAIMS_COOKIE)?.value;
-  const claims = raw ? (JSON.parse(raw) as Record<string, unknown>) : undefined;
-
+/** The public landing page: a login link, or the way to the dashboard for a signed-in user. */
+export default async function LandingPage() {
+  const user = await getCurrentUser();
   return (
     <main>
-      <h1>dashboard-web</h1>
-      {claims ? (
-        <>
-          <p>ID token claims from the last login:</p>
-          <table>
-            <tbody>
-              {SHOWN_CLAIMS.map((name) => (
-                <tr key={name}>
-                  <th style={{ textAlign: 'left', paddingRight: '1rem' }}>{name}</th>
-                  <td data-claim={name}>{JSON.stringify(claims[name])}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
-      ) : (
-        <p>Not logged in.</p>
-      )}
+      <h1>Documents</h1>
+      <p>Sign in with Zitadel to see the documents you can view and edit the ones you can edit.</p>
       <p>
-        <a href="/auth/login">Log in</a>
+        {user ? (
+          <Link href="/dashboard">Go to the dashboard</Link>
+        ) : (
+          <a href="/auth/login">Log in</a>
+        )}
       </p>
     </main>
   );

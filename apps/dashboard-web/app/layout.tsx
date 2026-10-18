@@ -1,11 +1,41 @@
+import Link from 'next/link';
+
+import { displayName, getCurrentUser } from '../lib/current-user';
+
 import type { ReactNode } from 'react';
 
-export const metadata = { title: 'dashboard-web' };
+import './globals.css';
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export const metadata = { title: 'Dashboard' };
+
+// Every page reads the session, so none is prerendered: the build renders nothing and reads no configuration.
+export const dynamic = 'force-dynamic';
+
+/** The frame of every page: the app name, and who is signed in with the logout form, or the login link. */
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  const user = await getCurrentUser();
   return (
     <html lang="en">
-      <body style={{ fontFamily: 'system-ui, sans-serif', margin: '2rem' }}>{children}</body>
+      <body>
+        <header>
+          <Link href="/" className="brand">
+            Dashboard
+          </Link>
+          <nav>
+            {user ? (
+              <>
+                <span>{displayName(user)}</span>
+                <form method="post" action="/auth/logout">
+                  <button type="submit">Log out</button>
+                </form>
+              </>
+            ) : (
+              <a href="/auth/login">Log in</a>
+            )}
+          </nav>
+        </header>
+        {children}
+      </body>
     </html>
   );
 }
