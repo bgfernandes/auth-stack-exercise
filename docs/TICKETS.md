@@ -419,7 +419,9 @@
 
 **Acceptance criteria:** Alice demotes Bob to member and back; a member cannot open the policy form; Carol sees the member list but no controls.
 
-**Status:** Open.
+> **2026-10-18 (as built):** The acceptance criterion is read against the seed, where Bob starts as a member: Alice promotes him and demotes him back, and the suite leaves the scenario as seeded. Three choices by the maintainer, recorded in `docs/README.md` §12: `PUT /organizations/:id/members` changes or removes a current member only (`400 not_a_member` otherwise; a first role comes from an invitation or the seed), the last administrator cannot be demoted or removed (`409 last_admin`), and `tenancy-web`'s login hook provisions through tenancy only until ticket 19's HTTP documents client exists (§6.4 rewritten). The share picker's source is `GET /organizations/:id/members`, visible to every member. Verified: 192 unit tests (18 new: five route tests on `tenancy-api`, the two write handlers and the login hook of `tenancy-web`, the client's writes), 71 integration tests (the service's member list and membership rules, the client contract over both implementations with three new cases), 6 Playwright tests (the 4 of ticket 13 plus Alice and Carol on `tenancy-web`), the stack up with `tenancy-web` healthy, bootstrap `created` then `unchanged` for the second application with six scope grants.
+
+**Status:** Done (2026-10-18).
 
 ---
 
