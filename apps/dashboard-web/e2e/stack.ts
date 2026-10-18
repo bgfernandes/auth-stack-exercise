@@ -1,7 +1,8 @@
 /**
  * What the specs share: where the stack is, who the seeded users are (docs/README.md §6.3, from the seed.json
  * bootstrap wrote), and the steps every flow repeats: logging in through Zitadel's login page, reading the
- * dashboard table, editing a document and putting it back, logging out.
+ * dashboard table, editing a document and putting it back, logging out. The single sign-on spec also opens
+ * tenancy-web, at `TENANCY_WEB_URL`.
  */
 import { readFileSync } from 'node:fs';
 import { parseEnv } from 'node:util';
@@ -13,6 +14,9 @@ const ROOT = new URL('../../../', import.meta.url);
 const SEED_FILE = new URL('.local/config/seed.json', ROOT);
 
 export const BASE_URL = process.env.E2E_BASE_URL ?? 'http://dashboard.localtest.me:3000';
+/** The other web app, which the single sign-on spec opens; the variable the tenancy-web suite reads too. */
+export const TENANCY_WEB_URL =
+  process.env.E2E_TENANCY_WEB_URL ?? 'http://tenancy.localtest.me:3001';
 
 export type UserKey = 'alice' | 'bob' | 'carol';
 export type DocumentLabel = 'launch-plan' | 'budget' | 'payroll';
@@ -149,6 +153,19 @@ export async function editAndRestore(
   await page.goto(`/documents/${document.id}/edit`);
   await expect(value2).toHaveValue(original.value2);
   await page.goto('/dashboard');
+}
+
+/**
+ * The URLs the page's main frame is sent to from now on, every redirect hop included, so a spec can assert what
+ * a flow passed through and not only where it landed.
+ */
+export function navigations(page: Page): string[] {
+  const urls: string[] = [];
+  page.on('request', (request) => {
+    if (request.isNavigationRequest() && request.frame() === page.mainFrame())
+      urls.push(request.url());
+  });
+  return urls;
 }
 
 /** A value no seed carries, so a leftover from a failed run is recognizable. */
