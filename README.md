@@ -49,8 +49,10 @@ With either stack running, `pnpm db:migrate` applies every package's pending dat
 pnpm test                              # unit (Jest): nothing running
 pnpm test:integration                  # integration (Jest, the *.integration.test.ts files): either stack above running; the tests reach the compose Postgres, SpiceDB, and Redis from the host with the defaults of .env; the two packages that own a database (tenancy, documents) each create and drop their own (it_<package>)
 pnpm exec playwright install chromium  # once per Playwright version: the browser the end-to-end suite drives
-pnpm test:e2e                          # end-to-end (Playwright, apps/dashboard-web/e2e): the apps running (compose with the apps profile, or Tilt); logs in as each seeded user through Zitadel's login page, checks the dashboard against the table below, edits one document and puts it back, logs out, and replays the forbidden POST; leaves the seeded values as they were
-pnpm exec playwright show-report apps/dashboard-web/playwright-report  # after a failure: the report, with the trace of every failed test (CI uploads the same as an artifact)
+pnpm test:e2e                          # end-to-end (Playwright): the apps running (compose with the apps profile, or Tilt); runs the two suites below in turn and leaves the seeded scenario as it was
+pnpm test:e2e:dashboard-web            # apps/dashboard-web/e2e: logs in as each seeded user through Zitadel's login page, checks the dashboard against the table below, edits one document and puts it back, logs out, and replays the forbidden POST
+pnpm test:e2e:tenancy-web              # apps/tenancy-web/e2e: Alice promotes Bob and demotes him back, sets Acme's sign-in policy and clears it, is refused as the last administrator; Carol sees the member list with no controls and her crafted POSTs answer 403 and 404
+pnpm exec playwright show-report apps/dashboard-web/playwright-report  # after a failure: the report, with the trace of every failed test (apps/tenancy-web/playwright-report for the other suite; CI uploads both as one artifact)
 ```
 
 Bootstrap is idempotent: every `up` and every `tilt up` re-runs it, a second run creates nothing, and a changed application setting is updated in place. The seeded users (password `Password1!`, emails verified, no Mailpit step needed) and what each sees on the dashboard, from the Acme organization with its Marketing project ("Launch plan", "Budget") and Finance project ("Payroll"):
