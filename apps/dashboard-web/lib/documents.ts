@@ -33,7 +33,9 @@ export async function documentForEdit(id: string): Promise<EditState> {
   try {
     return { state: 'document', document: await services().documents.getDocumentForEdit(user, id) };
   } catch (error) {
-    if (isDocumentsError(error)) return { state: error.code };
+    if (isDocumentsError(error) && (error.code === 'forbidden' || error.code === 'not_found')) {
+      return { state: error.code };
+    }
     throw error;
   }
 }

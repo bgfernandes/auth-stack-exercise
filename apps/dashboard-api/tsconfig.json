@@ -1,0 +1,8 @@
+{
+  "extends": "@auth-stack/config/tsconfig/base.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true
+  },
+  "include": ["src", "build.mjs"]
+}

@@ -2,7 +2,8 @@
  * The documents domain service (docs/README.md §5.2, §6.4, §6.5, §7.3): the personal workspace, the dashboard
  * listing, and the edit flow. In-process in `dashboard-web` during phase 1, behind `dashboard-api` from phase 2.
  * Every method checks SpiceDB before touching data, at the consistency level §7.3 assigns to the operation, and
- * every content write stores the token of its check in the same statement as the content.
+ * every content write stores the token of its check in the same statement as the content, and a share stores
+ * the token of its relationship write the same way.
  */
 import { randomUUID } from 'node:crypto';
 
@@ -13,15 +14,19 @@ import {
   fullyConsistent,
   ref,
   relationship,
+  remove,
   touch,
   type Authz,
   type Consistency,
+  type RelationshipUpdate,
 } from '@auth-stack/authz';
 import { type Db } from '@auth-stack/db-core';
 import { type TenancyClient, type UserContext } from '@auth-stack/tenancy/client';
 
+import { type VisibleDocument } from './client';
 import { DocumentsError } from './errors';
 import { documents, projects, type Document, type DocumentsSchema, type Project } from './schema';
+import { parseDocumentShares, type DocumentShares } from './shares';
 import { parseDocumentValues } from './values';
 
 export type DocumentsDb = Db<DocumentsSchema>;
@@ -31,17 +36,6 @@ export interface PersonalWorkspace {
   document: Document;
   /** Whether this call created them; false on every call after the first. */
   created: boolean;
-}
-
-/** One dashboard row (§6.5): the document, where it sits, and whether the "Edit" hint applies. */
-export interface VisibleDocument {
-  id: string;
-  name: string;
-  project: { id: string; name: string };
-  /** The name is undefined when tenancy does not show the organization to the user. */
-  organization: { id: string; name: string | undefined };
-  canEdit: boolean;
-  updatedAt: Date;
 }
 
 export interface DocumentsService {
@@ -57,6 +51,13 @@ export interface DocumentsService {
   getDocumentForEdit(user: UserContext, id: string): Promise<Document>;
   /** Validates the values, checks `edit` at full consistency, stores values and the check's token together. */
   updateDocument(user: UserContext, id: string, values: unknown): Promise<Document>;
+  /**
+   * Replaces the document's direct shares (§6.8): validates the set, checks `share` at full consistency, requires
+   * every named user to be a member of the owning organization (`organization#view`, else `not_a_member`), then
+   * writes the difference in one atomic call and stores its token on the row (§7.3). The row's values and writer
+   * are untouched: a share is not a content change.
+   */
+  setDocumentShares(user: UserContext, id: string, shares: unknown): Promise<Document>;
 }
 
 export const PERSONAL_PROJECT_NAME = 'Personal';
@@ -72,7 +73,7 @@ export function createDocumentsService(deps: {
   async function check(
     user: UserContext,
     documentId: string,
-    permission: 'view' | 'edit',
+    permission: 'view' | 'edit' | 'share',
     consistency: Consistency,
   ) {
     return authz.check({
@@ -95,11 +96,29 @@ export function createDocumentsService(deps: {
     user: UserContext,
     row: Document,
     consistency: Consistency,
+    required: 'edit' | 'share' = 'edit',
   ): Promise<DocumentsError> {
     const view = await check(user, row.id, 'view', consistency);
     return view.allowed
-      ? new DocumentsError('forbidden', 'document#edit required')
+      ? new DocumentsError('forbidden', `document#${required} required`)
       : new DocumentsError('not_found', 'document not found');
+  }
+
+  /** The direct shares on the row, read fully consistent so a replacement deletes what is really there. */
+  async function currentShares(documentId: string): Promise<DocumentShares> {
+    const shares: DocumentShares = { editors: [], viewers: [] };
+    const found = await authz.readRelationships(
+      { resourceType: 'document', resourceId: documentId },
+      fullyConsistent,
+    );
+    for (const { relation, subject } of found) {
+      if (subject.type !== 'user') continue;
+      if (relation === 'editor') shares.editors.push(subject.id);
+      else if (relation === 'viewer') shares.viewers.push(subject.id);
+    }
+    shares.editors.sort();
+    shares.viewers.sort();
+    return shares;
   }
 
   /**
@@ -242,6 +261,52 @@ export function createDocumentsService(deps: {
           updatedAt: new Date(),
           updatedBy: user.sub,
         })
+        .where(eq(documents.id, id))
+        .returning();
+      if (!updated) throw new DocumentsError('not_found', 'document not found');
+      return updated;
+    },
+
+    async setDocumentShares(user, id, shares) {
+      const desired = parseDocumentShares(shares);
+      const row = await load(id);
+      if (!row) throw new DocumentsError('not_found', 'document not found');
+      const share = await check(user, id, 'share', fullyConsistent);
+      if (!share.allowed) throw await denied(user, row, fullyConsistent, 'share');
+
+      // Member IDs only (§6.8): each named user must be a member of the organization that owns the document.
+      const grantees = [...desired.editors, ...desired.viewers];
+      const members = await authz.bulkCheck(
+        grantees.map((sub) => ({
+          resource: ref('organization', row.organizationId),
+          permission: 'view',
+          subject: ref('user', sub),
+        })),
+        fullyConsistent,
+      );
+      if (members.includes(false))
+        throw new DocumentsError('not_a_member', 'a share names a user outside the organization');
+
+      // The difference between what is there and what is wanted, written in one atomic call. Two concurrent
+      // replacements race; the later write wins whole, which is what replacing a set means.
+      const current = await currentShares(id);
+      const updates: RelationshipUpdate[] = [];
+      for (const role of ['editors', 'viewers'] as const) {
+        const relation = role === 'editors' ? 'editor' : 'viewer';
+        const wanted = new Set(desired[role]);
+        for (const sub of wanted) {
+          updates.push(touch(relationship(ref('document', id), relation, ref('user', sub))));
+        }
+        for (const sub of current[role]) {
+          if (!wanted.has(sub))
+            updates.push(remove(relationship(ref('document', id), relation, ref('user', sub))));
+        }
+      }
+      // Nothing to write when the set is unchanged; the check's token is a revision that already holds it.
+      const token = updates.length > 0 ? await authz.writeRelationships(updates) : share.token;
+      const [updated] = await db
+        .update(documents)
+        .set({ zedtoken: token })
         .where(eq(documents.id, id))
         .returning();
       if (!updated) throw new DocumentsError('not_found', 'document not found');

@@ -64,6 +64,13 @@ const writtenAt = await authz.writeRelationships([
   touch(relationship(ref('document', documentId), 'project', ref('project', projectId))),
 ]);
 
+// The relationships a filter matches, at an explicit consistency: what a write that replaces a set (a document's
+// shares) reads first, fully consistent, so its deletes name what is really there.
+const shares = await authz.readRelationships(
+  { resourceType: 'document', resourceId: documentId, relation: 'viewer' },
+  fullyConsistent,
+); // [{ resource, relation, subject }]
+
 // Bulk removal by filter: every field after the resource type narrows the set.
 await authz.deleteRelationships({ resourceType: 'document', resourceId: documentId });
 ```

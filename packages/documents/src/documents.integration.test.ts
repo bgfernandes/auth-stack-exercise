@@ -238,6 +238,127 @@ describe('listVisibleDocuments, getDocumentForEdit, updateDocument', () => {
   });
 });
 
+describe('setDocumentShares', () => {
+  // Dave is a second Acme member (Bob is the first); Carol stays the outsider she is above. The documents are
+  // seeded ones of a project nobody but Alice, as the admin, can reach: one per test, so no share carries over.
+  const dave = user('dave');
+  const project = randomUUID();
+  const docs = [randomUUID(), randomUUID(), randomUUID()] as const;
+  beforeAll(async () => {
+    await authz.writeRelationships([
+      touch(relationship(ref('organization', ACME), 'member', ref('user', dave.sub))),
+    ]);
+    await seedDocuments(
+      { db: database.db, authz },
+      {
+        organizationId: ACME,
+        createdBy: alice.sub,
+        projects: [{ id: project, name: 'Shares' }],
+        documents: docs.map((id, index) => ({
+          id,
+          projectId: project,
+          name: `Shared ${index}`,
+          value1: 'a',
+          value2: 'b',
+        })),
+      },
+    );
+  });
+  const documentOf = async (index: 0 | 1 | 2) => service.getDocumentForEdit(alice, docs[index]);
+
+  const sharesOf = async (id: string) => {
+    const found = await authz.readRelationships(
+      { resourceType: 'document', resourceId: id },
+      fullyConsistent,
+    );
+    return found
+      .filter(({ subject }) => subject.type === 'user')
+      .map(({ relation, subject }) => `${relation}:${subject.id}`)
+      .sort();
+  };
+
+  it('replaces the direct shares atomically and stores the write token on the row', async () => {
+    const document = await documentOf(0);
+    expect(await service.listVisibleDocuments(dave, fullyConsistent)).toEqual([]);
+
+    // Bob may view and Dave may edit, both Acme members; the token moves forward with the write.
+    const shared = await service.setDocumentShares(alice, document.id, {
+      editors: [dave.sub],
+      viewers: [bob.sub],
+    });
+    expect(shared.zedtoken).not.toBe('');
+    expect(shared).toMatchObject({
+      value1: document.value1,
+      value2: document.value2,
+      updatedBy: document.updatedBy,
+    });
+    expect(await sharesOf(document.id)).toEqual([`editor:${dave.sub}`, `viewer:${bob.sub}`].sort());
+    expect((await service.getDocumentForEdit(dave, document.id)).id).toBe(document.id);
+    await expect(service.getDocumentForEdit(bob, document.id)).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+
+    // The replacement removes what is not listed any more and keeps what is: Bob loses, Dave stays.
+    const replaced = await service.setDocumentShares(alice, document.id, {
+      editors: [dave.sub],
+      viewers: [],
+    });
+    expect(await sharesOf(document.id)).toEqual([`editor:${dave.sub}`]);
+    await expect(service.getDocumentForEdit(bob, document.id)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+
+    // An unchanged set writes nothing and keeps a valid token on the row.
+    const unchanged = await service.setDocumentShares(alice, document.id, {
+      editors: [dave.sub],
+      viewers: [],
+    });
+    expect(unchanged.zedtoken).not.toBe('');
+    expect(await sharesOf(document.id)).toEqual([`editor:${dave.sub}`]);
+    expect(replaced.zedtoken).not.toBe(shared.zedtoken);
+
+    const cleared = await service.setDocumentShares(alice, document.id, {
+      editors: [],
+      viewers: [],
+    });
+    expect(await sharesOf(document.id)).toEqual([]);
+    expect(cleared.zedtoken).not.toBe(replaced.zedtoken);
+    await expect(service.getDocumentForEdit(dave, document.id)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+  });
+
+  it('is for whoever may share: an editor by share gets 403, a stranger 404, and so does a bad id', async () => {
+    const document = await documentOf(1);
+    await service.setDocumentShares(alice, document.id, { editors: [dave.sub], viewers: [] });
+    const shares = { editors: [], viewers: [bob.sub] };
+    await expect(service.setDocumentShares(dave, document.id, shares)).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+    await expect(service.setDocumentShares(carol, document.id, shares)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    await expect(service.setDocumentShares(alice, randomUUID(), shares)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    await expect(service.setDocumentShares(alice, 'not-a-uuid', shares)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    expect(await sharesOf(document.id)).toEqual([`editor:${dave.sub}`]);
+  });
+
+  it('refuses a user outside the organization, and a malformed set, before writing anything', async () => {
+    const document = await documentOf(2);
+    await expect(
+      service.setDocumentShares(alice, document.id, { editors: [bob.sub, carol.sub], viewers: [] }),
+    ).rejects.toMatchObject({ code: 'not_a_member' });
+    await expect(
+      service.setDocumentShares(alice, document.id, { editors: [bob.sub], viewers: [bob.sub] }),
+    ).rejects.toBeInstanceOf(ZodError);
+    expect(await sharesOf(document.id)).toEqual([]);
+  });
+});
+
 describe('seedDocuments', () => {
   // The §6.3 scenario under IDs of this run: Alice administers, Bob and Carol are members (tenancy's part).
   const seedAlice = user('seed-alice');

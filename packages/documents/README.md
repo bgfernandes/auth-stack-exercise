@@ -1,6 +1,6 @@
 # `@auth-stack/documents`
 
-The documents domain as a package ([`docs/README.md`](../../docs/README.md) §3.1, §5.2): projects under a tenancy organization and the documents whose two values the dashboard edits. Roles and shares live in SpiceDB; every document row carries the ZedToken of the check its last content write ran under (§7.3). Imported by `dashboard-web` in phase 1 and only by `dashboard-api` from phase 2.
+The documents domain as a package ([`docs/README.md`](../../docs/README.md) §3.1, §5.2): projects under a tenancy organization and the documents whose two values the dashboard edits. Roles and shares live in SpiceDB; every document row carries the ZedToken of the check its last content write or share ran under (§7.3). The package root (schema, migrations, the service) is imported by `dashboard-web` in phase 1 and only by `dashboard-api` ([`apps/dashboard-api`](../../apps/dashboard-api)) from phase 2; what a caller of that API needs is on the subpath `@auth-stack/documents/client`.
 
 ## Configuration
 
@@ -30,11 +30,34 @@ const rows = await documents.listVisibleDocuments(user, fullyConsistent); // { i
 // Edit form and save (§6.5, §7.3): `edit` at least as fresh as the row's token to read, fully consistent to write.
 const row = await documents.getDocumentForEdit(user, id);
 const updated = await documents.updateDocument(user, id, { value1, value2 }); // stores the check's token with the values
+
+// Share (§6.8, §7.3): replaces the document's direct shares with this set; `share` fully consistent, member IDs only.
+const shared = await documents.setDocumentShares(user, id, { editors: [bobSub], viewers: [] }); // stores the write's token
 ```
 
-`user` is the `UserContext` of the tenancy client (`{ sub, accessToken }`). A method that may not proceed throws `DocumentsError` with a `code`: `forbidden` when the user may view the document but not edit it (`403`), `not_found` when the document does not exist (a malformed ID included) or the user may not learn that it does (`404`). Invalid values throw a `ZodError` (`value1` and `value2`: strings of 1 to 200 characters). Test for the error with `isDocumentsError(error)` rather than `instanceof`: a bundler can give a Next.js route handler and a server component separate copies of the package while the service they share was built by one of them.
+`user` is the `UserContext` of the tenancy client (`{ sub, accessToken }`). A method that may not proceed throws `DocumentsError` with a `code`: `forbidden` when the user may view the document but not edit or share it (`403`), `not_found` when the document does not exist (a malformed ID included) or the user may not learn that it does (`404`), `not_a_member` when a share names a user who is not a member of the organization that owns the document (`400`; the IDs are Zitadel `sub`s, checked as `organization#view`, so an unknown account and a known non-member answer alike). Invalid input throws a `ZodError` (`value1` and `value2`: strings of 1 to 200 characters; `editors` and `viewers`: up to a hundred IDs each, no ID twice). Test for the error with `isDocumentsError(error)` rather than `instanceof`: a bundler can give a Next.js route handler and a server component separate copies of the package while the service they share was built by one of them.
+
+`setDocumentShares` reads the direct shares on the document fully consistent, writes the difference (TOUCH for every listed user, DELETE for every other) in one atomic call, and stores the write's token on the row without touching its values or writer; two concurrent replacements race and the later write wins whole. An unchanged set writes nothing and stores the check's token.
 
 `ensurePersonalProject` checks `organization#create_project` at full consistency, inserts the "Personal" project behind a partial unique index on `(organization_id) WHERE is_personal`, writes the project and document relationships with TOUCH, and inserts the "Welcome" document with the write's token, in one transaction. A grant made outside the service (a share, a seed) stores its token on the affected rows for the same reason: a read checks at least as fresh as the row, so a newer grant may otherwise stay invisible to it for one window.
+
+## The API's wire format and scopes
+
+```ts
+import {
+  DOCUMENTS_API_SCOPES,
+  documentsWire,
+  documentWire,
+  fromDocumentWire,
+  fromVisibleDocumentWire,
+  personalWorkspaceWire,
+  toDocumentWire,
+  type DocumentSummary,
+  type VisibleDocument,
+} from '@auth-stack/documents/client';
+```
+
+The subpath carries no schema and no database, so a BFF can import it alone (ticket 19 adds the HTTP client here). The wire format is snake_case JSON with dates as ISO strings, defined once and used by `dashboard-api` to answer and by a client to parse: a document is `{ "id", "project_id", "organization_id", "name", "value_1", "value_2", "updated_at", "updated_by" }` (never the row's `zedtoken`); `GET /documents` answers `{ "documents": [{ "id", "name", "project": { "id", "name" }, "organization": { "id", "name" }, "can_edit", "updated_at" }] }` with `organization.name` null when tenancy does not show the organization to the user; `POST /organizations/:id/personal-project` answers `{ "project": { "id", "organization_id", "name", "is_personal", "created_at" }, "document", "created" }`. The request bodies are `{ "value_1", "value_2" }` for `PUT /documents/:id` and `{ "editors": [...], "viewers": [...] }` for `PUT /documents/:id/shares`; their schemas (`documentValuesWire`, `documentSharesWire`) check the shape only, the service owns the constraints. `DOCUMENTS_API_SCOPES` (`documents:read`, `documents:write`) names what the routes require and what bootstrap grants to each first-party client (§6.7). `VisibleDocument`, the dashboard row type, is defined here and re-exported by the package root.
 
 ## Seeding
 
@@ -63,6 +86,6 @@ For bootstrap (`docs/README.md` §6.3), which is trusted and has no principal to
 ## Checks
 
 ```sh
-pnpm test packages/documents   # unit tests: the values schema
-pnpm test:integration          # against the compose stack: its own database it_documents, migrated from zero; the service and the seed, which asserts the §6.3 table
+pnpm test packages/documents   # unit tests: the values and shares schemas, the wire format
+pnpm test:integration          # against the compose stack: its own database it_documents, migrated from zero; the service (shares included) and the seed, which asserts the §6.3 table; dashboard-api's own test runs the routes over the service on it_dashboard_api
 ```

@@ -10,6 +10,7 @@ import {
   type ObjectRef,
   type ObjectType,
   type PermissionOf,
+  type Relationship,
   type RelationshipUpdate,
 } from './vocabulary';
 
@@ -61,7 +62,10 @@ export interface LookupRequest<T extends ObjectType> {
   consistency: Consistency;
 }
 
-/** Which relationships `deleteRelationships` removes; every field after the resource type narrows the set. */
+/**
+ * Which relationships `readRelationships` returns and `deleteRelationships` removes; every field after the
+ * resource type narrows the set.
+ */
 export interface RelationshipFilter {
   resourceType: ObjectType;
   resourceId?: string;
@@ -80,6 +84,11 @@ export interface Authz {
   ): Promise<boolean[]>;
   /** `LookupResources`: the IDs of every resource of the type on which the subject has the permission. */
   lookupResources<T extends ObjectType>(request: LookupRequest<T>): Promise<string[]>;
+  /**
+   * `ReadRelationships`: every relationship the filter matches, at the given consistency. For a write that
+   * replaces a set (a document's shares), read at `fullyConsistent` so the deletes name what is really there.
+   */
+  readRelationships(filter: RelationshipFilter, consistency: Consistency): Promise<Relationship[]>;
   /** `WriteRelationships`, atomically; returns the revision written. */
   writeRelationships(updates: RelationshipUpdate[]): Promise<ZedToken>;
   /** `DeleteRelationships` by filter; returns the revision written. */
@@ -154,6 +163,27 @@ export function createAuthz(options: AuthzOptions): Authz {
         .map((item) => item.resourceObjectId);
     },
 
+    async readRelationships(filter, consistency) {
+      const responses = await api.readRelationships(
+        v1.ReadRelationshipsRequest.create({
+          consistency: toConsistency(consistency),
+          relationshipFilter: toFilter(filter),
+          optionalLimit: 0,
+        }),
+      );
+      return responses.map((item) => {
+        const found = item.relationship;
+        const subject = found?.subject?.object;
+        if (!found?.resource || !subject)
+          throw new Error('ReadRelationships item without a relationship');
+        return {
+          resource: { type: found.resource.objectType as ObjectType, id: found.resource.objectId },
+          relation: found.relation,
+          subject: { type: subject.objectType as ObjectType, id: subject.objectId },
+        };
+      });
+    },
+
     async writeRelationships(updates) {
       const response = await api.writeRelationships(
         v1.WriteRelationshipsRequest.create({
@@ -174,20 +204,7 @@ export function createAuthz(options: AuthzOptions): Authz {
 
     async deleteRelationships(filter) {
       const response = await api.deleteRelationships(
-        v1.DeleteRelationshipsRequest.create({
-          relationshipFilter: v1.RelationshipFilter.create({
-            resourceType: filter.resourceType,
-            optionalResourceId: filter.resourceId ?? '',
-            optionalResourceIdPrefix: filter.resourceIdPrefix ?? '',
-            optionalRelation: filter.relation ?? '',
-            ...(filter.subject && {
-              optionalSubjectFilter: v1.SubjectFilter.create({
-                subjectType: filter.subject.type,
-                optionalSubjectId: filter.subject.id ?? '',
-              }),
-            }),
-          }),
-        }),
+        v1.DeleteRelationshipsRequest.create({ relationshipFilter: toFilter(filter) }),
       );
       return tokenOf(response.deletedAt);
     },
@@ -225,6 +242,21 @@ function toObject(ref: ObjectRef): v1.ObjectReference {
 
 function toSubject(ref: ObjectRef): v1.SubjectReference {
   return v1.SubjectReference.create({ object: toObject(ref) });
+}
+
+function toFilter(filter: RelationshipFilter): v1.RelationshipFilter {
+  return v1.RelationshipFilter.create({
+    resourceType: filter.resourceType,
+    optionalResourceId: filter.resourceId ?? '',
+    optionalResourceIdPrefix: filter.resourceIdPrefix ?? '',
+    optionalRelation: filter.relation ?? '',
+    ...(filter.subject && {
+      optionalSubjectFilter: v1.SubjectFilter.create({
+        subjectType: filter.subject.type,
+        optionalSubjectId: filter.subject.id ?? '',
+      }),
+    }),
+  });
 }
 
 export function toConsistency(consistency: Consistency): v1.Consistency {
