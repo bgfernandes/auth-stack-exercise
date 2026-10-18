@@ -423,6 +423,8 @@
 
 **Acceptance criteria:** with the seeded users: Alice creates a document in Finance; Bob creates one in Marketing and gets `404` for Finance; Carol gets `403` for Marketing; each new document appears on the dashboards with the states of §6.3 (an organization admin edits it, a project viewer sees it read-only).
 
+> **2026-10-19:** Skipped for now at the maintainer's choice; phase 3 starts with ticket 21. Since ticket 21 therefore comes first, its New Enemy case 1 uses the share write as the write that postdates the removal, where the Zanzibar paper's case has new content. This ticket, when it is done, rewrites that test to use the creation it adds: remove Bob from the project, then create a document in it, and assert that Bob's read of the new document is refused at the row's token.
+
 **Status:** Open.
 
 ---
@@ -448,6 +450,8 @@
 **Description:** `tenancy-api`: `POST /organizations/:id/invitations` (`organization#administer`; stores the row with a hashed random token and a 7-day expiry; sends the email through SMTP with `nodemailer`; always answers `202` with the same body), `GET /invitations/:token` and `POST /invitations/:token/accept` (signed-in user whose email matches; writes the tuple at `fully_consistent`; marks accepted; expired, used, and unknown tokens all answer the same `404`). `tenancy-web`: an invite form on the organization page for admins and an `/invitations/[token]` accept page that sends an unauthenticated visitor through login first. Rate limits per §6.8: per inviting user and per organization through `@fastify/rate-limit`, and a per-address cooldown enforced from the latest invitation row for that email; `429` on breach, uniform `202` otherwise.
 
 **Acceptance criteria:** Alice invites an unknown email and an existing account's email and sees the identical response; both emails appear in Mailpit; following the link as the existing account joins Acme; a second use of the link fails like an unknown one.
+
+> **2026-10-19:** Skipped for now at the maintainer's choice; phase 3 starts with ticket 21.
 
 **Status:** Open.
 
@@ -515,13 +519,28 @@
 
 ---
 
-## Phase 3 — Consistency and audit (stubs; specified when the phase starts)
+## Phase 3 — Consistency and audit (ticket 21 specified on 2026-10-19; ticket 22 stays a stub until it starts)
 
-### Ticket 21 — Listings at `minimize_latency` and the New Enemy tests (2 h)
+### Ticket 21 — Listings at `minimize_latency`, the New Enemy tests, and sharing from the dashboard (3.5 h)
 
 The per-row token and the write-path `fully_consistent` checks exist since phase 1 (tickets 7 and 11). This ticket completes `docs/README.md` §7.3: listings switch from `fullyConsistent` to `minimizeLatency`, and the README states that a listing may lag one's own write by a few seconds while content reads stay exact. A minimal share action in `dashboard-web` (pick a member of the organization, grant `document#viewer` or `#editor` through `PUT /documents/:id/shares`, which stores the write's token on the document) exists so the tests have a write to make. Integration tests: New Enemy case 2 (remove Bob, then edit the document; Bob's read with the row's token is denied while a `minimize_latency` check inside the window may still allow), and New Enemy case 1 (remove then create; the new document's token postdates the removal, so the read is denied).
 
 > **2026-10-17:** Per the preamble rule added in ticket 6, this ticket writes or updates the README of every package it implements or changes (`packages/documents`, and `packages/authz` if the helpers change) in the same PR.
+
+> **2026-10-19 (specified):** The phase starts here, after tickets 19b and 17a were skipped for now. Three choices by the maintainer, against the stub's text where they differ: the share UI stays in this ticket although the API's share route (ticket 19a) already gives the tests their write; New Enemy case 1 is reproduced with that share write rather than a creation, since nothing creates a document but the seed and the personal workspace; and the stale snapshot is shown by aligning each test to SpiceDB's quantization window rather than by adding `at_exact_snapshot` to `packages/authz` or by asserting only the deterministic half. The estimate grows from 2 h to 3.5 h for the share page. The specification follows.
+
+**Read first:** `docs/README.md` §6.5, §6.8, §7, and the three Authzed texts §7 cites: *New Enemies*, *Consistency is the Key to Performance and Safety*, and the consistency concept page with *Storing ZedTokens*.
+
+**Description:** Four parts.
+
+- **Listings at `minimize_latency`.** `dashboard-api`'s `GET /documents` lists at `minimizeLatency`; the service keeps its consistency parameter so a test can list at either level. The quantization interval is pinned in compose at SpiceDB's default, `--datastore-revision-quantization-interval 5s`, so the number §7.1 quotes is a visible setting. What a listing may lag is one interval, plus the tenth of it SpiceDB may add for cache reuse (`--datastore-revision-quantization-max-staleness-percent`, `0.1` by default), plus cache propagation: the tests bound it at seven seconds. `dashboard-api`'s integration test, which asserted read-your-writes on the listing right after the share, polls the listing until it converges inside that bound and asserts the per-row read at once, which is §7.3's claim.
+- **The New Enemy tests**, in `packages/documents`' integration test against the compose SpiceDB, with a project and a document of their own under a fresh organization, Alice its owner and Bob a project editor. Each test waits for the start of a quantization window (SpiceDB rounds the datastore clock down to the interval, so the windows are wall-clock aligned) and runs the removal and the checks inside it, so the stale answer is the snapshot SpiceDB serves at `minimize_latency` rather than a race; a run that crosses a boundary all the same is retried from a fresh document (`jest.retryTimes`). *Case 2, an old ACL applied to new content:* Bob's project role is deleted (the relationship write tenancy's membership change makes; tenancy itself is faked here); Alice edits the document (`updateDocument`, `fully_consistent`, the check's token stored); Bob's read through `getDocumentForEdit` is refused `not_found` at `at_least_as_fresh(row.zedtoken)` (`view` is gone too), while a `minimize_latency` check of the same permission still allows and `listVisibleDocuments` at `minimize_latency` still lists the document; `fully_consistent` refuses; the listing converges inside the bound. *Case 1, update order neglected:* Bob's role is deleted, then Alice shares the document with Carol through `setDocumentShares`, the write that postdates the removal and stores its token on the row; Bob's read is refused at once, with the same assertions on the stale and the consistent levels.
+- **Sharing from the dashboard.** `listVisibleDocuments` decides `canShare` as well (`can_share` on the wire), in the same `CheckBulkPermissions` request as `edit`; the dashboard row shows "Share" beside "Edit" when it is true, a hint like the button (§6.5). `dashboard-api` gains `GET /documents/:id/shares` (`documents:read`), answering `{ editors, viewers }`, the direct shares read at `at_least_as_fresh(row.zedtoken)` (the share write stores its token on the row, so the read sees the last set), for a caller with `document#share` and `403` or `404` otherwise by the §6.5 rule; the service gains `getDocumentShares`, the client too. `dashboard-web` gains the page `/documents/[id]/share`: the owning organization's members from `tenancy-api` (`listMembers`; the BFF holds `tenancy:read` since ticket 19a's bootstrap), the caller left out, each with a choice of none, viewer, or editor pre-filled from the current shares, and a save that posts to the route handler `POST /documents/[id]/shares`, same-origin, validated with `documentSharesSchema`, which `PUT`s the set and redirects to `/dashboard?shared=<id>`; forbidden and not-found states as on the edit page; a personal organization lists nobody to share with. A Playwright spec in the `dashboard-web` suite: Alice shares Payroll with Bob as a viewer; Bob, in a context of his own, sees Payroll read-only once his dashboard, reloaded, shows it, inside the bound (§7.3's lag, observed in the browser); Alice removes the share; Bob's dashboard loses the row inside the bound while his direct `/documents/<payroll>/edit` is not found at once, the row's token postdating the removal; Payroll's shares end as the seed left them, none.
+- **Docs.** §6.5 (the listing level, the share read), §7.1 (the pinned interval and the max-staleness allowance), §7.3 (the share read's row; the link to *Consistency is the Key* where it is quoted, the other two texts being linked already), §11's phase 3 row, `packages/documents`' README, the root README's suite line.
+
+**Tests:** the two New Enemy tests and the share read in `packages/documents`; the share read, `can_share`, and the converging listing in `dashboard-api`; the BFF's share handler with the client faked; the Playwright spec.
+
+**Acceptance criteria:** `pnpm test:integration` green, the New Enemy tests asserting both the stale allow and the token-bearing refusal; both Playwright suites green locally and in CI; a listing lags a share by at most the bound and never shows content a token-bearing read refuses.
 
 **Status:** Open.
 
