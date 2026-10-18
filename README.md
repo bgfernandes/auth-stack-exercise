@@ -62,7 +62,7 @@ The apps, at the same addresses either way:
 
 | App | Where |
 | --- | --- |
-| `dashboard-web` | `http://dashboard.localtest.me:3000`: "Log in" goes through Zitadel (any seeded user) to `/dashboard`, the protected area (a request without a session is sent to the login); "Log out" ends the session here and at Zitadel. The dashboard's content arrives in ticket 11 |
+| `dashboard-web` | `http://dashboard.localtest.me:3000`: "Log in" goes through Zitadel (any seeded user, or an account registered on Zitadel's login page) to `/dashboard`, the protected area (a request without a session is sent to the login); the first login creates the user's personal workspace (a "Personal" organization and project with a "Welcome" document), and a login whose provisioning fails is refused rather than left without one; "Log out" ends the session here and at Zitadel. The dashboard's content arrives in ticket 11 |
 | `tenancy-api` | `http://localhost:4001` under Tilt, `tenancy-api:4001` inside compose (not published): `GET /health` is public; `POST /me/provision`, `GET /me/organizations`, `GET /organizations/:id` need a bearer token of the project, so they are exercised through the apps and the tests rather than a browser |
 
 `localtest.me` and its subdomains resolve to `127.0.0.1` in public DNS, so no hosts-file entry is needed. What each service is for, the ports, profiles, and shared volumes are in [`docker/README.md`](docker/README.md). Each package under `packages/` has a `README.md` on how to use it: [`auth`](packages/auth/README.md), [`authz`](packages/authz/README.md), [`client-scopes`](packages/client-scopes/README.md), [`db-core`](packages/db-core/README.md), [`tenancy`](packages/tenancy/README.md), [`documents`](packages/documents/README.md).

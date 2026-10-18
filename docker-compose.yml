@@ -338,9 +338,14 @@ services:
       - '3000:3000'
     environment:
       # The BFF session (packages/auth, ticket 9): the key of the login stash cookie and the session store. The
-      # OIDC application and APP_URL come from the handoff file the entrypoint sources.
+      # OIDC application, APP_URL, and TENANCY_API_URL come from the handoff file the entrypoint sources.
       SESSION_SECRET: ${SESSION_SECRET}
       REDIS_URL: ${REDIS_URL}
+      # The documents domain runs in this process during phase 1 (docs/README.md §6.5): its database and SpiceDB.
+      DOCUMENTS_DATABASE_URL: ${DOCUMENTS_DATABASE_URL}
+      SPICEDB_ENDPOINT: spicedb:50051
+      SPICEDB_PRESHARED_KEY: ${SPICEDB_PRESHARED_KEY}
+      SPICEDB_INSECURE: ${SPICEDB_INSECURE}
     # Same Zitadel URL as the browser (docs/README.md §4.3, option (a)): the hostname maps to the host, where
     # Traefik publishes port 8080.
     extra_hosts:
@@ -361,6 +366,10 @@ services:
       bootstrap:
         condition: service_completed_successfully
       redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      spicedb:
         condition: service_healthy
       tenancy-api:
         condition: service_healthy

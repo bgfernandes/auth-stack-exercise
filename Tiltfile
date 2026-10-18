@@ -73,20 +73,21 @@ def stack_env():
 STACK_ENV = stack_env()
 
 
-def host_app(name, url, port, env={}, config=None, path='/'):
+def host_app(name, url, port, env={}, config=None, path='/', deps=[]):
     """Runs an app on the host with its dev server, configured like its container.
 
     The serve command sources ./.local/config/<config>.env (the file bootstrap wrote for the app, <name>.env by
     default; apis.env for an API), the way the app's docker-entrypoint.sh does, then exports `env` (the keys the
     app's compose service gets, with host-side values), which therefore win over the file's: the file names the
     compose-network hosts (TENANCY_API_URL), and on the host they are replaced. The file is read when the process
-    starts, after bootstrap, so a fresh clone needs no Tiltfile reload.
+    starts, after bootstrap, so a fresh clone needs no Tiltfile reload. `deps` names the other apps this one
+    calls, the way its compose service's depends_on does.
     """
     exports = ''.join(["export %s='%s'; " % (key, value) for key, value in env.items()])
     local_resource(
         name,
         serve_cmd='set -a; . ./.local/config/%s.env; set +a; %sexec pnpm --filter %s dev' % (config or name, exports, name),
-        resource_deps=['pnpm-install', 'bootstrap'],
+        resource_deps=['pnpm-install', 'bootstrap'] + deps,
         readiness_probe=probe(http_get=http_get_action(port, path=path), period_secs=5, timeout_secs=10),
         links=[url],
         labels=['apps'],
@@ -102,7 +103,13 @@ host_app(
         'TENANCY_API_URL': 'http://localhost:4001',
         'SESSION_SECRET': STACK_ENV['SESSION_SECRET'],
         'REDIS_URL': 'redis://localhost:6379',
+        'DOCUMENTS_DATABASE_URL': 'postgres://documents:documents@localhost:5432/documents',
+        'SPICEDB_ENDPOINT': 'localhost:50051',
+        'SPICEDB_PRESHARED_KEY': STACK_ENV['SPICEDB_PRESHARED_KEY'],
+        'SPICEDB_INSECURE': STACK_ENV['SPICEDB_INSECURE'],
     },
+    # The login callback calls tenancy-api (ticket 10); in compose, dashboard-web depends on it the same way.
+    deps=['tenancy-api'],
 )
 host_app(
     'tenancy-api',
