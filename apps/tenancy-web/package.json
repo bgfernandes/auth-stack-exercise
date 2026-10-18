@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@auth-stack/auth": "workspace:*",
+    "@auth-stack/documents": "workspace:*",
     "@auth-stack/tenancy": "workspace:*",
     "ioredis": "^6.0.0",
     "next": "16.4.1",

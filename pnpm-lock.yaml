@@ -177,6 +177,9 @@ importers:
       '@auth-stack/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@auth-stack/documents':
+        specifier: workspace:*
+        version: link:../../packages/documents
       '@auth-stack/tenancy':
         specifier: workspace:*
         version: link:../../packages/tenancy

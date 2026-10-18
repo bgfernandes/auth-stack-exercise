@@ -409,7 +409,8 @@ services:
 
   # The second client (ticket 17): organizations, members, and policy over tenancy-api, with its own OIDC
   # application and session cookie; what proves single sign-on and sign-out between two BFFs (ticket 20). No
-  # database and no SpiceDB: tenancy-api holds both.
+  # database and no SpiceDB: tenancy-api holds both, and the one documents call of its login (the personal
+  # workspace, ticket 19) goes to dashboard-api.
   tenancy-web:
     profiles:
       - apps
@@ -423,8 +424,8 @@ services:
       - '3001:3001'
     environment:
       # The BFF session (packages/auth): the key of the login stash cookie and the session store, shared with
-      # dashboard-web under a prefix of its own. The OIDC application, APP_URL, and TENANCY_API_URL come from the
-      # handoff file the entrypoint sources.
+      # dashboard-web under a prefix of its own. The OIDC application, APP_URL, DASHBOARD_API_URL, and
+      # TENANCY_API_URL come from the handoff file the entrypoint sources.
       SESSION_SECRET: ${SESSION_SECRET}
       REDIS_URL: ${REDIS_URL}
       NODE_EXTRA_CA_CERTS: /tls/ca.crt
@@ -447,6 +448,8 @@ services:
       bootstrap:
         condition: service_completed_successfully
       redis:
+        condition: service_healthy
+      dashboard-api:
         condition: service_healthy
       tenancy-api:
         condition: service_healthy

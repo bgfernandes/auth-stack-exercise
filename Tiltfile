@@ -121,12 +121,14 @@ host_app(
     'http://tenancy.localtest.me:3001',
     3001,
     {
+        'DASHBOARD_API_URL': 'http://localhost:4002',
         'TENANCY_API_URL': 'http://localhost:4001',
         'SESSION_SECRET': STACK_ENV['SESSION_SECRET'],
         'REDIS_URL': 'redis://localhost:6379',
     },
-    # Every page is a call to tenancy-api (ticket 17); in compose, tenancy-web depends on it the same way.
-    deps=['tenancy-api'],
+    # Every page is a call to tenancy-api (ticket 17) and the login calls dashboard-api too (ticket 19); in
+    # compose, tenancy-web depends on both the same way.
+    deps=['dashboard-api', 'tenancy-api'],
 )
 host_app(
     'tenancy-api',
