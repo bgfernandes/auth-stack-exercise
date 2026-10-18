@@ -360,6 +360,22 @@
 
 ---
 
+### Ticket 13a — Bug: the not-found page renders empty under `next dev`, failing Bob's spec against Tilt (1 h)
+
+**Read first:** `docs/README.md` §6.5; ticket 17b's built note.
+
+**Description:** Found while verifying ticket 17b under Tilt, the first time the end-to-end suites were run against the host-run apps. Bob's spec of `apps/dashboard-web/e2e` opens the edit page of "Payroll", a document he may not see, and expects the `404` with the app's not-found page (`app/not-found.tsx`, heading "Not found"). Against the standalone server (compose, CI) the page is rendered on the server and the spec passes. Against `next dev` the response is `404` too, but its HTML is Next's error shell, `<html id="__next_error__">`, with the scripts and an empty body, and the heading never appears within the spec's five seconds; a headless probe saw the body still empty two seconds after the response, and the dev server logged no error. No other spec reaches a `notFound()` of either app, so this is the one failure under Tilt; the other three `dashboard-web` tests and the `tenancy-web` suite pass there. The cause is not diagnosed. Two readings fit: Next renders the not-found boundary on the client in dev mode and hydration never completes in the headless browser (or completes after the timeout), or the not-found path fails only under Turbopack dev and the shell is a genuine error page with its details hidden. The ticket 17b change (TLS for Zitadel) is not involved: the page is plain HTTP and the app's code was unchanged. Whether `main` before ticket 17b fails the same way under Tilt is inferred, not observed. To reproduce: `tilt up`, then `pnpm test:e2e:dashboard-web`, or log in as Bob at `http://dashboard.localtest.me:3000` and open `/documents/<payroll id>/edit` (the ID is `documents.payroll.id` in `.local/config/seed.json`).
+
+**Approach:** First find out which reading holds: open the URL as Bob in a headed browser under Tilt and watch whether "Not found" appears, and read the browser console; compare with `tenancy-web`'s `not-found.tsx`, which is the same shape. If it is client rendering that is slow, the spec waits longer or the page is made to render the same way in both modes; if it is a dev-only failure in the not-found path, fix it in the app. Either way, both suites must pass against Tilt as well as compose, and the root README's Tests block, which says the suites run against either stack, becomes true.
+
+**Acceptance criteria:** `pnpm test:e2e` green against `tilt up` and against `docker compose --profile apps up -d --wait --build`; the cause recorded in a dated note here.
+
+> **2026-10-18:** Created from the ticket 17b finding at the maintainer's request. Not scheduled: it sits after ticket 13, the suite it concerns, rather than in implementation order, and the maintainer picks it up when convenient.
+
+**Status:** Open.
+
+---
+
 ### Ticket 14 — Root README v1: run instructions, architecture, trade-offs 📝 docs (2 h)
 
 **Read first:** `docs/README.md` (all).
