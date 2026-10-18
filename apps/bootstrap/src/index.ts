@@ -2,9 +2,11 @@
  * Bootstrap (ticket 4): a one-shot, idempotent configuration of the stack. It writes the SpiceDB schema
  * (ticket 6), runs the service packages' database migrations (ticket 7), creates the single Zitadel project,
  * the dashboard-web application, and the tenancy-api API application, grants the first-party clients the
- * scopes of the APIs they call (§6.7, ticket 16), seeds the users of docs/README.md §6.3, and writes the
- * handoff files the apps start from. Every object is matched by name first and every migration is recorded, so running it again
- * creates nothing. Any failure exits non-zero so compose surfaces it and the apps that depend on it never start.
+ * scopes of the APIs they call (§6.7, ticket 16), seeds the users of docs/README.md §6.3 in Zitadel and the
+ * Acme scenario in the tenancy and documents databases and SpiceDB (ticket 12), and writes the handoff files
+ * the apps start from. Every object is matched by name or fixed ID first and every migration is recorded, so
+ * running it again creates nothing. Any failure exits non-zero so compose surfaces it and the apps that depend
+ * on it never start.
  */
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -19,11 +21,12 @@ import {
 import { ensureSchema } from '@auth-stack/authz/schema';
 import { apiScope, client } from '@auth-stack/client-scopes';
 import { closeDb, createDb, runMigrations } from '@auth-stack/db-core';
-import { TENANCY_API_SCOPES } from '@auth-stack/tenancy';
+import { schema as documentsSchema, seedDocuments } from '@auth-stack/documents';
+import { schema as tenancySchema, seedOrganization, TENANCY_API_SCOPES } from '@auth-stack/tenancy';
 
 import { writeHandoff, type Handoff } from './handoff';
 import { log, logError } from './log';
-import { SEED_USERS } from './seed';
+import { ACME, acmeSeeds, SEED_USERS } from './seed';
 import {
   ensureApiApp,
   ensureHumanUser,
@@ -115,11 +118,12 @@ async function configure(authz: Authz): Promise<void> {
   const seedPassword = required('SEED_USER_PASSWORD');
 
   // Then every package's migrations (docs/README.md §3.1: the packages own them, bootstrap only runs them),
-  // before the seeds of ticket 12 and before the apps, which depend on this container, start.
-  for (const [database, url] of [
-    ['tenancy', required('TENANCY_DATABASE_URL')],
-    ['documents', required('DOCUMENTS_DATABASE_URL')],
-  ] as const) {
+  // before the seeds below and before the apps, which depend on this container, start.
+  const databases = {
+    tenancy: required('TENANCY_DATABASE_URL'),
+    documents: required('DOCUMENTS_DATABASE_URL'),
+  };
+  for (const [database, url] of Object.entries(databases)) {
     const db = createDb(url, {}, { max: 1 });
     try {
       await runMigrations(db, fileURLToPath(new URL(`./migrations/${database}`, import.meta.url)));
@@ -168,6 +172,34 @@ async function configure(authz: Authz): Promise<void> {
     log('user', { username: seed.email, id: user.id, action: user.action });
   }
 
+  // The scenario (§6.3), each domain writing its own part: tenancy first, so the organization roles are older
+  // than the token the documents seed stores on every document.
+  const seeds = acmeSeeds(users);
+  const tenancyDb = createDb(databases.tenancy, tenancySchema, { max: 1 });
+  try {
+    const seeded = await seedOrganization({ db: tenancyDb, authz }, seeds.tenancy);
+    log('seed.organization', {
+      id: seeded.organization.id,
+      name: seeded.organization.name,
+      action: seeded.created ? 'created' : 'exists',
+      createdUsers: seeded.createdUsers,
+    });
+  } finally {
+    await closeDb(tenancyDb);
+  }
+  const documentsDb = createDb(databases.documents, documentsSchema, { max: 1 });
+  try {
+    const seeded = await seedDocuments({ db: documentsDb, authz }, seeds.documents);
+    log('seed.documents', {
+      organization: ACME.organization.id,
+      createdProjects: seeded.createdProjects,
+      createdDocuments: seeded.createdDocuments,
+      relationships: 'touched',
+    });
+  } finally {
+    await closeDb(documentsDb);
+  }
+
   const files = await writeHandoff(configDir, {
     issuer: discovery.issuer,
     jwksUrl: discovery.jwks_uri,
@@ -176,6 +208,7 @@ async function configure(authz: Authz): Promise<void> {
     dashboardWeb: { clientId: app.clientId, url: dashboardWebUrl },
     tenancyApiUrl,
     users,
+    scenario: ACME,
   });
   log('handoff', { dir: configDir, files });
   log('done');

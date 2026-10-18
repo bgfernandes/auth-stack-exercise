@@ -1,10 +1,12 @@
 /**
  * The configuration bootstrap hands to the apps through the shared /config directory (docs/README.md §4.2):
  * one env file per app (sourced by the container entrypoint or loaded by Tilt), one for every API, and
- * seed.json with the Zitadel IDs the seeds of ticket 12 need.
+ * seed.json with the seeded users' Zitadel IDs and the IDs of the §6.3 scenario, for the end-to-end tests.
  */
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+
+import { type Scenario } from './seed';
 
 export interface Handoff {
   issuer: string;
@@ -14,6 +16,7 @@ export interface Handoff {
   dashboardWeb: { clientId: string; url: string };
   tenancyApiUrl: string;
   users: Record<string, { id: string; email: string }>;
+  scenario: Scenario;
 }
 
 export function dashboardWebEnv(handoff: Handoff): Record<string, string> {
@@ -59,7 +62,7 @@ export async function writeHandoff(dir: string, handoff: Handoff): Promise<strin
   const files: Record<string, string> = {
     'dashboard-web.env': renderEnvFile(dashboardWebEnv(handoff)),
     'apis.env': renderEnvFile(apisEnv(handoff)),
-    'seed.json': `${JSON.stringify({ users: handoff.users }, null, 2)}\n`,
+    'seed.json': `${JSON.stringify({ users: handoff.users, ...handoff.scenario }, null, 2)}\n`,
   };
   for (const [name, content] of Object.entries(files)) {
     const target = path.join(dir, name);

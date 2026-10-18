@@ -44,6 +44,24 @@ A method that may not proceed throws `TenancyError` with a `code`: `not_found` (
 
 `provisionUser` takes the claims the API resolved from the token and userinfo; it inserts the `users` row with `ON CONFLICT DO NOTHING`, the personal organization behind a partial unique index on `(owner_id) WHERE is_personal`, and the `organization#admin` relationship with TOUCH, inside one transaction, so concurrent first calls converge on one of each.
 
+## Seeding
+
+```ts
+import { seedOrganization } from '@auth-stack/tenancy';
+
+const { organization, created, createdUsers, token } = await seedOrganization(
+  { db, authz },
+  {
+    id: '5eed0000-0000-4000-8000-000000000001', // fixed, so reruns match the same row
+    name: 'Acme',
+    users: [{ sub, email: 'alice@example.com', displayName: 'Alice Adams' }],
+    roles: [{ sub, role: 'admin' }], // 'admin' | 'member'
+  },
+);
+```
+
+For bootstrap (`docs/README.md` §6.3), which is trusted and has no principal to check: the `users` mirror rows and the organization are created if absent and never changed afterwards (a row that exists keeps what provisioning, an administrator, or an earlier run wrote), and the `organization#<role>@user:<sub>` relationships are TOUCHed on every run, in one transaction, so a role removed by hand or a `sub` that changed with a reset IdP is repaired by the next run. The returned `token` is the relationship write's, for the caller to store on the content it seeds next (§7.3). Every ID comes from the caller: a test seeds a scenario of its own under random IDs.
+
 ## The client
 
 ```ts
@@ -75,5 +93,5 @@ For tests, `createInProcessTenancyClient(service, claimsOf)` in the package root
 
 ```sh
 pnpm test packages/tenancy   # unit tests: the policy schema, the HTTP client's cache and error mapping
-pnpm test:integration        # against the compose stack: its own database it_tenancy, migrated from zero; the client contract over the service, and over tenancy-api (apps/tenancy-api)
+pnpm test:integration        # against the compose stack: its own database it_tenancy, migrated from zero; the service, the seed, the client contract over the service, and over tenancy-api (apps/tenancy-api)
 ```

@@ -34,6 +34,12 @@ export {
   type User,
 } from './schema';
 export {
+  seedOrganization,
+  type OrganizationSeed,
+  type OrganizationSeedOutcome,
+  type SeedUser,
+} from './seed';
+export {
   createTenancyService,
   PERSONAL_ORGANIZATION_NAME,
   type Principal,

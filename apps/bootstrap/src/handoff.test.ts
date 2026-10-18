@@ -14,6 +14,11 @@ const handoff: Handoff = {
   dashboardWeb: { clientId: '456', url: 'http://dashboard.localtest.me:3000' },
   tenancyApiUrl: 'http://tenancy-api:4001',
   users: { alice: { id: '789', email: 'alice@example.com' } },
+  scenario: {
+    organization: { id: 'org-1', name: 'Acme' },
+    projects: { marketing: { id: 'project-1', name: 'Marketing' } },
+    documents: { budget: { id: 'document-1', name: 'Budget', project: 'marketing' } },
+  },
 };
 
 describe('renderEnvFile', () => {
@@ -67,7 +72,12 @@ describe('writeHandoff', () => {
     const seed = JSON.parse(
       await readFile(path.join(dir, 'config', 'seed.json'), 'utf8'),
     ) as unknown;
-    expect(seed).toEqual({ users: { alice: { id: '789', email: 'alice@example.com' } } });
+    expect(seed).toEqual({
+      users: { alice: { id: '789', email: 'alice@example.com' } },
+      organization: { id: 'org-1', name: 'Acme' },
+      projects: { marketing: { id: 'project-1', name: 'Marketing' } },
+      documents: { budget: { id: 'document-1', name: 'Budget', project: 'marketing' } },
+    });
     await expect(readFile(path.join(dir, 'config', 'seed.json.tmp'))).rejects.toThrow();
   });
 });
