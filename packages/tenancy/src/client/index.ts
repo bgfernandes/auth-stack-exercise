@@ -7,6 +7,14 @@
 import { type Policy } from './policy';
 
 export { parsePolicy, policySchema, type Policy } from './policy';
+export {
+  fromWire,
+  organizationsWire,
+  organizationWire,
+  provisionWire,
+  toWire,
+  type OrganizationWire,
+} from './wire';
 
 /**
  * The scope vocabulary of `tenancy-api` (docs/README.md §6.7): what its routes require and what bootstrap grants

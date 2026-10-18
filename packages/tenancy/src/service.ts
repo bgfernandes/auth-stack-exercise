@@ -51,6 +51,8 @@ export interface TenancyService {
    * organization after the first call.
    */
   provisionUser(claims: ProvisionClaims): Promise<ProvisionOutcome>;
+  /** The users row of a `sub`, if provisioning has created it; what tells the API whether userinfo is needed (§6.4). */
+  getUser(sub: string): Promise<User | undefined>;
   /** The organization if the principal holds `organization#view`, undefined otherwise or when it does not exist. */
   getOrganization(
     principal: Principal,
@@ -147,6 +149,11 @@ export function createTenancyService(deps: { db: TenancyDb; authz: Authz }): Ten
         if (!existing) throw new Error('personal organization missing after conflict');
         return { user, organization: existing, created: false };
       });
+    },
+
+    async getUser(sub) {
+      const rows = await db.select().from(users).where(eq(users.id, sub)).limit(1);
+      return rows[0];
     },
 
     async getOrganization(principal, id, consistency) {

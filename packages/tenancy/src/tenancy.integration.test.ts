@@ -102,9 +102,11 @@ describe('migrations', () => {
 
 describe('provisionUser', () => {
   it('creates the mirror row and the personal organization once', async () => {
+    expect(await service.getUser(sub('alice'))).toBeUndefined();
     const first = await service.provisionUser(claims('alice'));
     organizationIds.add(first.organization.id);
     expect(first.created).toBe(true);
+    expect(await service.getUser(sub('alice'))).toEqual(first.user);
     expect(first.user).toMatchObject({
       id: sub('alice'),
       email: 'alice@example.com',
