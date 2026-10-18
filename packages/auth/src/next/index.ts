@@ -2,7 +2,8 @@
  * `@auth-stack/auth/next`: the core bound to Next.js route handlers (`Request` in, `NextResponse` out) and to
  * `cookies()` for server components. The routes of a BFF (docs/README.md §4.4; ticket 9 for dashboard-web) are
  * one call each: `GET /auth/login` → `login()`, `GET /auth/callback` → `callback(request)`, `POST /auth/logout`
- * → `logout(request)`. Nothing here decides anything the core does not; it only moves cookies.
+ * → `logout(request)`. Nothing here decides anything the core does not; it only moves cookies, and runs the
+ * host's `onLogin` hook (§4.4 step 4, just-in-time provisioning) between the session's creation and the redirect.
  */
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
@@ -25,6 +26,13 @@ export interface NextAuthOptions {
   client?: OidcClient;
   /** Where a completed login lands; `/` by default. */
   afterLoginPath?: string;
+  /**
+   * Runs on every completed login with the new session, before the browser is sent on and before the session
+   * cookie exists (docs/README.md §4.4 step 4: the provisioning calls, with `session.accessToken`). A throw fails
+   * the login: the session is deleted, no cookie is set, the browser gets the generic failed response, and the
+   * reason is logged under `login_hook_failed`.
+   */
+  onLogin?: (session: Session) => Promise<void>;
   /** The response of the callback when the login fails, whatever the reason; a plain 400 by default. */
   loginFailed?: (code: AuthError['code']) => NextResponse;
   logger?: AuthLogger;
@@ -99,6 +107,19 @@ export function createNextAuth(init: NextAuthOptions): NextAuth {
         );
         const login = await client.completeLogin(new URL(request.url), stash);
         const session = await store.create(sessionFromLogin(login));
+        if (init.onLogin) {
+          try {
+            await init.onLogin(session);
+          } catch (error) {
+            // No session without its provisioning: the next login runs the hook again.
+            await store.delete(session.id);
+            throw new AuthError(
+              'login_hook_failed',
+              error instanceof Error ? error.message : String(error),
+              { cause: error },
+            );
+          }
+        }
         response = NextResponse.redirect(afterLoginUrl, 303);
         response.cookies.set(cookieName, session.id, sessionCookie);
       } catch (error) {

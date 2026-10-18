@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
 
 import { createOidcClient } from '../oidc';
-import { type SessionStore } from '../session';
+import { type Session, type SessionStore } from '../session';
 import { createMemorySessionStore } from '../stores/memory';
 import { createFakeOp, type FakeOp } from '../testing/fake-op';
 
@@ -39,6 +39,8 @@ describe('createNextAuth', () => {
   const records: Record<string, unknown>[] = [];
 
   beforeEach(async () => {
+    events.length = 0;
+    records.length = 0;
     op = await createFakeOp({ clientId: 'dashboard-web' });
     store = createMemorySessionStore();
     auth = createNextAuth({
@@ -136,6 +138,66 @@ describe('createNextAuth', () => {
       expect(JSON.stringify(record)).not.toMatch(/at-|\.ey|dashboard_web_session_login=/);
     }
     await expect(store.listByUser('alice')).resolves.toEqual([]);
+  });
+
+  /** The binding again, with a hook; the OP and the store are the ones of this test. */
+  function withHook(onLogin: (session: Session) => Promise<void>): NextAuth {
+    return createNextAuth({
+      options,
+      store,
+      client: createOidcClient(options.oidc, { fetch: op.fetch, serverMetadata: op.metadata }),
+      afterLoginPath: '/dashboard',
+      onLogin,
+      logger: {
+        warn: (event, fields) => {
+          events.push(event);
+          records.push(fields ?? {});
+        },
+      },
+    });
+  }
+
+  it('callback runs onLogin with the stored session before the browser is sent on', async () => {
+    const seen: Session[] = [];
+    const hooked = withHook(async (session) => {
+      seen.push(session);
+      // The session exists while the hook runs: provisioning can use its access token.
+      expect(await store.get(session.id)).toBeDefined();
+    });
+    const login = await hooked.login();
+    const stash = setCookies(login).get('dashboard_web_session_login') as string;
+    const callback = op.authorize(new URL(login.headers.get('location') as string), alice);
+    const response = await hooked.callback(
+      new Request(callback, { headers: { cookie: cookieHeader(stash) } }),
+    );
+    expect(response.status).toBe(303);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ sub: 'alice', email: 'alice@example.com' });
+    expect(seen[0]?.accessToken).toMatch(/^at-/);
+    const id = (setCookies(response).get('dashboard_web_session') as string)
+      .split(';')[0]
+      ?.split('=')[1] as string;
+    expect(id).toBe(seen[0]?.id);
+  });
+
+  it('a failing onLogin fails the login: no session, no cookie, the generic response, the reason logged', async () => {
+    const hooked = withHook(() => Promise.reject(new Error('POST /me/provision: 502 bad_gateway')));
+    const login = await hooked.login();
+    const stash = setCookies(login).get('dashboard_web_session_login') as string;
+    const callback = op.authorize(new URL(login.headers.get('location') as string), alice);
+    const response = await hooked.callback(
+      new Request(callback, { headers: { cookie: cookieHeader(stash) } }),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe('Login failed. Please try again.');
+    expect(setCookies(response).has('dashboard_web_session')).toBe(false);
+    expect(setCookies(response).get('dashboard_web_session_login')).toMatch(/Max-Age=0/i);
+    await expect(store.listByUser('alice')).resolves.toEqual([]);
+    expect(events).toEqual(['auth.login_failed']);
+    expect(records[0]).toEqual({
+      errorCode: 'login_hook_failed',
+      reason: 'POST /me/provision: 502 bad_gateway',
+    });
   });
 
   it('sessionFromRequest returns the live session behind the cookie', async () => {

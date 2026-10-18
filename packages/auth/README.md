@@ -32,7 +32,7 @@ import { createNextAuth } from '@auth-stack/auth/next';
 
 const options = authOptionsFromEnv(process.env, { app: 'dashboard-web' });
 const store = createRedisSessionStore(new Redis(options.redisUrl), { prefix: 'dashboard-web' });
-export const auth = createNextAuth({ options, store, afterLoginPath: '/dashboard' });
+export const auth = createNextAuth({ options, store, afterLoginPath: '/dashboard', onLogin: provisionWorkspace });
 
 // app/auth/login/route.ts      export const GET = () => auth.login();
 // app/auth/callback/route.ts   export const GET = (request: Request) => auth.callback(request);
@@ -42,7 +42,7 @@ export const auth = createNextAuth({ options, store, afterLoginPath: '/dashboard
 // calling an API               const token = await auth.getAccessToken(session); // undefined: send to login
 ```
 
-`login()` redirects to the authorization endpoint and seals `state`, `nonce`, and the PKCE verifier into a signed cookie scoped to the callback path, valid ten minutes. `callback(request)` verifies the callback against that stash, exchanges the code, validates the tokens, creates the session, sets the session cookie (`HttpOnly`, `SameSite=Lax`, `Secure` over https, `Path=/`, no `Domain`), and redirects to `afterLoginPath`; every failure gets the same generic response (a plain `400`, or what `loginFailed` returns) while the reason is logged through the `logger` option with `redact` applied. The token request always carries the registered redirect URI, never the host the server saw the request on (the standalone Next.js server reports its bind address). `logout(request)` accepts same-origin requests only (`Origin`, falling back to `Sec-Fetch-Site`), deletes the session, clears the cookie, and redirects to the IdP's `end_session_endpoint` with `id_token_hint`, so the IdP session ends too. The session helpers return the live session or `undefined`, and mark it seen at most once a minute.
+`login()` redirects to the authorization endpoint and seals `state`, `nonce`, and the PKCE verifier into a signed cookie scoped to the callback path, valid ten minutes. `callback(request)` verifies the callback against that stash, exchanges the code, validates the tokens, creates the session, runs `onLogin(session)` when the app gives one (the just-in-time provisioning calls of §6.4, with `session.accessToken`; a throw deletes the session again and fails the login), sets the session cookie (`HttpOnly`, `SameSite=Lax`, `Secure` over https, `Path=/`, no `Domain`), and redirects to `afterLoginPath`; every failure gets the same generic response (a plain `400`, or what `loginFailed` returns) while the reason is logged through the `logger` option with `redact` applied. The token request always carries the registered redirect URI, never the host the server saw the request on (the standalone Next.js server reports its bind address). `logout(request)` accepts same-origin requests only (`Origin`, falling back to `Sec-Fetch-Site`), deletes the session, clears the cookie, and redirects to the IdP's `end_session_endpoint` with `id_token_hint`, so the IdP session ends too. The session helpers return the live session or `undefined`, and mark it seen at most once a minute.
 
 The core is the same without Next.js:
 

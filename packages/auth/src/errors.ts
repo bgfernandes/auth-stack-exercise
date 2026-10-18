@@ -21,7 +21,9 @@ export type AuthErrorCode =
   /** The refresh token was refused or the refresh response failed validation. */
   | 'refresh_failed'
   /** A state-changing request did not come from the app's own origin (`assertSameOrigin`). */
-  | 'forbidden_origin';
+  | 'forbidden_origin'
+  /** A binding's `onLogin` hook (just-in-time provisioning) threw; the new session was removed again. */
+  | 'login_hook_failed';
 
 export class AuthError extends Error {
   override readonly name = 'AuthError';
