@@ -74,6 +74,13 @@ form label {
   font-weight: 600;
 }
 
+/* One choice among several on a row (the share form's radios): inline, plain weight. */
+form label.choice {
+  display: inline-block;
+  font-weight: 400;
+  margin-right: 1rem;
+}
+
 form input {
   font: inherit;
   width: 100%;
