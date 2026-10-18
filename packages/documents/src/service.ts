@@ -84,6 +84,8 @@ export function createDocumentsService(deps: {
   }
 
   async function load(id: string): Promise<Document | undefined> {
+    // A malformed ID names no document: `not_found` from the caller, not a database error on the uuid column.
+    if (!isUuid(id)) return undefined;
     const rows = await db.select().from(documents).where(eq(documents.id, id)).limit(1);
     return rows[0];
   }
