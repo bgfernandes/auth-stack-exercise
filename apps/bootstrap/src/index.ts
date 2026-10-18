@@ -74,7 +74,7 @@ export function webAppConfig(publicUrl: string): OidcAppConfig {
     idTokenUserinfoAssertion: true,
     // Allows an http:// redirect URI on a host other than localhost (ticket 3); off behind TLS.
     devMode: true,
-    // Zitadel calls this URL server to server (§4.4 step 6; the route arrives in ticket 18). It is the public
+    // Zitadel calls this URL server to server (§4.4 step 6; the sink of `@auth-stack/auth`). It is the public
     // URL: Zitadel resolves the hostname at registration time, and the app's service name is not in DNS until
     // the app starts, which happens after bootstrap. zitadel-api maps the hostname to the host gateway.
     backChannelLogoutUri: `${publicUrl}/auth/backchannel-logout`,
