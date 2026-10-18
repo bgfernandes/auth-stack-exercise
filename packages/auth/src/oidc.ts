@@ -114,11 +114,14 @@ async function configure(
   return pending;
 }
 
-function tokenSet(
-  response: oidc.TokenEndpointResponse & oidc.TokenEndpointResponseHelpers,
-  now: number,
-): TokenSet {
-  const expiresIn = response.expiresIn();
+/**
+ * The token pair with its expiry on the caller's clock: `expires_in` (RFC 6749 §5.1, seconds, validated as a
+ * number by openid-client) from `now`. Not the helper `expiresIn()`, which counts down on the real clock and
+ * floors to whole seconds, so it loses a second as soon as a millisecond passed since the response and ignores
+ * an injected clock.
+ */
+function tokenSet(response: oidc.TokenEndpointResponse, now: number): TokenSet {
+  const expiresIn = response.expires_in;
   if (expiresIn === undefined) {
     throw new AuthError('token_invalid', 'token response carries no expires_in');
   }
