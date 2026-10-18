@@ -1,5 +1,6 @@
 # Continuous integration. `checks` runs everything that needs no infrastructure; `integration` starts the compose
-# stack and runs the tests that need it; `secrets` scans the commits. The jobs run in parallel.
+# infrastructure and runs the tests that need it; `e2e` starts the whole stack, apps included, and drives a browser
+# through it; `secrets` scans the commits. The jobs run in parallel.
 name: CI
 
 on:
@@ -60,6 +61,41 @@ jobs:
         run: |
           docker compose ps -a
           docker compose logs --no-color --tail 200
+      - name: Stop the stack
+        if: always()
+        run: docker compose --profile '*' down -v
+
+  e2e:
+    name: End-to-end tests against the full compose stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      # The stack the way a reviewer runs it (root README): the app and bootstrap images built on the runner, every
+      # service healthy and bootstrap completed before this returns.
+      - name: Start the stack with the apps
+        run: docker compose --profile apps up -d --wait --build
+      # The one browser the suite drives (apps/dashboard-web/playwright.config.ts), with its system libraries.
+      - name: Install Chromium for Playwright
+        run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      # The HTML report and, per failed test, the trace (`pnpm exec playwright show-trace <trace.zip>`).
+      - name: Upload the Playwright report and traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright
+          path: |
+            apps/dashboard-web/playwright-report
+            apps/dashboard-web/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Show the stack on failure
+        if: failure()
+        run: |
+          docker compose --profile apps ps -a
+          docker compose --profile apps logs --no-color --tail 200
       - name: Stop the stack
         if: always()
         run: docker compose --profile '*' down -v
