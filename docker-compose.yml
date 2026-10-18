@@ -355,6 +355,46 @@ services:
       # Implies a healthy Zitadel; the app must not start before its env file exists.
       bootstrap:
         condition: service_completed_successfully
+      tenancy-api:
+        condition: service_healthy
+
+  # The tenancy service (ticket 16): bearer tokens of the project, scopes from SpiceDB, its own database. Reached
+  # by service name only (docker/README.md); under Tilt it runs on the host on the same port.
+  tenancy-api:
+    profiles:
+      - apps
+    build:
+      context: .
+      dockerfile: apps/tenancy-api/Dockerfile
+    image: auth-stack/tenancy-api:dev
+    restart: unless-stopped
+    environment:
+      PORT: 4001
+      TENANCY_DATABASE_URL: ${TENANCY_DATABASE_URL}
+      SPICEDB_ENDPOINT: spicedb:50051
+      SPICEDB_PRESHARED_KEY: ${SPICEDB_PRESHARED_KEY}
+      SPICEDB_INSECURE: ${SPICEDB_INSECURE}
+    # The JWKS and userinfo URLs are the public issuer's (docs/README.md §4.3, option (a)).
+    extra_hosts:
+      - auth.localtest.me:host-gateway
+    volumes:
+      # Generated configuration (issuer, project ID, JWKS and userinfo URLs), written by the bootstrap container.
+      - ./.local/config:/config:ro
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--spider', 'http://127.0.0.1:4001/health']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    networks:
+      - auth-stack
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      spicedb:
+        condition: service_healthy
 
   # Tools profile: not started by `up`. `pnpm authz:zed <args>` runs SpiceDB's CLI against the stack.
   zed:

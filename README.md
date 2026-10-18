@@ -24,7 +24,7 @@ pnpm test          # unit tests (Jest); test:integration needs the stack running
 pnpm authz:validate  # zed validate on packages/authz/schema.zed, in a container; needs Docker, not the stack
 ```
 
-The stack is Docker Compose with committed development defaults in `.env` (insecure by design, local use only): Postgres, Zitadel with its login UI behind Traefik, SpiceDB, Redis, Mailpit, and the bootstrap container, which writes the SpiceDB schema, runs the service packages' database migrations (the packages own them; bootstrap only executes them, because the apps start after it), configures Zitadel (project, OIDC application, seeded users), writes the apps' configuration to `.local/config/` (gitignored), and exits. There are two ways to run the project, and they share port 3000, so run one at a time.
+The stack is Docker Compose with committed development defaults in `.env` (insecure by design, local use only): Postgres, Zitadel with its login UI behind Traefik, SpiceDB, Redis, Mailpit, and the bootstrap container, which writes the SpiceDB schema, runs the service packages' database migrations (the packages own them; bootstrap only executes them, because the apps start after it), configures Zitadel (project, OIDC application, API application, seeded users), grants the first-party client its API scopes in SpiceDB, writes the apps' configuration to `.local/config/` (gitignored), and exits. There are two ways to run the project, and they share port 3000, so run one at a time.
 
 **Everything in compose**, the way to review the project. No setup step and no Node needed; the app images and the bootstrap image are built locally:
 
@@ -34,7 +34,7 @@ docker compose logs bootstrap                        # one JSON line per object 
 docker compose --profile apps down -v                # stop and wipe the volumes (fresh Zitadel instance and databases on the next up)
 ```
 
-**Tilt**, the developer loop: the infrastructure runs in compose, bootstrap runs as a step, and the apps run on the host with hot reload, each reading its `.local/config/<app>.env`. Run Tilt through mise so the apps start with the pinned pnpm:
+**Tilt**, the developer loop: the infrastructure runs in compose, bootstrap runs as a step, and the apps and APIs run on the host with hot reload, each with the `.env` keys its compose service gets (the `Tiltfile` replaces the hosts that differ outside the compose network) and its `.local/config/<app>.env` (`apis.env` for an API). Run Tilt through mise so the apps start with the pinned pnpm:
 
 ```sh
 mise exec -- tilt up   # or plain `tilt up` in a shell with mise activated; the UI is at http://localhost:10350
@@ -63,5 +63,6 @@ The apps, at the same addresses either way:
 | App | Where |
 | --- | --- |
 | `dashboard-web` | `http://dashboard.localtest.me:3000`: "Log in" goes through Zitadel (any seeded user) and prints the ID-token claims (the spike of ticket 3; the real dashboard arrives in phase 1) |
+| `tenancy-api` | `http://localhost:4001` under Tilt, `tenancy-api:4001` inside compose (not published): `GET /health` is public; `POST /me/provision`, `GET /me/organizations`, `GET /organizations/:id` need a bearer token of the project, so they are exercised through the apps and the tests rather than a browser |
 
 `localtest.me` and its subdomains resolve to `127.0.0.1` in public DNS, so no hosts-file entry is needed. What each service is for, the ports, profiles, and shared volumes are in [`docker/README.md`](docker/README.md). Each package under `packages/` has a `README.md` on how to use it: [`auth`](packages/auth/README.md), [`authz`](packages/authz/README.md), [`client-scopes`](packages/client-scopes/README.md), [`db-core`](packages/db-core/README.md), [`tenancy`](packages/tenancy/README.md), [`documents`](packages/documents/README.md).
