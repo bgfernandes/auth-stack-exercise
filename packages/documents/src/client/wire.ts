@@ -35,6 +35,7 @@ export const visibleDocumentWire = z
     project: z.object({ id: z.uuid(), name: z.string() }).strict(),
     organization: z.object({ id: z.uuid(), name: z.string().nullable() }).strict(),
     can_edit: z.boolean(),
+    can_share: z.boolean(),
     updated_at: z.iso.datetime(),
   })
   .strict();
@@ -112,6 +113,7 @@ export function toVisibleDocumentWire(row: VisibleDocument): VisibleDocumentWire
     project: { id: row.project.id, name: row.project.name },
     organization: { id: row.organization.id, name: row.organization.name ?? null },
     can_edit: row.canEdit,
+    can_share: row.canShare,
     updated_at: row.updatedAt.toISOString(),
   };
 }
@@ -123,6 +125,7 @@ export function fromVisibleDocumentWire(wire: VisibleDocumentWire): VisibleDocum
     project: { id: wire.project.id, name: wire.project.name },
     organization: { id: wire.organization.id, name: wire.organization.name ?? undefined },
     canEdit: wire.can_edit,
+    canShare: wire.can_share,
     updatedAt: new Date(wire.updated_at),
   };
 }

@@ -233,8 +233,15 @@ describe('dashboard-api against the stack', () => {
 
     const list = async (name: string) =>
       (await app.inject({ url: '/documents', headers: as(name) }))
-        .json<{ documents: { id: string; can_edit: boolean; organization: { name: string } }[] }>()
-        .documents.map((row) => [row.id, row.can_edit, row.organization.name]);
+        .json<{
+          documents: {
+            id: string;
+            can_edit: boolean;
+            can_share: boolean;
+            organization: { name: string };
+          }[];
+        }>()
+        .documents.map((row) => [row.id, row.can_edit, row.can_share, row.organization.name]);
     const read = async (name: string) =>
       (await app.inject({ url: `/documents/${welcome.id}`, headers: as(name) })).statusCode;
     expect(await read('alice')).toBe(200);
@@ -242,10 +249,26 @@ describe('dashboard-api against the stack', () => {
     expect(await read('bob')).toBe(403);
     expect(await read('dave')).toBe(404);
 
-    await eventually(() => list('alice'), [[welcome.id, true, 'Acme']]);
-    await eventually(() => list('bob'), [[welcome.id, false, 'Acme']]);
-    await eventually(() => list('carol'), [[welcome.id, true, 'Acme']]);
+    await eventually(() => list('alice'), [[welcome.id, true, true, 'Acme']]);
+    await eventually(() => list('bob'), [[welcome.id, false, false, 'Acme']]);
+    await eventually(() => list('carol'), [[welcome.id, true, false, 'Acme']]);
     expect(await list('dave')).toEqual([]);
+
+    // The share page's read: the set the share left, for Alice; 403 for Carol, who edits by share; 404 for Dave.
+    const shares = await app.inject({
+      url: `/documents/${welcome.id}/shares`,
+      headers: as('alice'),
+    });
+    expect(shares.statusCode).toBe(200);
+    expect(shares.json()).toEqual({ editors: [sub('carol')], viewers: [sub('bob')] });
+    expect(
+      (await app.inject({ url: `/documents/${welcome.id}/shares`, headers: as('carol') }))
+        .statusCode,
+    ).toBe(403);
+    expect(
+      (await app.inject({ url: `/documents/${welcome.id}/shares`, headers: as('dave') }))
+        .statusCode,
+    ).toBe(404);
 
     const write = async (name: string, values: { value_1: string; value_2: string }) =>
       app.inject({

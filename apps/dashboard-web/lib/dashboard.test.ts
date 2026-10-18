@@ -11,6 +11,7 @@ function row(organization: string, project: string, name: string, canEdit = true
     project: { id: project.toLowerCase(), name: project },
     organization: { id: organization.toLowerCase(), name: organization },
     canEdit,
+    canShare: canEdit,
     updatedAt: new Date('2026-10-18T00:00:00Z'),
   };
 }

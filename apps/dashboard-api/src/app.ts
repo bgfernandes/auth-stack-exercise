@@ -143,6 +143,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     },
   );
 
+  // The share page's read (§6.8, §7.3): the direct shares, `share` at least as fresh as the row's token.
+  app.get<{ Params: { id: string } }>(
+    '/documents/:id/shares',
+    { preHandler: app.requireScope(DOCUMENTS_API_SCOPES.read) },
+    async (request) => service.getDocumentShares(userOf(request), request.params.id),
+  );
+
   // The share action (§6.8, §7.3): replaces the direct shares; `share` fully consistent, the write's token stored.
   app.put<{ Params: { id: string } }>(
     '/documents/:id/shares',

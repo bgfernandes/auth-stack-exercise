@@ -190,11 +190,14 @@ describe('listVisibleDocuments, getDocumentForEdit, updateDocument', () => {
         project: { id: project.id, name: 'Personal' },
         organization: { id: ACME, name: 'Acme' },
         canEdit: true,
+        canShare: true,
         updatedAt: document.updatedAt,
       },
     ]);
     const forBob = await service.listVisibleDocuments(bob, fullyConsistent);
-    expect(forBob.map((row) => [row.id, row.canEdit])).toEqual([[document.id, false]]);
+    expect(forBob.map((row) => [row.id, row.canEdit, row.canShare])).toEqual([
+      [document.id, false, false],
+    ]);
     expect(await service.listVisibleDocuments(carol, fullyConsistent)).toEqual([]);
 
     expect((await service.getDocumentForEdit(alice, document.id)).id).toBe(document.id);
@@ -295,6 +298,17 @@ describe('setDocumentShares', () => {
       updatedBy: document.updatedBy,
     });
     expect(await sharesOf(document.id)).toEqual([`editor:${dave.sub}`, `viewer:${bob.sub}`].sort());
+    // The share page's read sees the set the share left, at the row's token; it is for sharers only.
+    expect(await service.getDocumentShares(alice, document.id)).toEqual({
+      editors: [dave.sub],
+      viewers: [bob.sub],
+    });
+    await expect(service.getDocumentShares(dave, document.id)).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+    await expect(service.getDocumentShares(carol, document.id)).rejects.toMatchObject({
+      code: 'not_found',
+    });
     expect((await service.getDocumentForEdit(dave, document.id)).id).toBe(document.id);
     await expect(service.getDocumentForEdit(bob, document.id)).rejects.toMatchObject({
       code: 'forbidden',

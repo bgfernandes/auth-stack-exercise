@@ -78,11 +78,14 @@ describe('createHttpDocumentsClient', () => {
                 project: { id: PROJECT, name: 'Finance' },
                 organization: { id: ACME, name: null },
                 can_edit: false,
+                can_share: false,
                 updated_at: '2026-10-18T10:00:00.000Z',
               },
             ],
           },
         };
+      if (method === 'GET' && path === `/documents/${DOCUMENT}/shares`)
+        return { status: 200, body: { editors: ['bob'], viewers: [] } };
       if (path === `/organizations/${ACME}/personal-project`)
         return {
           status: 200,
@@ -115,10 +118,15 @@ describe('createHttpDocumentsClient', () => {
         project: { id: PROJECT, name: 'Finance' },
         organization: { id: ACME, name: undefined },
         canEdit: false,
+        canShare: false,
         updatedAt: new Date('2026-10-18T10:00:00.000Z'),
       },
     ]);
     expect(await client.getDocumentForEdit(alice, DOCUMENT)).toEqual(document);
+    expect(await client.getDocumentShares(alice, DOCUMENT)).toEqual({
+      editors: ['bob'],
+      viewers: [],
+    });
     expect(await client.updateDocument(alice, DOCUMENT, { value1: 'a', value2: 'x' })).toEqual({
       ...document,
       value2: 'x',
@@ -154,6 +162,13 @@ describe('createHttpDocumentsClient', () => {
         body: undefined,
       },
       {
+        method: 'GET',
+        path: `/documents/${DOCUMENT}/shares`,
+        token: 'Bearer token-alice',
+        contentType: null,
+        body: undefined,
+      },
+      {
         method: 'PUT',
         path: `/documents/${DOCUMENT}`,
         token: 'Bearer token-alice',
@@ -179,6 +194,8 @@ describe('createHttpDocumentsClient', () => {
 
   it('raises the status and the code of every answer outside the contract', async () => {
     const api = stubApi((method, path) => {
+      if (method === 'GET' && path.endsWith('/shares'))
+        return { status: 403, body: { error: 'forbidden' } };
       if (path.endsWith('/shares')) return { status: 400, body: { error: 'not_a_member' } };
       if (method === 'PUT') return { status: 403, body: { error: 'forbidden' } };
       if (path === '/documents') return { status: 401, body: { error: 'invalid_token' } };
@@ -205,6 +222,10 @@ describe('createHttpDocumentsClient', () => {
     await expect(
       client.setDocumentShares(alice, DOCUMENT, { editors: ['ghost'], viewers: [] }),
     ).rejects.toMatchObject({ status: 400, code: 'not_a_member' });
+    await expect(client.getDocumentShares(alice, DOCUMENT)).rejects.toMatchObject({
+      status: 403,
+      code: 'forbidden',
+    });
     // A body that is not the API's (a proxy's page) keeps the status and gets a generic code.
     await expect(client.ensurePersonalProject(alice, ACME)).rejects.toMatchObject({
       status: 502,
