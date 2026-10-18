@@ -222,6 +222,42 @@ describe('ZedTokens (§7.3)', () => {
     expect(afterRevoke.allowed).toBe(false);
   });
 
+  it('reads the relationships a filter matches, narrowed by relation or subject', async () => {
+    const all = await authz.readRelationships(
+      { resourceType: 'document', resourceId: launchPlan.id },
+      fullyConsistent,
+    );
+    expect(all).toEqual(
+      expect.arrayContaining([
+        relationship(launchPlan, 'project', marketing),
+        relationship(launchPlan, 'editor', carol),
+      ]),
+    );
+    expect(all).toHaveLength(2);
+    expect(
+      await authz.readRelationships(
+        { resourceType: 'document', resourceId: launchPlan.id, relation: 'editor' },
+        fullyConsistent,
+      ),
+    ).toEqual([relationship(launchPlan, 'editor', carol)]);
+    expect(
+      await authz.readRelationships(
+        {
+          resourceType: 'project',
+          resourceIdPrefix: PREFIX,
+          subject: { type: 'user', id: bob.id },
+        },
+        fullyConsistent,
+      ),
+    ).toEqual([relationship(marketing, 'editor', bob)]);
+    expect(
+      await authz.readRelationships(
+        { resourceType: 'document', resourceId: id('no-such-document') },
+        fullyConsistent,
+      ),
+    ).toEqual([]);
+  });
+
   it('deletes by filter and returns the revision', async () => {
     const token = await authz.deleteRelationships({
       resourceType: 'api_scope',

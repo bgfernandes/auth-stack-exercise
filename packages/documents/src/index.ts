@@ -27,4 +27,5 @@ export {
   type DocumentsSeedOutcome,
   type ProjectSeed,
 } from './seed';
+export { documentSharesSchema, parseDocumentShares, type DocumentShares } from './shares';
 export { documentValuesSchema, parseDocumentValues, type DocumentValues } from './values';

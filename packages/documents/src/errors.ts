@@ -1,8 +1,10 @@
 export type DocumentsErrorCode =
   /** The document does not exist, or the caller may not know that it does (§6.5: `404`, no existence leak). */
   | 'not_found'
-  /** The caller may view the document but not edit it (§6.5: `403`). */
-  | 'forbidden';
+  /** The caller may view the document but not do this to it (§6.5: `403`). */
+  | 'forbidden'
+  /** A share names a user who is not a member of the organization that owns the document (§6.8: `400`). */
+  | 'not_a_member';
 
 /** One error type for the service; the web app and, in phase 2, `dashboard-api` map `code` to a status. */
 export class DocumentsError extends Error {
@@ -15,7 +17,11 @@ export class DocumentsError extends Error {
   }
 }
 
-const CODES: readonly string[] = ['not_found', 'forbidden'] satisfies DocumentsErrorCode[];
+const CODES: readonly string[] = [
+  'not_found',
+  'forbidden',
+  'not_a_member',
+] satisfies DocumentsErrorCode[];
 
 /**
  * Whether `error` is a `DocumentsError`, from this copy of the package or another. A bundler can give a Next.js
