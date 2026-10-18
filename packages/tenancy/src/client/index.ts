@@ -9,17 +9,25 @@ import { type Policy } from './policy';
 export {
   createHttpTenancyClient,
   httpTenancyClientFromEnv,
+  isTenancyClientError,
   TenancyClientError,
   type HttpTenancyClient,
   type HttpTenancyClientOptions,
 } from './http';
 export { parsePolicy, policySchema, type Policy } from './policy';
 export {
+  fromMemberWire,
   fromWire,
+  memberWire,
+  membershipWire,
+  membersWire,
   organizationsWire,
   organizationWire,
   provisionWire,
+  toMemberWire,
   toWire,
+  type MemberWire,
+  type MembershipWire,
   type OrganizationWire,
 } from './wire';
 
@@ -46,6 +54,21 @@ export interface OrganizationSummary {
   policy: Policy;
 }
 
+/** The organization-level roles of docs/README.md §6.2: `organization#admin` and `organization#member`. */
+export type Role = 'admin' | 'member';
+
+/**
+ * One member of an organization (§6.8: the member list is what every member sees and what the share picker
+ * offers). The name and email come from the `users` mirror (§5.1) and are missing for a member whose row was
+ * never written, which is why the `sub`, the identifier every grant names, is what a caller keys on.
+ */
+export interface Member {
+  sub: string;
+  email?: string;
+  displayName?: string;
+  role: Role;
+}
+
 export interface ProvisionResult {
   /** The user's personal organization (§6.4). */
   organization: OrganizationSummary;
@@ -61,4 +84,23 @@ export interface TenancyClient {
   getOrganization(user: UserContext, id: string): Promise<OrganizationSummary | undefined>;
   /** Every organization the user may view. */
   listOrganizations(user: UserContext): Promise<OrganizationSummary[]>;
+  /** The members of an organization the user may view, admins first; undefined when the user may not view it. */
+  listMembers(user: UserContext, organizationId: string): Promise<Member[] | undefined>;
+  /**
+   * Changes a current member's role, or removes the member with `null` (§6.8: a first role comes from an
+   * invitation, never from here). `organization#administer`; a refusal throws `TenancyClientError` with the
+   * API's code (`forbidden`, `not_found`, `personal_organization`, `not_a_member`, `last_admin`).
+   */
+  setMembership(
+    user: UserContext,
+    organizationId: string,
+    memberSub: string,
+    role: Role | null,
+  ): Promise<void>;
+  /** Replaces the organization's authentication-context policy (§9.1); `organization#administer`. */
+  setPolicy(
+    user: UserContext,
+    organizationId: string,
+    policy: Policy,
+  ): Promise<OrganizationSummary>;
 }

@@ -1,8 +1,8 @@
 /**
  * Bootstrap (ticket 4): a one-shot, idempotent configuration of the stack. It writes the SpiceDB schema
  * (ticket 6), runs the service packages' database migrations (ticket 7), creates the single Zitadel project,
- * the dashboard-web application, and the tenancy-api and dashboard-api API applications, grants the
- * first-party clients the scopes of the APIs they call (§6.7, tickets 16 and 19a), seeds the users of
+ * the dashboard-web and tenancy-web applications, and the tenancy-api and dashboard-api API applications,
+ * grants the first-party clients the scopes of the APIs they call (§6.7, tickets 16, 17, and 19a), seeds the users of
  * docs/README.md §6.3 in Zitadel and the
  * Acme scenario in the tenancy and documents databases and SpiceDB (ticket 12), and writes the handoff files
  * the apps start from. Every object is matched by name or fixed ID first and every migration is recorded, so
@@ -43,6 +43,7 @@ import {
 
 const PROJECT_NAME = 'auth-stack-exercise';
 const DASHBOARD_WEB_APP = 'dashboard-web';
+const TENANCY_WEB_APP = 'tenancy-web';
 const TENANCY_API_APP = 'tenancy-api';
 const DASHBOARD_API_APP = 'dashboard-api';
 const READY_TIMEOUT_MS = 120_000;
@@ -57,8 +58,11 @@ function stripTrailingSlash(url: string): string {
   return url.replace(/\/+$/, '');
 }
 
-/** Web application, PKCE without a secret, JWT access tokens, userinfo claims in the ID token (§4.2, §4.4). */
-export function dashboardWebConfig(publicUrl: string): OidcAppConfig {
+/**
+ * A web application (a BFF), PKCE without a secret, JWT access tokens, userinfo claims in the ID token (§4.2,
+ * §4.4): the same shape for every BFF, which is the point of the second one (§10, "another application").
+ */
+export function webAppConfig(publicUrl: string): OidcAppConfig {
   return {
     redirectUris: [`${publicUrl}/auth/callback`],
     postLogoutRedirectUris: [`${publicUrl}/`],
@@ -85,12 +89,18 @@ export const API_APP_CONFIG: ApiAppConfig = {
 /**
  * Client authority (docs/README.md §6.7): every first-party client is granted every scope of every API it calls,
  * as `api_scope:<scope>#grantee@client:<client_id>` with TOUCH, so a repeat run writes nothing new. The scopes of
- * each API join here with the API; dashboard-web calls both.
+ * each API join here with the API; dashboard-web calls both APIs, tenancy-web calls tenancy-api only.
  */
-export function scopeGrants(clients: { dashboardWeb: string }): [string, string][] {
-  return [...Object.values(TENANCY_API_SCOPES), ...Object.values(DOCUMENTS_API_SCOPES)].map(
-    (scope) => [scope, clients.dashboardWeb],
-  );
+export function scopeGrants(clients: {
+  dashboardWeb: string;
+  tenancyWeb: string;
+}): [string, string][] {
+  const tenancy = Object.values(TENANCY_API_SCOPES);
+  const documents = Object.values(DOCUMENTS_API_SCOPES);
+  return [
+    ...[...tenancy, ...documents].map((scope): [string, string] => [scope, clients.dashboardWeb]),
+    ...tenancy.map((scope): [string, string] => [scope, clients.tenancyWeb]),
+  ];
 }
 
 async function writeScopeGrants(authz: Authz, grants: [string, string][]): Promise<void> {
@@ -119,6 +129,7 @@ async function configure(authz: Authz): Promise<void> {
   const patFile = required('ZITADEL_PAT_FILE');
   const configDir = required('CONFIG_DIR');
   const dashboardWebUrl = stripTrailingSlash(required('DASHBOARD_WEB_URL'));
+  const tenancyWebUrl = stripTrailingSlash(required('TENANCY_WEB_URL'));
   const tenancyApiUrl = stripTrailingSlash(required('TENANCY_API_URL'));
   const seedPassword = required('SEED_USER_PASSWORD');
 
@@ -149,22 +160,35 @@ async function configure(authz: Authz): Promise<void> {
   const project = await ensureProject(api, PROJECT_NAME);
   log('project', { name: PROJECT_NAME, id: project.id, action: project.action });
 
-  const app = await ensureOidcApp(
-    api,
-    project.id,
-    DASHBOARD_WEB_APP,
-    dashboardWebConfig(dashboardWebUrl),
-  );
-  log('application', { name: DASHBOARD_WEB_APP, id: app.appId, action: app.action });
+  const webApps = { dashboardWeb: dashboardWebUrl, tenancyWeb: tenancyWebUrl };
+  const clients = {} as Record<keyof typeof webApps, { clientId: string; url: string }>;
+  for (const [key, name] of [
+    ['dashboardWeb', DASHBOARD_WEB_APP],
+    ['tenancyWeb', TENANCY_WEB_APP],
+  ] as const) {
+    const url = webApps[key];
+    const app = await ensureOidcApp(api, project.id, name, webAppConfig(url));
+    log('application', { name, id: app.appId, action: app.action });
+    clients[key] = { clientId: app.clientId, url };
+  }
 
   for (const name of [TENANCY_API_APP, DASHBOARD_API_APP]) {
     const apiApp = await ensureApiApp(api, project.id, name, API_APP_CONFIG);
     log('application', { name, id: apiApp.appId, action: apiApp.action });
   }
 
-  const grants = scopeGrants({ dashboardWeb: app.clientId });
+  const grants = scopeGrants({
+    dashboardWeb: clients.dashboardWeb.clientId,
+    tenancyWeb: clients.tenancyWeb.clientId,
+  });
   await writeScopeGrants(authz, grants);
-  log('scope_grants', { count: grants.length, clients: { [DASHBOARD_WEB_APP]: app.clientId } });
+  log('scope_grants', {
+    count: grants.length,
+    clients: {
+      [DASHBOARD_WEB_APP]: clients.dashboardWeb.clientId,
+      [TENANCY_WEB_APP]: clients.tenancyWeb.clientId,
+    },
+  });
 
   const users: Handoff['users'] = {};
   for (const seed of SEED_USERS) {
@@ -212,7 +236,8 @@ async function configure(authz: Authz): Promise<void> {
     jwksUrl: discovery.jwks_uri,
     userinfoUrl: discovery.userinfo_endpoint,
     projectId: project.id,
-    dashboardWeb: { clientId: app.clientId, url: dashboardWebUrl },
+    dashboardWeb: clients.dashboardWeb,
+    tenancyWeb: clients.tenancyWeb,
     tenancyApiUrl,
     users,
     scenario: ACME,

@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 
-import { apisEnv, dashboardWebEnv, renderEnvFile, writeHandoff, type Handoff } from './handoff';
+import { apisEnv, renderEnvFile, webAppEnv, writeHandoff, type Handoff } from './handoff';
 
 const handoff: Handoff = {
   issuer: 'http://auth.localtest.me:8080',
@@ -12,6 +12,7 @@ const handoff: Handoff = {
   userinfoUrl: 'http://auth.localtest.me:8080/oidc/v1/userinfo',
   projectId: '123',
   dashboardWeb: { clientId: '456', url: 'http://dashboard.localtest.me:3000' },
+  tenancyWeb: { clientId: '457', url: 'http://tenancy.localtest.me:3001' },
   tenancyApiUrl: 'http://tenancy-api:4001',
   users: { alice: { id: '789', email: 'alice@example.com' } },
   scenario: {
@@ -36,14 +37,19 @@ describe('renderEnvFile', () => {
 });
 
 describe('env files', () => {
-  it('builds the dashboard-web redirect URIs from the public URL', () => {
-    expect(dashboardWebEnv(handoff)).toEqual({
+  it("builds each BFF's redirect URIs from its public URL", () => {
+    expect(webAppEnv(handoff.dashboardWeb, handoff)).toEqual({
       OIDC_ISSUER: 'http://auth.localtest.me:8080',
       OIDC_CLIENT_ID: '456',
       OIDC_REDIRECT_URI: 'http://dashboard.localtest.me:3000/auth/callback',
       OIDC_POST_LOGOUT_REDIRECT_URI: 'http://dashboard.localtest.me:3000/',
       APP_URL: 'http://dashboard.localtest.me:3000',
       TENANCY_API_URL: 'http://tenancy-api:4001',
+    });
+    expect(webAppEnv(handoff.tenancyWeb, handoff)).toMatchObject({
+      OIDC_CLIENT_ID: '457',
+      OIDC_REDIRECT_URI: 'http://tenancy.localtest.me:3001/auth/callback',
+      APP_URL: 'http://tenancy.localtest.me:3001',
     });
   });
 
@@ -66,9 +72,9 @@ describe('writeHandoff', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('writes the three files and no temporary files', async () => {
+  it('writes the four files and no temporary files', async () => {
     const files = await writeHandoff(path.join(dir, 'config'), handoff);
-    expect(files.sort()).toEqual(['apis.env', 'dashboard-web.env', 'seed.json']);
+    expect(files.sort()).toEqual(['apis.env', 'dashboard-web.env', 'seed.json', 'tenancy-web.env']);
     const seed = JSON.parse(
       await readFile(path.join(dir, 'config', 'seed.json'), 'utf8'),
     ) as unknown;

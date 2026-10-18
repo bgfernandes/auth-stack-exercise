@@ -76,7 +76,7 @@ jobs:
       # service healthy and bootstrap completed before this returns.
       - name: Start the stack with the apps
         run: docker compose --profile apps up -d --wait --build
-      # The one browser the suite drives (apps/dashboard-web/playwright.config.ts), with its system libraries.
+      # The one browser the suites drive (apps/*-web/playwright.config.ts), with its system libraries.
       - name: Install Chromium for Playwright
         run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
@@ -89,6 +89,8 @@ jobs:
           path: |
             apps/dashboard-web/playwright-report
             apps/dashboard-web/test-results
+            apps/tenancy-web/playwright-report
+            apps/tenancy-web/test-results
           if-no-files-found: ignore
           retention-days: 7
       - name: Show the stack on failure

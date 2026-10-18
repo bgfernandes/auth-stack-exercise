@@ -419,7 +419,9 @@
 
 **Acceptance criteria:** Alice demotes Bob to member and back; a member cannot open the policy form; Carol sees the member list but no controls.
 
-**Status:** Open.
+> **2026-10-18 (as built):** The acceptance criterion is read against the seed, where Bob starts as a member: Alice promotes him and demotes him back, and the suite leaves the scenario as seeded. Three choices by the maintainer, recorded in `docs/README.md` §12: `PUT /organizations/:id/members` changes or removes a current member only (`400 not_a_member` otherwise; a first role comes from an invitation or the seed), the last administrator cannot be demoted or removed (`409 last_admin`), and `tenancy-web`'s login hook provisions through tenancy only until ticket 19's HTTP documents client exists (§6.4 rewritten). The share picker's source is `GET /organizations/:id/members`, visible to every member. Verified: 192 unit tests (18 new: five route tests on `tenancy-api`, the two write handlers and the login hook of `tenancy-web`, the client's writes), 71 integration tests (the service's member list and membership rules, the client contract over both implementations with three new cases), 6 Playwright tests (the 4 of ticket 13 plus Alice and Carol on `tenancy-web`), the stack up with `tenancy-web` healthy, bootstrap `created` then `unchanged` for the second application with six scope grants.
+
+**Status:** Done (2026-10-18).
 
 ---
 
@@ -430,6 +432,20 @@
 **Description:** `tenancy-api`: `POST /organizations/:id/invitations` (`organization#administer`; stores the row with a hashed random token and a 7-day expiry; sends the email through SMTP with `nodemailer`; always answers `202` with the same body), `GET /invitations/:token` and `POST /invitations/:token/accept` (signed-in user whose email matches; writes the tuple at `fully_consistent`; marks accepted; expired, used, and unknown tokens all answer the same `404`). `tenancy-web`: an invite form on the organization page for admins and an `/invitations/[token]` accept page that sends an unauthenticated visitor through login first. Rate limits per §6.8: per inviting user and per organization through `@fastify/rate-limit`, and a per-address cooldown enforced from the latest invitation row for that email; `429` on breach, uniform `202` otherwise.
 
 **Acceptance criteria:** Alice invites an unknown email and an existing account's email and sees the identical response; both emails appear in Mailpit; following the link as the existing account joins Acme; a second use of the link fails like an unknown one.
+
+**Status:** Open.
+
+---
+
+### Ticket 17b — TLS at Traefik for Zitadel, so the IdP session survives (2 h)
+
+**Read first:** `docs/README.md` §4.2, §4.3, §9 (Transport).
+
+**Description:** Found while reviewing ticket 17: Zitadel's Login V2 stores its own session in a `sessions` cookie that it sets with the `Secure` attribute (`secure: NODE_ENV === "production"` in the login app, and the image fixes `NODE_ENV` in its bundled server, so no setting turns it off). Browsers refuse a `Secure` cookie over plain HTTP on any host but `localhost`, so on `http://auth.localtest.me:8080` the cookie is never stored: each login completes (the login UI carries the session through the flow by URL), but the next authorization request from any app starts at the login-name page again. No IdP session survives, so there is no single sign-on, and ticket 20 cannot pass. The fix is the one §9 already names for any real deployment: TLS terminates at Traefik. A one-shot `tls` container (`openssl`, in the shape of `spicedb-migrate`) generates a development CA and a certificate for `auth.localtest.me` into `./.local/tls/` (gitignored, next to `.local/config/`) at first start and exits, idempotent, so the zero-step start of §9 stays; Traefik gets a `websecure` entrypoint serving it through the file provider, published as the one public port of Zitadel (`https://auth.localtest.me:8443`; the plain entrypoint goes away, so there is one issuer), and Zitadel runs with `ZITADEL_EXTERNALSECURE=true` and the matching port, the login container forwarding `X-Forwarded-Proto: https`. Everything that calls Zitadel trusts the CA: the app and bootstrap containers and the Tilt-run processes through `NODE_EXTRA_CA_CERTS` pointing at the CA file, the Playwright suites through the same variable for the Node side and `ignoreHTTPSErrors` for the browser. The apps' own URLs stay plain HTTP (the back-channel logout URIs included). The root README says how a reviewer imports the CA once, or clicks through the browser warning. `docs/README.md` §4.2, §4.3, §9 are rewritten in place for the HTTPS issuer and the decision log records what they said.
+
+**Acceptance criteria:** From a clean state, `docker compose --profile apps up -d --wait --build` needs no manual step and bootstrap writes an `https://` issuer; log in on `tenancy-web`, open `dashboard-web`, click "Log in", and land on the dashboard without a prompt (the `sessions` cookie is stored, which the browser's cookie view shows); both end-to-end suites green locally and in CI; under Tilt the same.
+
+> **2026-10-18:** Created from the finding above after ticket 17 was verified. The maintainer chose TLS at Traefik over the two alternatives weighed: a Chromium flag that treats the plain origin as secure (`--unsafely-treat-insecure-origin-as-secure`; Chromium only, and the reviewer path would depend on a browser flag), and Zitadel on `localhost` (browsers treat it as a secure context, but §4.3's spike rejected that shape because the containers cannot reach the host by that name without a Host-header override in the OIDC client). Must precede ticket 18 as well as ticket 20: without one IdP session shared by the apps, each app's login creates its own Zitadel session with its own `sid`, so a sign-out on one app ends only that session and the back-channel logout token never names the other app's, which leaves ticket 18 nothing to prove.
 
 **Status:** Open.
 

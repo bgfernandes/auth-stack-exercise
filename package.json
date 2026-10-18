@@ -12,7 +12,9 @@
     "type-check": "pnpm -r --include-workspace-root exec tsc --noEmit",
     "test": "jest --selectProjects unit",
     "test:integration": "jest --selectProjects integration --passWithNoTests",
-    "test:e2e": "playwright test --config apps/dashboard-web/playwright.config.ts",
+    "test:e2e": "pnpm run test:e2e:dashboard-web && pnpm run test:e2e:tenancy-web",
+    "test:e2e:dashboard-web": "playwright test --config apps/dashboard-web/playwright.config.ts",
+    "test:e2e:tenancy-web": "playwright test --config apps/tenancy-web/playwright.config.ts",
     "authz:zed": "docker compose run --rm zed",
     "authz:validate": "docker compose run --rm --no-deps zed validate --fail-on-warn /authz/schema.zed",
     "db:migrate": "pnpm -r --if-present run db:migrate"

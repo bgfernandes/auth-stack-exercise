@@ -10,6 +10,7 @@ import Fastify, {
   type FastifyInstance,
   type FastifyRequest,
 } from 'fastify';
+import { ZodError } from 'zod';
 
 import {
   BearerError,
@@ -20,8 +21,11 @@ import {
 import { apiServerOptions, bearerPlugin, echoRequestId } from '@auth-stack/auth/fastify';
 import { fullyConsistent } from '@auth-stack/authz';
 import {
+  membershipWire,
+  parsePolicy,
   TENANCY_API_SCOPES,
   TenancyError,
+  toMemberWire,
   toSummary,
   toWire,
   type TenancyErrorCode,
@@ -44,6 +48,8 @@ const STATUS_OF: Record<TenancyErrorCode, number> = {
   not_found: 404,
   forbidden: 403,
   personal_organization: 409,
+  not_a_member: 400,
+  last_admin: 409,
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -93,7 +99,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       }
       return reply.code(502).send({ error: 'userinfo_unavailable' });
     }
-    if (isValidationError(error)) {
+    // A body outside the wire format (the route's schema) or outside the policy's rules (the service's).
+    if (error instanceof ZodError || isValidationError(error)) {
       return reply.code(400).send({ error: 'invalid_input' });
     }
     // Fastify's own verdicts on the request (an unsupported media type, a body too large) keep their status.
@@ -149,6 +156,49 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         : undefined;
       if (!organization) return reply.code(404).send({ error: 'not_found' });
       return toWire(toSummary(organization));
+    },
+  );
+
+  // §6.8: the member list is what every member sees and what the share picker offers; a non-member gets 404.
+  app.get<{ Params: { id: string } }>(
+    '/organizations/:id/members',
+    { preHandler: app.requireScope(TENANCY_API_SCOPES.read) },
+    async (request, reply) => {
+      const { sub } = principalOf(request);
+      const { id } = request.params;
+      const members = UUID.test(id)
+        ? await service.listMembers({ sub }, id, fullyConsistent)
+        : undefined;
+      if (!members) return reply.code(404).send({ error: 'not_found' });
+      return { members: members.map(toMemberWire) };
+    },
+  );
+
+  // One current member's role, or null to remove them (ticket 17); the service holds the rules (§6.8), and a
+  // malformed ID is the same 404 as an organization the caller may not see.
+  app.put<{ Params: { id: string } }>(
+    '/organizations/:id/members',
+    { preHandler: app.requireScope(TENANCY_API_SCOPES.write) },
+    async (request, reply) => {
+      const { sub } = principalOf(request);
+      const { id } = request.params;
+      const change = membershipWire.parse(request.body);
+      if (!UUID.test(id)) return reply.code(404).send({ error: 'not_found' });
+      await service.setMembership({ sub }, id, change.member_id, change.role);
+      return reply.code(204).send();
+    },
+  );
+
+  // The authentication-context floors of §9.1, replaced whole; the service validates them (`ZodError` → 400).
+  app.put<{ Params: { id: string } }>(
+    '/organizations/:id/policy',
+    { preHandler: app.requireScope(TENANCY_API_SCOPES.write) },
+    async (request, reply) => {
+      const { sub } = principalOf(request);
+      const { id } = request.params;
+      const policy = parsePolicy(request.body);
+      if (!UUID.test(id)) return reply.code(404).send({ error: 'not_found' });
+      return toWire(toSummary(await service.setPolicy({ sub }, id, policy)));
     },
   );
 

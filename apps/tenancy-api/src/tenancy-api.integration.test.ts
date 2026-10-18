@@ -32,6 +32,7 @@ import {
   createHttpTenancyClient,
   createTenancyService,
   schema,
+  seedOrganization,
   TENANCY_API_SCOPES,
   type ProvisionClaims,
   type TenancySchema,
@@ -76,12 +77,17 @@ const injectFetch: typeof fetch = async (input, init) => {
     method: (init?.method ?? 'GET').toUpperCase(),
     url,
     headers,
+    ...(typeof init?.body === 'string' ? { payload: init.body } : {}),
   });
   const responseHeaders: Record<string, string> = {};
   for (const [key, value] of Object.entries(response.headers)) {
     if (typeof value === 'string') responseHeaders[key] = value;
   }
-  return new Response(response.body, { status: response.statusCode, headers: responseHeaders });
+  // A 204 carries no body, and the Response constructor refuses even an empty string for one.
+  return new Response(response.body || null, {
+    status: response.statusCode,
+    headers: responseHeaders,
+  });
 };
 
 beforeAll(async () => {
@@ -152,6 +158,24 @@ describeTenancyClientContract('http', () => ({
     });
     userinfoAnswers.set(accessToken, { sub, email: `${name}@example.com`, name });
     return { sub, accessToken };
+  },
+  async sharedOrganization(name, members) {
+    const id = randomUUID();
+    organizationIds.add(id);
+    await seedOrganization(
+      { db: database.db, authz },
+      {
+        id,
+        name,
+        users: members.map(({ sub, displayName }) => ({
+          sub,
+          email: `${sub}@example.com`,
+          displayName,
+        })),
+        roles: members.map(({ sub, role }) => ({ sub, role })),
+      },
+    );
+    return id;
   },
   track: (id) => organizationIds.add(id),
 }));

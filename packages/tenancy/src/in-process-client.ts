@@ -37,5 +37,14 @@ export function createInProcessTenancyClient(
       const organizations = await service.listOrganizations({ sub: user.sub }, fullyConsistent);
       return organizations.map(toSummary);
     },
+    listMembers(user, organizationId) {
+      return service.listMembers({ sub: user.sub }, organizationId, fullyConsistent);
+    },
+    async setMembership(user, organizationId, memberSub, role) {
+      await service.setMembership({ sub: user.sub }, organizationId, memberSub, role);
+    },
+    async setPolicy(user, organizationId, policy) {
+      return toSummary(await service.setPolicy({ sub: user.sub }, organizationId, policy));
+    },
   };
 }
