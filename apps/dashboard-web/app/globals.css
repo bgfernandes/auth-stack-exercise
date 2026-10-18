@@ -40,3 +40,31 @@ button {
   font: inherit;
   padding: 0.25rem 0.75rem;
 }
+
+h2 {
+  margin-top: 2rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0 1.5rem;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.4rem 1rem 0.4rem 0;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+}
+
+.read-only {
+  opacity: 0.6;
+}
+
+.flash,
+.error {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: 0.25rem;
+}
