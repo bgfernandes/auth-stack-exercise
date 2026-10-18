@@ -6,7 +6,7 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
 import { type FastifyInstance } from 'fastify';
 
 import { createBearerVerifier, type ScopeResolver } from '@auth-stack/auth';
@@ -23,6 +23,7 @@ import {
   type Project,
   type VisibleDocument,
 } from '@auth-stack/documents';
+import { createHttpDocumentsClient, type DocumentsClient } from '@auth-stack/documents/client';
 import { type UserContext } from '@auth-stack/tenancy/client';
 
 import { buildApp } from './app';
@@ -599,6 +600,118 @@ describe('dashboard-api', () => {
         'Bearer error="insufficient_scope", scope="documents:read"',
       );
       await bare.close();
+    });
+  });
+
+  /**
+   * The contract between the two sides (ticket 19): the HTTP client of `@auth-stack/documents/client` over this
+   * app listening on a port, so what the routes answer is what the client parses, and a refusal arrives as the
+   * client's error with the API's status and code.
+   */
+  describe('through the HTTP client', () => {
+    let listening: FastifyInstance;
+    let client: DocumentsClient;
+
+    beforeEach(async () => {
+      listening = await build();
+      const address = await listening.listen({ port: 0, host: '127.0.0.1' });
+      client = createHttpDocumentsClient({ baseUrl: address });
+    });
+
+    afterEach(() => listening.close());
+
+    it('round-trips every call as the user, and maps each refusal to its status and code', async () => {
+      const budget = service.add('Budget', { alice: 'edit', carol: 'view' });
+      const user = { sub: 'alice', accessToken: alice };
+
+      expect(await client.listVisibleDocuments({ sub: 'carol', accessToken: carol })).toEqual([
+        {
+          id: budget.id,
+          name: 'Budget',
+          project: { id: budget.projectId, name: 'Budget project' },
+          organization: { id: ACME, name: 'Acme' },
+          canEdit: false,
+          updatedAt: budget.updatedAt,
+        },
+      ]);
+      const read = await client.getDocumentForEdit(user, budget.id);
+      expect(read).toEqual({
+        id: budget.id,
+        projectId: budget.projectId,
+        organizationId: ACME,
+        name: 'Budget',
+        value1: 'one',
+        value2: 'two',
+        updatedAt: budget.updatedAt,
+        updatedBy: 'seed',
+      });
+      expect('zedtoken' in read).toBe(false);
+      const updated = await client.updateDocument(user, budget.id, {
+        value1: 'three',
+        value2: 'four',
+      });
+      expect(updated).toMatchObject({ value1: 'three', value2: 'four', updatedBy: 'alice' });
+      const shared = await client.setDocumentShares(user, budget.id, {
+        editors: ['bob'],
+        viewers: [],
+      });
+      expect(shared).toMatchObject({ id: budget.id, value1: 'three' });
+      expect(service.shares.get(budget.id)).toEqual({ editors: ['bob'], viewers: [] });
+      const workspace = await client.ensurePersonalProject(user, ACME);
+      expect(workspace).toMatchObject({
+        created: true,
+        project: { name: 'Personal', isPersonal: true },
+      });
+      expect(workspace.document).toMatchObject({
+        name: 'Welcome',
+        projectId: workspace.project.id,
+      });
+      expect(service.calls.map((call) => call.user.accessToken)).toEqual([
+        carol,
+        alice,
+        alice,
+        alice,
+        alice,
+      ]);
+
+      const viewer = { sub: 'carol', accessToken: carol };
+      await expect(client.getDocumentForEdit(viewer, budget.id)).rejects.toMatchObject({
+        status: 403,
+        code: 'forbidden',
+      });
+      await expect(
+        client.getDocumentForEdit({ sub: 'bob', accessToken: bob }, budget.id),
+      ).rejects.toMatchObject({
+        status: 404,
+        code: 'not_found',
+      });
+      await expect(
+        client.updateDocument(user, budget.id, { value1: '', value2: 'x' }),
+      ).rejects.toMatchObject({
+        status: 400,
+        code: 'invalid_input',
+      });
+      await expect(
+        client.setDocumentShares(user, budget.id, { editors: ['ghost'], viewers: [] }),
+      ).rejects.toMatchObject({
+        status: 400,
+        code: 'not_a_member',
+      });
+      await expect(
+        client.listVisibleDocuments({ sub: 'alice', accessToken: 'not-a-token' }),
+      ).rejects.toMatchObject({
+        status: 401,
+        code: 'invalid_token',
+      });
+      await expect(
+        client.ensurePersonalProject(
+          { sub: 'alice', accessToken: await tokenFor('alice', READ_ONLY) },
+          ACME,
+        ),
+      ).rejects.toMatchObject({
+        status: 403,
+        code: 'insufficient_scope',
+      });
     });
   });
 });

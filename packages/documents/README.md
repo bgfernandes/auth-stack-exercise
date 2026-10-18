@@ -1,6 +1,6 @@
 # `@auth-stack/documents`
 
-The documents domain as a package ([`docs/README.md`](../../docs/README.md) §3.1, §5.2): projects under a tenancy organization and the documents whose two values the dashboard edits. Roles and shares live in SpiceDB; every document row carries the ZedToken of the check its last content write or share ran under (§7.3). The package root (schema, migrations, the service) is imported by `dashboard-web` in phase 1 and only by `dashboard-api` ([`apps/dashboard-api`](../../apps/dashboard-api)) from phase 2; what a caller of that API needs is on the subpath `@auth-stack/documents/client`.
+The documents domain as a package ([`docs/README.md`](../../docs/README.md) §3.1, §5.2): projects under a tenancy organization and the documents whose two values the dashboard edits. Roles and shares live in SpiceDB; every document row carries the ZedToken of the check its last content write or share ran under (§7.3). The package root (schema, migrations, the service) is imported by `dashboard-api` ([`apps/dashboard-api`](../../apps/dashboard-api)) alone, plus bootstrap for the migrations and the seed; what a caller of that API needs, the HTTP client included, is on the subpath `@auth-stack/documents/client`, which is what a BFF imports.
 
 ## Configuration
 
@@ -8,6 +8,7 @@ The documents domain as a package ([`docs/README.md`](../../docs/README.md) §3.
 | --- | --- |
 | `DOCUMENTS_DATABASE_URL` | `postgres://documents:documents@postgres:5432/documents` in compose; `localhost` from the host (`.env`) |
 | `SPICEDB_*` | The SpiceDB connection of [`@auth-stack/authz`](../authz/README.md), which the service checks before every read and write |
+| `DASHBOARD_API_URL` | Where the HTTP client of the subpath reaches `dashboard-api`: `http://dashboard-api:4002` in compose, `http://localhost:4002` under Tilt; bootstrap writes it to each BFF's env file |
 
 The service also needs a `TenancyClient` ([`@auth-stack/tenancy/client`](../tenancy/README.md)) for organization names.
 
@@ -41,23 +42,30 @@ const shared = await documents.setDocumentShares(user, id, { editors: [bobSub], 
 
 `ensurePersonalProject` checks `organization#create_project` at full consistency, inserts the "Personal" project behind a partial unique index on `(organization_id) WHERE is_personal`, writes the project and document relationships with TOUCH, and inserts the "Welcome" document with the write's token, in one transaction. A grant made outside the service (a share, a seed) stores its token on the affected rows for the same reason: a read checks at least as fresh as the row, so a newer grant may otherwise stay invisible to it for one window.
 
-## The API's wire format and scopes
+## The API's client, wire format, and scopes
 
 ```ts
 import {
-  DOCUMENTS_API_SCOPES,
-  documentsWire,
-  documentWire,
-  fromDocumentWire,
-  fromVisibleDocumentWire,
-  personalWorkspaceWire,
-  toDocumentWire,
+  documentValuesSchema,
+  httpDocumentsClientFromEnv,
+  isDocumentsClientError,
+  type DocumentsClient,
   type DocumentSummary,
   type VisibleDocument,
 } from '@auth-stack/documents/client';
+
+const documents = httpDocumentsClientFromEnv(); // DASHBOARD_API_URL; or createHttpDocumentsClient({ baseUrl, fetch })
+
+// The same five calls as the service, as the user, over HTTP; the API picks the listing's consistency.
+const rows = await documents.listVisibleDocuments(user);
+const row = await documents.getDocumentForEdit(user, id);
+const values = documentValuesSchema.parse({ value1, value2 }); // the BFF checks the rule before calling
+const updated = await documents.updateDocument(user, id, values);
+const shared = await documents.setDocumentShares(user, id, { editors: [bobSub], viewers: [] });
+const { project, document, created } = await documents.ensurePersonalProject(user, organizationId);
 ```
 
-The subpath carries no schema and no database, so a BFF can import it alone (ticket 19 adds the HTTP client here). The wire format is snake_case JSON with dates as ISO strings, defined once and used by `dashboard-api` to answer and by a client to parse: a document is `{ "id", "project_id", "organization_id", "name", "value_1", "value_2", "updated_at", "updated_by" }` (never the row's `zedtoken`); `GET /documents` answers `{ "documents": [{ "id", "name", "project": { "id", "name" }, "organization": { "id", "name" }, "can_edit", "updated_at" }] }` with `organization.name` null when tenancy does not show the organization to the user; `POST /organizations/:id/personal-project` answers `{ "project": { "id", "organization_id", "name", "is_personal", "created_at" }, "document", "created" }`. The request bodies are `{ "value_1", "value_2" }` for `PUT /documents/:id` and `{ "editors": [...], "viewers": [...] }` for `PUT /documents/:id/shares`; their schemas (`documentValuesWire`, `documentSharesWire`) check the shape only, the service owns the constraints. `DOCUMENTS_API_SCOPES` (`documents:read`, `documents:write`) names what the routes require and what bootstrap grants to each first-party client (§6.7). `VisibleDocument`, the dashboard row type, is defined here and re-exported by the package root.
+The subpath carries no schema and no database, so a BFF imports it alone. `DocumentsClient` is the interface; `createHttpDocumentsClient` sends every call with the user's access token as a bearer token, parses the answers with the wire schemas below, and caches nothing, since every answer is a permission decision for one user at one moment. An answer outside the contract throws `DocumentsClientError` with the `status` and the API's `code` (`forbidden`, `not_found`, `not_a_member`, `invalid_input`, the bearer plugin's `invalid_token` and `insufficient_scope`, or `http_error` for a body that is not the API's, such as a proxy's page); test for it with `isDocumentsClientError(error)` rather than `instanceof`, for the reason given above. `documentValuesSchema` lives here too, so a BFF validates the edit form with the same rule the service enforces, without importing the package root. The wire format is snake_case JSON with dates as ISO strings, defined once and used by `dashboard-api` to answer and by a client to parse: a document is `{ "id", "project_id", "organization_id", "name", "value_1", "value_2", "updated_at", "updated_by" }` (never the row's `zedtoken`); `GET /documents` answers `{ "documents": [{ "id", "name", "project": { "id", "name" }, "organization": { "id", "name" }, "can_edit", "updated_at" }] }` with `organization.name` null when tenancy does not show the organization to the user; `POST /organizations/:id/personal-project` answers `{ "project": { "id", "organization_id", "name", "is_personal", "created_at" }, "document", "created" }`. The request bodies are `{ "value_1", "value_2" }` for `PUT /documents/:id` and `{ "editors": [...], "viewers": [...] }` for `PUT /documents/:id/shares`; their schemas (`documentValuesWire`, `documentSharesWire`) check the shape only, the service owns the constraints. `DOCUMENTS_API_SCOPES` (`documents:read`, `documents:write`) names what the routes require and what bootstrap grants to each first-party client (§6.7). `VisibleDocument`, the dashboard row type, is defined here and re-exported by the package root.
 
 ## Seeding
 
@@ -86,6 +94,6 @@ For bootstrap (`docs/README.md` §6.3), which is trusted and has no principal to
 ## Checks
 
 ```sh
-pnpm test packages/documents   # unit tests: the values and shares schemas, the wire format
+pnpm test packages/documents   # unit tests: the values and shares schemas, the wire format, the HTTP client over a stub API (apps/dashboard-api's own test runs it over the real routes)
 pnpm test:integration          # against the compose stack: its own database it_documents, migrated from zero; the service (shares included) and the seed, which asserts the §6.3 table; dashboard-api's own test runs the routes over the service on it_dashboard_api
 ```
