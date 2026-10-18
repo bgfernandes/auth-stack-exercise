@@ -336,6 +336,11 @@ services:
     ports:
       # http://dashboard.localtest.me:3000 (one hostname per app; see docker/README.md)
       - '3000:3000'
+    environment:
+      # The BFF session (packages/auth, ticket 9): the key of the login stash cookie and the session store. The
+      # OIDC application and APP_URL come from the handoff file the entrypoint sources.
+      SESSION_SECRET: ${SESSION_SECRET}
+      REDIS_URL: ${REDIS_URL}
     # Same Zitadel URL as the browser (docs/README.md §4.3, option (a)): the hostname maps to the host, where
     # Traefik publishes port 8080.
     extra_hosts:
@@ -355,6 +360,8 @@ services:
       # Implies a healthy Zitadel; the app must not start before its env file exists.
       bootstrap:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
       tenancy-api:
         condition: service_healthy
 
