@@ -25,6 +25,9 @@ export default defineConfig({
   use: {
     baseURL: BASE_URL,
     trace: 'retain-on-failure',
+    // Zitadel's certificate is signed by the stack's development CA (docker/tls), which the browser does not
+    // trust; the apps themselves are plain HTTP. Nothing on the Node side of the suite calls Zitadel.
+    ignoreHTTPSErrors: true,
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
 });

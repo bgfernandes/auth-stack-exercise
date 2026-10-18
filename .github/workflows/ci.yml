@@ -47,14 +47,16 @@ jobs:
       # configured and the handoff files are written, and fails the job on a non-zero exit.
       - name: Configure Zitadel and write the handoff files
         run: docker compose run --rm --build bootstrap
-      # What later tickets rely on: the handoff files exist, and the runner resolves the public hostname.
+      # What later tickets rely on: the handoff files and the development CA exist, and the runner resolves the
+      # public hostname and trusts the CA (the tls one-shot writes ca.crt world-readable).
       - name: Check the handoff files and Zitadel's discovery document
         run: |
-          ls -l .local/config
+          ls -l .local/config .local/tls
           test -s .local/config/dashboard-web.env
+          test -s .local/config/tenancy-web.env
           test -s .local/config/apis.env
           test -s .local/config/seed.json
-          curl --fail --silent --show-error --output /dev/null http://auth.localtest.me:8080/.well-known/openid-configuration
+          curl --fail --silent --show-error --output /dev/null --cacert .local/tls/ca.crt https://auth.localtest.me:8443/.well-known/openid-configuration
       - run: pnpm test:integration
       - name: Show the stack on failure
         if: failure()

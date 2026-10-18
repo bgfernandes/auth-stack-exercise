@@ -28,5 +28,5 @@ test('alice logs in, sees every Acme document editable, edits Payroll, logs out'
 
   await editAndRestore(page, seed.documents.payroll, marker('alice'));
 
-  await logOut(page);
+  await logOut(page, seed.users.alice.email);
 });

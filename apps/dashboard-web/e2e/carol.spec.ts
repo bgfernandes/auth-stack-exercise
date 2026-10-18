@@ -37,5 +37,5 @@ test('carol logs in, sees the three states, edits Launch plan, is read-only on B
   await page.getByRole('link', { name: 'Back to the dashboard' }).click();
   await expect(page).toHaveURL('/dashboard');
 
-  await logOut(page);
+  await logOut(page, seed.users.carol.email);
 });

@@ -63,16 +63,20 @@ export async function logIn(page: Page, email: string, password: string): Promis
 
 /**
  * Logs out with the header's form and proves both sessions ended: the landing page offers "Log in" again, and a
- * direct request for the dashboard goes through the app's login route to Zitadel's login-name form rather than
- * to a silent sign-in, so the IdP session is gone too (docs/README.md §4.4 step 5).
+ * direct request for the dashboard goes through the app's login route to Zitadel, which asks for the password
+ * again rather than signing the user in silently, so the IdP session is gone too (docs/README.md §4.4 step 5).
+ * Zitadel's login UI keeps the IDs of the browser's sessions in a cookie and lists them as accounts to pick
+ * (ticket 17b); the ended one is still listed, and choosing it leads to the password form, where a live session
+ * would have continued without a prompt.
  */
-export async function logOut(page: Page): Promise<void> {
+export async function logOut(page: Page, email: string): Promise<void> {
   const header = page.getByRole('navigation');
   await header.getByRole('button', { name: 'Log out' }).click();
   await expect(header.getByRole('link', { name: 'Log in' })).toBeVisible();
   await expect(header.getByRole('button', { name: 'Log out' })).toHaveCount(0);
   await page.goto('/dashboard');
-  await expect(page.getByLabel('Loginname')).toBeVisible();
+  await page.getByRole('button', { name: email }).click();
+  await expect(page.getByLabel('Password')).toBeVisible();
 }
 
 export interface DashboardRow {

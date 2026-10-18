@@ -68,5 +68,5 @@ test('alice manages Acme: roles, the policy, and the last-admin rule', async ({ 
   await expect(page.getByRole('heading', { name: 'Members' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Save policy' })).toHaveCount(0);
 
-  await logOut(page);
+  await logOut(page, seed.users.alice.email);
 });

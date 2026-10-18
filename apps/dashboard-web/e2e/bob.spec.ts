@@ -33,5 +33,5 @@ test('bob logs in, sees Marketing editable and no Finance, edits Budget, logs ou
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Not found');
   await page.goto('/dashboard');
 
-  await logOut(page);
+  await logOut(page, seed.users.bob.email);
 });

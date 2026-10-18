@@ -1,7 +1,8 @@
 # Third-party infrastructure of the auth stack. Values come from the committed .env (insecure development
 # defaults; see its header). Zitadel's part is trimmed from Zitadel's v4 reference compose
-# (deploy/compose/docker-compose.yml in the Zitadel repository): plain HTTP only, one network, one hostname.
-# What each service is for, and the conventions around profiles and volumes, are in docker/README.md.
+# (deploy/compose/docker-compose.yml in the Zitadel repository): one network, one hostname, TLS terminated at
+# Traefik with a certificate from a development CA that the `tls` one-shot generates (ticket 17b). What each
+# service is for, and the conventions around profiles and volumes, are in docker/README.md.
 name: auth-stack
 
 services:
@@ -35,7 +36,8 @@ services:
     command: start-from-init --masterkey "${ZITADEL_MASTERKEY}"
     environment:
       ZITADEL_PORT: 8080
-      # The three settings Zitadel checks every request's Host against (docs/README.md §4.3).
+      # The three settings Zitadel checks every request's Host against (docs/README.md §4.3): the public origin is
+      # https://auth.localtest.me:8443, terminated at Traefik, so Zitadel itself speaks plain h2c behind it.
       ZITADEL_EXTERNALDOMAIN: ${ZITADEL_DOMAIN}
       ZITADEL_EXTERNALPORT: ${ZITADEL_EXTERNALPORT}
       ZITADEL_EXTERNALSECURE: ${ZITADEL_EXTERNALSECURE}
@@ -58,9 +60,9 @@ services:
 
       # Login V2 is the only login UI in v4 (docs/README.md §4.2).
       ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED: true
-      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_BASEURI: http://${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}/ui/v2/login/
-      ZITADEL_OIDC_DEFAULTLOGINURLV2: http://${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}/ui/v2/login/login?authRequest=
-      ZITADEL_OIDC_DEFAULTLOGOUTURLV2: http://${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}/ui/v2/login/logout?post_logout_redirect=
+      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_BASEURI: https://${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}/ui/v2/login/
+      ZITADEL_OIDC_DEFAULTLOGINURLV2: https://${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}/ui/v2/login/login?authRequest=
+      ZITADEL_OIDC_DEFAULTLOGOUTURLV2: https://${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}/ui/v2/login/logout?post_logout_redirect=
 
       # Short-lived tokens so the BFF's refresh path is exercised (docs/README.md §4.4).
       ZITADEL_DEFAULTINSTANCE_OIDCSETTINGS_ACCESSTOKENLIFETIME: 10m
@@ -111,13 +113,13 @@ services:
       - traefik.http.middlewares.zitadel-strip-api.stripprefix.prefixes=/api
       - traefik.http.middlewares.zitadel-strip-api.stripprefix.forceSlash=false
       - traefik.http.routers.zitadel-api-alias.rule=Host(`${ZITADEL_DOMAIN}`) && PathPrefix(`/api`)
-      - traefik.http.routers.zitadel-api-alias.entrypoints=web
+      - traefik.http.routers.zitadel-api-alias.entrypoints=websecure
       - traefik.http.routers.zitadel-api-alias.middlewares=zitadel-strip-api
       - traefik.http.routers.zitadel-api-alias.service=zitadel-api
       - traefik.http.routers.zitadel-api-alias.priority=200
       # Everything else that is not the login UI goes to the API (gRPC, Connect, REST, OIDC, the console).
       - traefik.http.routers.zitadel-canonical.rule=Host(`${ZITADEL_DOMAIN}`) && !PathPrefix(`/ui/v2/login`) && !PathPrefix(`/api`) && !Path(`/`)
-      - traefik.http.routers.zitadel-canonical.entrypoints=web
+      - traefik.http.routers.zitadel-canonical.entrypoints=websecure
       - traefik.http.routers.zitadel-canonical.service=zitadel-api
       - traefik.http.routers.zitadel-canonical.priority=100
 
@@ -130,8 +132,8 @@ services:
       NEXT_PUBLIC_BASE_PATH: /ui/v2/login
       ZITADEL_SERVICE_USER_TOKEN_FILE: /bootstrap/login-client.pat
       ZITADEL_SESSION_COOKIE_SECRET: ${LOGIN_SESSION_COOKIE_SECRET}
-      # The login container calls the API by service name but must present the public Host.
-      CUSTOM_REQUEST_HEADERS: Host:${ZITADEL_DOMAIN},X-Forwarded-Proto:http
+      # The login container calls the API by service name but must present the public Host and scheme.
+      CUSTOM_REQUEST_HEADERS: Host:${ZITADEL_DOMAIN},X-Forwarded-Proto:https
     healthcheck:
       test:
         [
@@ -158,14 +160,28 @@ services:
       # The bare root of the hostname lands on the login UI.
       - traefik.http.middlewares.zitadel-root-rewrite.replacepath.path=/ui/v2/login/
       - traefik.http.routers.zitadel-root.rule=Host(`${ZITADEL_DOMAIN}`) && Path(`/`)
-      - traefik.http.routers.zitadel-root.entrypoints=web
+      - traefik.http.routers.zitadel-root.entrypoints=websecure
       - traefik.http.routers.zitadel-root.middlewares=zitadel-root-rewrite
       - traefik.http.routers.zitadel-root.service=zitadel-login
       - traefik.http.routers.zitadel-root.priority=400
       - traefik.http.routers.zitadel-login.rule=Host(`${ZITADEL_DOMAIN}`) && PathPrefix(`/ui/v2/login`)
-      - traefik.http.routers.zitadel-login.entrypoints=web
+      - traefik.http.routers.zitadel-login.entrypoints=websecure
       - traefik.http.routers.zitadel-login.service=zitadel-login
       - traefik.http.routers.zitadel-login.priority=250
+
+  # One-shot (ticket 17b): the development CA and Zitadel's certificate in ./.local/tls, created when absent, plus
+  # the dynamic configuration Traefik reads them from (docker/tls/generate.sh). Idempotent; exits 0 at once when
+  # the files exist. `proxy` depends on it, which is what lets `up --wait` accept its exit (docker/README.md).
+  tls:
+    image: ${OPENSSL_IMAGE}
+    entrypoint: ['/bin/sh', '/generate.sh']
+    environment:
+      TLS_HOSTNAME: ${ZITADEL_DOMAIN}
+    volumes:
+      - ./docker/tls/generate.sh:/generate.sh:ro
+      - ./.local/tls:/tls
+    networks:
+      - auth-stack
 
   proxy:
     image: ${TRAEFIK_IMAGE}
@@ -174,16 +190,26 @@ services:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
       - --providers.docker.network=auth-stack
-      - --entrypoints.web.address=:80
+      # The certificate, from the directory the tls one-shot writes; watched, so a Traefik that started before the
+      # files existed (Tilt starts services as soon as their container runs) loads them when they appear.
+      - --providers.file.directory=/tls
+      - --providers.file.watch=true
+      # TLS on the one public entrypoint; every router of the Zitadel services is on it. No plain entrypoint is
+      # published, so there is one origin and one issuer: https://auth.localtest.me:8443.
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls=true
+      # Health check only, not published: the healthcheck subcommand speaks plain HTTP.
+      - --entrypoints.ping.address=:8082
       - --api.dashboard=false
       - --ping=true
-      - --ping.entrypoint=web
+      - --ping.entrypoint=ping
       - --log.level=INFO
     ports:
-      # The one public port of Zitadel: http://auth.localtest.me:8080
-      - '${ZITADEL_EXTERNALPORT}:80'
+      # The one public port of Zitadel: https://auth.localtest.me:8443
+      - '${ZITADEL_EXTERNALPORT}:443'
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./.local/tls:/tls:ro
     healthcheck:
       # The healthcheck subcommand is a separate process and does not see the flags above, so it gets its own.
       test:
@@ -191,8 +217,8 @@ services:
         - traefik
         - healthcheck
         - --ping
-        - --ping.entrypoint=web
-        - --entrypoints.web.address=:80
+        - --ping.entrypoint=ping
+        - --entrypoints.ping.address=:8082
       interval: 5s
       timeout: 5s
       retries: 12
@@ -200,6 +226,8 @@ services:
     networks:
       - auth-stack
     depends_on:
+      tls:
+        condition: service_completed_successfully
       zitadel-api:
         condition: service_healthy
       zitadel-login:
@@ -296,7 +324,9 @@ services:
     user: '0'
     environment:
       # Same Zitadel URL as the browser (docs/README.md §4.3, option (a)), so the issuer it writes is the public one.
-      ZITADEL_URL: http://${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}
+      ZITADEL_URL: https://${ZITADEL_DOMAIN}:${ZITADEL_EXTERNALPORT}
+      # Node trusts the development CA that signed Zitadel's certificate (ticket 17b).
+      NODE_EXTRA_CA_CERTS: /tls/ca.crt
       ZITADEL_PAT_FILE: /bootstrap/bootstrap.pat
       CONFIG_DIR: /config
       DASHBOARD_WEB_URL: ${DASHBOARD_WEB_URL}
@@ -315,6 +345,7 @@ services:
     volumes:
       - zitadel-bootstrap:/bootstrap:ro
       - ./.local/config:/config
+      - ./.local/tls:/tls:ro
     networks:
       - auth-stack
     depends_on:
@@ -343,18 +374,22 @@ services:
       # OIDC application, APP_URL, and TENANCY_API_URL come from the handoff file the entrypoint sources.
       SESSION_SECRET: ${SESSION_SECRET}
       REDIS_URL: ${REDIS_URL}
+      # Node trusts the development CA that signed Zitadel's certificate (ticket 17b).
+      NODE_EXTRA_CA_CERTS: /tls/ca.crt
       # The documents domain runs in this process during phase 1 (docs/README.md §6.5): its database and SpiceDB.
       DOCUMENTS_DATABASE_URL: ${DOCUMENTS_DATABASE_URL}
       SPICEDB_ENDPOINT: spicedb:50051
       SPICEDB_PRESHARED_KEY: ${SPICEDB_PRESHARED_KEY}
       SPICEDB_INSECURE: ${SPICEDB_INSECURE}
     # Same Zitadel URL as the browser (docs/README.md §4.3, option (a)): the hostname maps to the host, where
-    # Traefik publishes port 8080.
+    # Traefik publishes port 8443.
     extra_hosts:
       - auth.localtest.me:host-gateway
     volumes:
       # Generated configuration (OIDC client ID and issuer), written by the bootstrap container.
       - ./.local/config:/config:ro
+      # The development CA (ca.crt is the one file read; the keys are root-only).
+      - ./.local/tls:/tls:ro
     healthcheck:
       test: ['CMD', 'wget', '--quiet', '--spider', 'http://127.0.0.1:3000/']
       interval: 5s
@@ -396,12 +431,14 @@ services:
       # handoff file the entrypoint sources.
       SESSION_SECRET: ${SESSION_SECRET}
       REDIS_URL: ${REDIS_URL}
+      NODE_EXTRA_CA_CERTS: /tls/ca.crt
     # Same Zitadel URL as the browser (docs/README.md §4.3, option (a)).
     extra_hosts:
       - auth.localtest.me:host-gateway
     volumes:
       # Generated configuration (OIDC client ID and issuer), written by the bootstrap container.
       - ./.local/config:/config:ro
+      - ./.local/tls:/tls:ro
     healthcheck:
       test: ['CMD', 'wget', '--quiet', '--spider', 'http://127.0.0.1:3001/']
       interval: 5s
@@ -434,12 +471,14 @@ services:
       SPICEDB_ENDPOINT: spicedb:50051
       SPICEDB_PRESHARED_KEY: ${SPICEDB_PRESHARED_KEY}
       SPICEDB_INSECURE: ${SPICEDB_INSECURE}
+      NODE_EXTRA_CA_CERTS: /tls/ca.crt
     # The JWKS and userinfo URLs are the public issuer's (docs/README.md §4.3, option (a)).
     extra_hosts:
       - auth.localtest.me:host-gateway
     volumes:
       # Generated configuration (issuer, project ID, JWKS and userinfo URLs), written by the bootstrap container.
       - ./.local/config:/config:ro
+      - ./.local/tls:/tls:ro
     healthcheck:
       test: ['CMD', 'wget', '--quiet', '--spider', 'http://127.0.0.1:4001/health']
       interval: 5s
@@ -474,12 +513,14 @@ services:
       SPICEDB_PRESHARED_KEY: ${SPICEDB_PRESHARED_KEY}
       SPICEDB_INSECURE: ${SPICEDB_INSECURE}
       TENANCY_API_URL: ${TENANCY_API_URL}
+      NODE_EXTRA_CA_CERTS: /tls/ca.crt
     # The JWKS URL is the public issuer's (docs/README.md §4.3, option (a)).
     extra_hosts:
       - auth.localtest.me:host-gateway
     volumes:
       # Generated configuration (issuer, project ID, JWKS URL), written by the bootstrap container.
       - ./.local/config:/config:ro
+      - ./.local/tls:/tls:ro
     healthcheck:
       test: ['CMD', 'wget', '--quiet', '--spider', 'http://127.0.0.1:4002/health']
       interval: 5s

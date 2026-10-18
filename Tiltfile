@@ -14,9 +14,13 @@ docker_compose('./docker-compose.yml', project_name='auth-stack', profiles=[])
 for name in ['postgres', 'redis', 'spicedb-migrate', 'spicedb']:
     dc_resource(name, labels=['infra'])
 dc_resource('mailpit', labels=['infra'], links=['http://localhost:8025'])
-for name in ['zitadel-api', 'zitadel-login']:
+for name in ['tls', 'zitadel-api', 'zitadel-login']:
     dc_resource(name, labels=['zitadel'])
-dc_resource('proxy', labels=['zitadel'], links=['http://auth.localtest.me:8080'])
+dc_resource('proxy', labels=['zitadel'], links=['https://auth.localtest.me:8443'])
+
+# The development CA the tls one-shot wrote (ticket 17b): every host-run process that calls Zitadel trusts it.
+# Node reads the variable at start, so it is exported before the dev server, with an absolute path.
+DEV_CA = os.path.abspath('.local/tls/ca.crt')
 
 # The workspace install, re-run when a pulled commit changed the dependencies: CI enforces a frozen lockfile, so
 # every dependency change that reaches main changes pnpm-lock.yaml. The host-run apps depend on it; bootstrap
@@ -49,7 +53,7 @@ local_resource(
         'packages/documents/src',
         'packages/documents/migrations',
     ],
-    resource_deps=['proxy', 'spicedb', 'postgres'],
+    resource_deps=['tls', 'proxy', 'spicedb', 'postgres'],
     labels=['apps'],
 )
 
@@ -78,12 +82,15 @@ def host_app(name, url, port, env={}, config=None, path='/', deps=[]):
 
     The serve command sources ./.local/config/<config>.env (the file bootstrap wrote for the app, <name>.env by
     default; apis.env for an API), the way the app's docker-entrypoint.sh does, then exports `env` (the keys the
-    app's compose service gets, with host-side values), which therefore win over the file's: the file names the
-    compose-network hosts (TENANCY_API_URL), and on the host they are replaced. The file is read when the process
-    starts, after bootstrap, so a fresh clone needs no Tiltfile reload. `deps` names the other apps this one
-    calls, the way its compose service's depends_on does.
+    app's compose service gets, with host-side values) and NODE_EXTRA_CA_CERTS (the development CA, as the
+    compose service gets it), which therefore win over the file's: the file names the compose-network hosts
+    (TENANCY_API_URL), and on the host they are replaced. The file is read when the process starts, after
+    bootstrap, so a fresh clone needs no Tiltfile reload. `deps` names the other apps this one calls, the way
+    its compose service's depends_on does.
     """
-    exports = ''.join(["export %s='%s'; " % (key, value) for key, value in env.items()])
+    exports = ''.join(
+        ["export %s='%s'; " % (key, value) for key, value in dict(env, NODE_EXTRA_CA_CERTS=DEV_CA).items()]
+    )
     local_resource(
         name,
         serve_cmd='set -a; . ./.local/config/%s.env; set +a; %sexec pnpm --filter %s dev' % (config or name, exports, name),
