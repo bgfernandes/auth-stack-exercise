@@ -196,14 +196,14 @@ describe('bearerOptionsFromEnv', () => {
   it('reads the three values of apis.env and fails on a missing one', () => {
     expect(
       bearerOptionsFromEnv({
-        OIDC_ISSUER: 'http://auth.localtest.me:8080',
+        OIDC_ISSUER: 'https://auth.localtest.me:8443',
         OIDC_PROJECT_ID: 'p',
-        OIDC_JWKS_URL: 'http://auth.localtest.me:8080/oauth/v2/keys',
+        OIDC_JWKS_URL: 'https://auth.localtest.me:8443/oauth/v2/keys',
       }),
     ).toEqual({
-      issuer: 'http://auth.localtest.me:8080',
+      issuer: 'https://auth.localtest.me:8443',
       audience: 'p',
-      jwksUrl: 'http://auth.localtest.me:8080/oauth/v2/keys',
+      jwksUrl: 'https://auth.localtest.me:8443/oauth/v2/keys',
     });
     expect(() => bearerOptionsFromEnv({ OIDC_ISSUER: 'x', OIDC_JWKS_URL: 'y' })).toThrow(
       'OIDC_PROJECT_ID',

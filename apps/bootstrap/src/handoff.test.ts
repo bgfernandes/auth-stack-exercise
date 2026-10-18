@@ -7,9 +7,9 @@ import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { apisEnv, renderEnvFile, webAppEnv, writeHandoff, type Handoff } from './handoff';
 
 const handoff: Handoff = {
-  issuer: 'http://auth.localtest.me:8080',
-  jwksUrl: 'http://auth.localtest.me:8080/oauth/v2/keys',
-  userinfoUrl: 'http://auth.localtest.me:8080/oidc/v1/userinfo',
+  issuer: 'https://auth.localtest.me:8443',
+  jwksUrl: 'https://auth.localtest.me:8443/oauth/v2/keys',
+  userinfoUrl: 'https://auth.localtest.me:8443/oidc/v1/userinfo',
   projectId: '123',
   dashboardWeb: { clientId: '456', url: 'http://dashboard.localtest.me:3000' },
   tenancyWeb: { clientId: '457', url: 'http://tenancy.localtest.me:3001' },
@@ -39,7 +39,7 @@ describe('renderEnvFile', () => {
 describe('env files', () => {
   it("builds each BFF's redirect URIs from its public URL", () => {
     expect(webAppEnv(handoff.dashboardWeb, handoff)).toEqual({
-      OIDC_ISSUER: 'http://auth.localtest.me:8080',
+      OIDC_ISSUER: 'https://auth.localtest.me:8443',
       OIDC_CLIENT_ID: '456',
       OIDC_REDIRECT_URI: 'http://dashboard.localtest.me:3000/auth/callback',
       OIDC_POST_LOGOUT_REDIRECT_URI: 'http://dashboard.localtest.me:3000/',
@@ -55,10 +55,10 @@ describe('env files', () => {
 
   it('gives the APIs the issuer, the project ID as audience, the JWKS URL, and the userinfo URL', () => {
     expect(apisEnv(handoff)).toEqual({
-      OIDC_ISSUER: 'http://auth.localtest.me:8080',
+      OIDC_ISSUER: 'https://auth.localtest.me:8443',
       OIDC_PROJECT_ID: '123',
-      OIDC_JWKS_URL: 'http://auth.localtest.me:8080/oauth/v2/keys',
-      OIDC_USERINFO_URL: 'http://auth.localtest.me:8080/oidc/v1/userinfo',
+      OIDC_JWKS_URL: 'https://auth.localtest.me:8443/oauth/v2/keys',
+      OIDC_USERINFO_URL: 'https://auth.localtest.me:8443/oidc/v1/userinfo',
     });
   });
 });

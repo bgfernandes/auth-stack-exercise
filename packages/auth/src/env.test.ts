@@ -3,7 +3,7 @@ import { describe, expect, it } from '@jest/globals';
 import { authOptionsFromEnv } from './env';
 
 const env = {
-  OIDC_ISSUER: 'http://auth.localtest.me:8080',
+  OIDC_ISSUER: 'https://auth.localtest.me:8443',
   OIDC_CLIENT_ID: 'client-1',
   OIDC_REDIRECT_URI: 'http://dashboard.localtest.me:3000/auth/callback',
   OIDC_POST_LOGOUT_REDIRECT_URI: 'http://dashboard.localtest.me:3000/',

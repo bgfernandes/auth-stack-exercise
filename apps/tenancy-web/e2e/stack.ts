@@ -59,13 +59,19 @@ export async function logIn(page: Page, email: string, password: string): Promis
   await page.waitForURL('/organizations');
 }
 
-/** Logs out with the header's form and proves the session ended: the list is behind the login again. */
-export async function logOut(page: Page): Promise<void> {
+/**
+ * Logs out with the header's form and proves both sessions ended: the list is behind the login again, and
+ * Zitadel asks for the password rather than signing the user in silently. Its login UI lists the browser's
+ * sessions as accounts to pick, the ended one included; choosing it leads to the password form (as in
+ * apps/dashboard-web/e2e/stack.ts).
+ */
+export async function logOut(page: Page, email: string): Promise<void> {
   const header = page.getByRole('navigation');
   await header.getByRole('button', { name: 'Log out' }).click();
   await expect(header.getByRole('link', { name: 'Log in' })).toBeVisible();
   await page.goto('/organizations');
-  await expect(page.getByLabel('Loginname')).toBeVisible();
+  await page.getByRole('button', { name: email }).click();
+  await expect(page.getByLabel('Password')).toBeVisible();
 }
 
 export interface MemberRow {
