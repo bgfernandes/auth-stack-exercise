@@ -10,3 +10,6 @@ globs:
 ignores:
   - node_modules
   - '**/node_modules'
+  # Playwright writes an error-context.md per failed test and the HTML report's data under these.
+  - '**/test-results'
+  - '**/playwright-report'

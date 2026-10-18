@@ -20,7 +20,7 @@ Checks, which are the same ones CI runs:
 pnpm lint          # ESLint plus markdownlint
 pnpm format:check  # Prettier (pnpm format rewrites)
 pnpm type-check    # tsc --noEmit in every package
-pnpm test          # unit tests (Jest); test:integration needs the stack running (either way below) and is run by CI
+pnpm test          # unit tests (Jest), nothing running; the integration and end-to-end suites are under "Tests" below
 pnpm authz:validate  # zed validate on packages/authz/schema.zed, in a container; needs Docker, not the stack
 ```
 
@@ -42,6 +42,16 @@ tilt down              # after stopping tilt up: removes the containers, keeps t
 ```
 
 With either stack running, `pnpm db:migrate` applies every package's pending database migrations from the host (`packages/*/migrations`); bootstrap applies the same ones at every start, so this is for iterating on a schema without re-running it.
+
+**Tests**, three suites, each named after what it needs running. CI runs all three (`.github/workflows/ci.yml`: `checks`, `integration`, `e2e`):
+
+```sh
+pnpm test                              # unit (Jest): nothing running
+pnpm test:integration                  # integration (Jest, the *.integration.test.ts files): either stack above running; the tests reach the compose Postgres, SpiceDB, and Redis from the host with the defaults of .env; the two packages that own a database (tenancy, documents) each create and drop their own (it_<package>)
+pnpm exec playwright install chromium  # once per Playwright version: the browser the end-to-end suite drives
+pnpm test:e2e                          # end-to-end (Playwright, apps/dashboard-web/e2e): the apps running (compose with the apps profile, or Tilt); logs in as each seeded user through Zitadel's login page, checks the dashboard against the table below, edits one document and puts it back, logs out, and replays the forbidden POST; leaves the seeded values as they were
+pnpm exec playwright show-report apps/dashboard-web/playwright-report  # after a failure: the report, with the trace of every failed test (CI uploads the same as an artifact)
+```
 
 Bootstrap is idempotent: every `up` and every `tilt up` re-runs it, a second run creates nothing, and a changed application setting is updated in place. The seeded users (password `Password1!`, emails verified, no Mailpit step needed) and what each sees on the dashboard, from the Acme organization with its Marketing project ("Launch plan", "Budget") and Finance project ("Payroll"):
 

@@ -8,8 +8,11 @@ dist/
 .next/
 **/.next/
 coverage/
-playwright-report/
-test-results/
+**/playwright-report/
+**/test-results/
+# The end-to-end suite runs from the host against the images; the app's tsconfig would otherwise type-check it in the build.
+**/e2e/
+**/playwright.config.ts
 .local/
 docs/
 *.md
