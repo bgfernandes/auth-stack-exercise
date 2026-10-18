@@ -112,6 +112,18 @@ host_app(
     deps=['tenancy-api'],
 )
 host_app(
+    'tenancy-web',
+    'http://tenancy.localtest.me:3001',
+    3001,
+    {
+        'TENANCY_API_URL': 'http://localhost:4001',
+        'SESSION_SECRET': STACK_ENV['SESSION_SECRET'],
+        'REDIS_URL': 'redis://localhost:6379',
+    },
+    # Every page is a call to tenancy-api (ticket 17); in compose, tenancy-web depends on it the same way.
+    deps=['tenancy-api'],
+)
+host_app(
     'tenancy-api',
     'http://localhost:4001/health',
     4001,

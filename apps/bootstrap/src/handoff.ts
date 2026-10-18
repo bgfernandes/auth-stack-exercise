@@ -1,6 +1,6 @@
 /**
  * The configuration bootstrap hands to the apps through the shared /config directory (docs/README.md §4.2):
- * one env file per app (sourced by the container entrypoint or loaded by Tilt), one for every API, and
+ * one env file per BFF (sourced by the container entrypoint or loaded by Tilt), one for every API, and
  * seed.json with the seeded users' Zitadel IDs and the IDs of the §6.3 scenario, for the end-to-end tests.
  */
 import { mkdir, rename, writeFile } from 'node:fs/promises';
@@ -8,25 +8,33 @@ import path from 'node:path';
 
 import { type Scenario } from './seed';
 
+/** What a BFF's env file is made of: the client ID Zitadel generated and the public URL it was registered with. */
+export interface WebApp {
+  clientId: string;
+  url: string;
+}
+
 export interface Handoff {
   issuer: string;
   jwksUrl: string;
   userinfoUrl: string;
   projectId: string;
-  dashboardWeb: { clientId: string; url: string };
+  dashboardWeb: WebApp;
+  tenancyWeb: WebApp;
   tenancyApiUrl: string;
   users: Record<string, { id: string; email: string }>;
   scenario: Scenario;
 }
 
-export function dashboardWebEnv(handoff: Handoff): Record<string, string> {
+/** The env contract of `packages/auth` (ticket 8) plus where the BFF reaches tenancy-api; one file per BFF. */
+export function webAppEnv(app: WebApp, handoff: Handoff): Record<string, string> {
   return {
     OIDC_ISSUER: handoff.issuer,
-    OIDC_CLIENT_ID: handoff.dashboardWeb.clientId,
-    OIDC_REDIRECT_URI: `${handoff.dashboardWeb.url}/auth/callback`,
-    OIDC_POST_LOGOUT_REDIRECT_URI: `${handoff.dashboardWeb.url}/`,
+    OIDC_CLIENT_ID: app.clientId,
+    OIDC_REDIRECT_URI: `${app.url}/auth/callback`,
+    OIDC_POST_LOGOUT_REDIRECT_URI: `${app.url}/`,
     // The app's public URL, for packages/auth: cookie attributes and the same-origin check (ticket 8).
-    APP_URL: handoff.dashboardWeb.url,
+    APP_URL: app.url,
     TENANCY_API_URL: handoff.tenancyApiUrl,
   };
 }
@@ -60,7 +68,8 @@ export function renderEnvFile(values: Record<string, string>): string {
 export async function writeHandoff(dir: string, handoff: Handoff): Promise<string[]> {
   await mkdir(dir, { recursive: true });
   const files: Record<string, string> = {
-    'dashboard-web.env': renderEnvFile(dashboardWebEnv(handoff)),
+    'dashboard-web.env': renderEnvFile(webAppEnv(handoff.dashboardWeb, handoff)),
+    'tenancy-web.env': renderEnvFile(webAppEnv(handoff.tenancyWeb, handoff)),
     'apis.env': renderEnvFile(apisEnv(handoff)),
     'seed.json': `${JSON.stringify({ users: handoff.users, ...handoff.scenario }, null, 2)}\n`,
   };

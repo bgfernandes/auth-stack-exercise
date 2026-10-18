@@ -94,6 +94,7 @@ services:
     # published port (back-channel logout, docs/README.md §4.4). One entry per app hostname.
     extra_hosts:
       - dashboard.localtest.me:host-gateway
+      - tenancy.localtest.me:host-gateway
     volumes:
       - zitadel-bootstrap:/bootstrap:rw
     networks:
@@ -299,6 +300,7 @@ services:
       ZITADEL_PAT_FILE: /bootstrap/bootstrap.pat
       CONFIG_DIR: /config
       DASHBOARD_WEB_URL: ${DASHBOARD_WEB_URL}
+      TENANCY_WEB_URL: ${TENANCY_WEB_URL}
       TENANCY_API_URL: ${TENANCY_API_URL}
       SEED_USER_PASSWORD: ${SEED_USER_PASSWORD}
       # SpiceDB, for the schema write (ticket 6) and the seeded relationships (ticket 12).
@@ -370,6 +372,48 @@ services:
       postgres:
         condition: service_healthy
       spicedb:
+        condition: service_healthy
+      tenancy-api:
+        condition: service_healthy
+
+  # The second client (ticket 17): organizations, members, and policy over tenancy-api, with its own OIDC
+  # application and session cookie; what proves single sign-on and sign-out between two BFFs (ticket 20). No
+  # database and no SpiceDB: tenancy-api holds both.
+  tenancy-web:
+    profiles:
+      - apps
+    build:
+      context: .
+      dockerfile: apps/tenancy-web/Dockerfile
+    image: auth-stack/tenancy-web:dev
+    restart: unless-stopped
+    ports:
+      # http://tenancy.localtest.me:3001 (one hostname per app; see docker/README.md)
+      - '3001:3001'
+    environment:
+      # The BFF session (packages/auth): the key of the login stash cookie and the session store, shared with
+      # dashboard-web under a prefix of its own. The OIDC application, APP_URL, and TENANCY_API_URL come from the
+      # handoff file the entrypoint sources.
+      SESSION_SECRET: ${SESSION_SECRET}
+      REDIS_URL: ${REDIS_URL}
+    # Same Zitadel URL as the browser (docs/README.md §4.3, option (a)).
+    extra_hosts:
+      - auth.localtest.me:host-gateway
+    volumes:
+      # Generated configuration (OIDC client ID and issuer), written by the bootstrap container.
+      - ./.local/config:/config:ro
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--spider', 'http://127.0.0.1:3001/']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    networks:
+      - auth-stack
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      redis:
         condition: service_healthy
       tenancy-api:
         condition: service_healthy
