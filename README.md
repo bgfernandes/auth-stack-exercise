@@ -24,13 +24,13 @@ pnpm test          # unit tests (Jest); test:integration needs the stack running
 pnpm authz:validate  # zed validate on packages/authz/schema.zed, in a container; needs Docker, not the stack
 ```
 
-The stack is Docker Compose with committed development defaults in `.env` (insecure by design, local use only): Postgres, Zitadel with its login UI behind Traefik, SpiceDB, Redis, Mailpit, and the bootstrap container, which writes the SpiceDB schema, runs the service packages' database migrations (the packages own them; bootstrap only executes them, because the apps start after it), configures Zitadel (project, OIDC application, API application, seeded users), grants the first-party client its API scopes in SpiceDB, writes the apps' configuration to `.local/config/` (gitignored), and exits. There are two ways to run the project, and they share port 3000, so run one at a time.
+The stack is Docker Compose with committed development defaults in `.env` (insecure by design, local use only): Postgres, Zitadel with its login UI behind Traefik, SpiceDB, Redis, Mailpit, and the bootstrap container, which writes the SpiceDB schema, runs the service packages' database migrations (the packages own them; bootstrap only executes them, because the apps start after it), configures Zitadel (project, OIDC application, API application, seeded users), grants the first-party client its API scopes in SpiceDB, seeds the Acme scenario below into the tenancy and documents databases and SpiceDB, writes the apps' configuration to `.local/config/` (gitignored), and exits. There are two ways to run the project, and they share port 3000, so run one at a time.
 
 **Everything in compose**, the way to review the project. No setup step and no Node needed; the app images and the bootstrap image are built locally:
 
 ```sh
 docker compose --profile apps up -d --wait --build   # about a minute from a clean state, plus the image builds; returns when every service is healthy
-docker compose logs bootstrap                        # one JSON line per object (created, exists, updated, or unchanged) and per migrated database
+docker compose logs bootstrap                        # one JSON line per object (created, exists, updated, or unchanged), per migrated database, and per seeded domain
 docker compose --profile apps down -v                # stop and wipe the volumes (fresh Zitadel instance and databases on the next up)
 ```
 
@@ -43,13 +43,15 @@ tilt down              # after stopping tilt up: removes the containers, keeps t
 
 With either stack running, `pnpm db:migrate` applies every package's pending database migrations from the host (`packages/*/migrations`); bootstrap applies the same ones at every start, so this is for iterating on a schema without re-running it.
 
-Bootstrap is idempotent: every `up` and every `tilt up` re-runs it, a second run creates nothing, and a changed application setting is updated in place. The seeded users (password `Password1!`, emails verified, no Mailpit step needed):
+Bootstrap is idempotent: every `up` and every `tilt up` re-runs it, a second run creates nothing, and a changed application setting is updated in place. The seeded users (password `Password1!`, emails verified, no Mailpit step needed) and what each sees on the dashboard, from the Acme organization with its Marketing project ("Launch plan", "Budget") and Finance project ("Payroll"):
 
-| User | Role in the seeded scenario (from ticket 12) |
-| --- | --- |
-| `alice@example.com` | Acme admin: every document editable |
-| `bob@example.com` | Acme member, Marketing editor |
-| `carol@example.com` | Acme member, Marketing viewer, one document shared directly (the reviewer's user) |
+| User | Role in the seeded scenario | Dashboard |
+| --- | --- | --- |
+| `alice@example.com` | Acme admin | Every Acme document, all editable |
+| `bob@example.com` | Acme member, Marketing editor | Marketing documents editable; Finance absent |
+| `carol@example.com` | Acme member, Marketing viewer, "Launch plan" shared to her directly (the reviewer's user) | "Launch plan" editable, "Budget" read-only, Finance absent |
+
+Each user also gets a personal workspace (a "Personal" organization and project with a "Welcome" document) on first login. The seeded rows have fixed IDs, listed with the users' Zitadel IDs in `.local/config/seed.json`; a re-run of bootstrap creates nothing, keeps every edited value, and puts the seeded roles and shares back, so the scenario survives an edit session and a removed share alike.
 
 | What | Where |
 | --- | --- |
