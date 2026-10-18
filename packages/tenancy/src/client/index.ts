@@ -8,6 +8,15 @@ import { type Policy } from './policy';
 
 export { parsePolicy, policySchema, type Policy } from './policy';
 
+/**
+ * The scope vocabulary of `tenancy-api` (docs/README.md §6.7): what its routes require and what bootstrap grants
+ * to every first-party client that calls it.
+ */
+export const TENANCY_API_SCOPES = {
+  read: 'tenancy:read',
+  write: 'tenancy:write',
+} as const;
+
 /** The user a BFF or domain acts for: the `sub` of the session and the access token it forwards to the APIs. */
 export interface UserContext {
   sub: string;

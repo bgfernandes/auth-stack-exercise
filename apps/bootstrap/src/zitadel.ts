@@ -25,6 +25,21 @@ export interface OidcApp {
   config: Partial<OidcAppConfig>;
 }
 
+/**
+ * An API application (a resource server) in the project: its client ID joins the `aud` of every token the
+ * project issues (docs/README.md §4.2). Private-key JWT as the auth method means no client secret exists; the
+ * APIs of this stack never authenticate to Zitadel themselves in phase 1 (§6.6: calls with no user are phase 3).
+ */
+export interface ApiAppConfig {
+  authMethodType: string;
+}
+
+export interface ApiApp {
+  appId: string;
+  clientId: string;
+  config: Partial<ApiAppConfig>;
+}
+
 export interface NewHumanUser {
   username: string;
   email: string;
@@ -39,6 +54,9 @@ export interface ZitadelApi {
   findOidcAppByName(projectId: string, name: string): Promise<OidcApp | undefined>;
   createOidcApp(projectId: string, name: string, config: OidcAppConfig): Promise<OidcApp>;
   updateOidcAppConfig(projectId: string, appId: string, config: OidcAppConfig): Promise<void>;
+  findApiAppByName(projectId: string, name: string): Promise<ApiApp | undefined>;
+  createApiApp(projectId: string, name: string, config: ApiAppConfig): Promise<ApiApp>;
+  updateApiAppConfig(projectId: string, appId: string, config: ApiAppConfig): Promise<void>;
   findUserByUsername(username: string): Promise<{ id: string } | undefined>;
   createHumanUser(user: NewHumanUser): Promise<{ id: string }>;
 }
@@ -77,6 +95,25 @@ export async function ensureOidcApp(
   return { appId: existing.appId, clientId: existing.clientId, action: 'updated' };
 }
 
+/** Find-or-create by name, reconciling the auth method like `ensureOidcApp` reconciles the OIDC settings. */
+export async function ensureApiApp(
+  api: ZitadelApi,
+  projectId: string,
+  name: string,
+  desired: ApiAppConfig,
+): Promise<{ appId: string; clientId: string; action: EnsureAction }> {
+  const existing = await api.findApiAppByName(projectId, name);
+  if (!existing) {
+    const created = await api.createApiApp(projectId, name, desired);
+    return { appId: created.appId, clientId: created.clientId, action: 'created' };
+  }
+  if ((existing.config.authMethodType ?? API_AUTH_METHOD_ZERO_VALUE) === desired.authMethodType) {
+    return { appId: existing.appId, clientId: existing.clientId, action: 'unchanged' };
+  }
+  await api.updateApiAppConfig(projectId, existing.appId, desired);
+  return { appId: existing.appId, clientId: existing.clientId, action: 'updated' };
+}
+
 export async function ensureHumanUser(
   api: ZitadelApi,
   user: NewHumanUser,
@@ -89,6 +126,8 @@ export async function ensureHumanUser(
 
 // The API omits fields that hold their protobuf zero value (an unset enum, false, an empty string or list),
 // so a missing field compares as that zero value rather than as "different".
+const API_AUTH_METHOD_ZERO_VALUE = 'API_AUTH_METHOD_TYPE_BASIC';
+
 const ENUM_ZERO_VALUES: Record<string, string> = {
   appType: 'OIDC_APP_TYPE_WEB',
   authMethodType: 'OIDC_AUTH_METHOD_TYPE_BASIC',
@@ -178,6 +217,32 @@ export class ZitadelClient implements ZitadelApi {
     );
   }
 
+  async findApiAppByName(projectId: string, name: string): Promise<ApiApp | undefined> {
+    const body = await this.call<{
+      result?: { id: string; apiConfig?: Partial<ApiAppConfig> & { clientId: string } }[];
+    }>('POST', `/management/v1/projects/${projectId}/apps/_search`, {
+      queries: [{ nameQuery: { name, method: EQUALS } }],
+    });
+    const app = body.result?.[0];
+    if (!app?.apiConfig) return undefined;
+    const { clientId, ...config } = app.apiConfig;
+    return { appId: app.id, clientId, config };
+  }
+
+  async createApiApp(projectId: string, name: string, config: ApiAppConfig): Promise<ApiApp> {
+    // The response carries a client secret only for the basic auth method, which this stack never requests.
+    const body = await this.call<{ appId: string; clientId: string }>(
+      'POST',
+      `/management/v1/projects/${projectId}/apps/api`,
+      { name, ...config },
+    );
+    return { appId: body.appId, clientId: body.clientId, config };
+  }
+
+  async updateApiAppConfig(projectId: string, appId: string, config: ApiAppConfig): Promise<void> {
+    await this.call('PUT', `/management/v1/projects/${projectId}/apps/${appId}/api_config`, config);
+  }
+
   async findUserByUsername(username: string): Promise<{ id: string } | undefined> {
     const body = await this.call<{ result?: { userId: string }[] }>('POST', '/v2/users', {
       queries: [{ userNameQuery: { userName: username, method: EQUALS } }],
@@ -240,6 +305,7 @@ export async function waitForZitadel(baseUrl: string, timeoutMs: number): Promis
 export interface Discovery {
   issuer: string;
   jwks_uri: string;
+  userinfo_endpoint: string;
 }
 
 export async function fetchDiscovery(baseUrl: string): Promise<Discovery> {

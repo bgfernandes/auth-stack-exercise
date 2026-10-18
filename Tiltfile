@@ -42,6 +42,7 @@ local_resource(
         'apps/bootstrap/package.json',
         'packages/authz/schema.zed',
         'packages/authz/src',
+        'packages/client-scopes/src',
         'packages/db-core/src',
         'packages/tenancy/src',
         'packages/tenancy/migrations',

@@ -44,6 +44,9 @@ importers:
       '@auth-stack/authz':
         specifier: workspace:*
         version: link:../../packages/authz
+      '@auth-stack/client-scopes':
+        specifier: workspace:*
+        version: link:../../packages/client-scopes
       '@auth-stack/db-core':
         specifier: workspace:*
         version: link:../../packages/db-core

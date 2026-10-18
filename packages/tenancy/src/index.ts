@@ -5,6 +5,7 @@
 export {
   parsePolicy,
   policySchema,
+  TENANCY_API_SCOPES,
   type OrganizationSummary,
   type Policy,
   type ProvisionResult,
