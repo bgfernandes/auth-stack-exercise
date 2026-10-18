@@ -68,3 +68,15 @@ td {
   border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
   border-radius: 0.25rem;
 }
+
+form label {
+  display: block;
+  font-weight: 600;
+}
+
+form input {
+  font: inherit;
+  width: 100%;
+  max-width: 40rem;
+  padding: 0.25rem 0.5rem;
+}
