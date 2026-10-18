@@ -16,8 +16,6 @@ import {
   createAuthz,
   fullyConsistent,
   ref,
-  relationship,
-  touch,
   type Authz,
 } from '@auth-stack/authz';
 import { ensureSchema } from '@auth-stack/authz/schema';
@@ -31,7 +29,7 @@ import { createInProcessTenancyClient } from './in-process-client';
 import { organizations, schema, users, type TenancySchema } from './schema';
 import { describeTenancyClientContract } from './testing/contract';
 
-import { createTenancyService, TenancyError, type TenancyService } from './index';
+import { createTenancyService, seedOrganization, TenancyError, type TenancyService } from './index';
 
 // Not process.loadEnvFile: Jest gives each test file its own copy of `process.env`, and loadEnvFile writes to the real one.
 function loadStackDefaults(): void {
@@ -77,15 +75,15 @@ afterAll(async () => {
   authz.close();
 });
 
-/** A shared organization with one admin, written the way bootstrap's seeds will (ticket 12). */
+/** A shared organization with one admin, written the way bootstrap's seeds are (ticket 12). */
 async function sharedOrganization(name: string, adminSub: string): Promise<string> {
-  const [row] = await database.db.insert(organizations).values({ name }).returning();
-  if (!row) throw new Error('insert returned no row');
-  organizationIds.add(row.id);
-  await authz.writeRelationships([
-    touch(relationship(ref('organization', row.id), 'admin', ref('user', adminSub))),
-  ]);
-  return row.id;
+  const id = randomUUID();
+  organizationIds.add(id);
+  await seedOrganization(
+    { db: database.db, authz },
+    { id, name, users: [], roles: [{ sub: adminSub, role: 'admin' }] },
+  );
+  return id;
 }
 
 describe('migrations', () => {
@@ -247,6 +245,80 @@ describe('setPolicy', () => {
     expect((await service.getOrganization(alice, acme, fullyConsistent))?.policy).toEqual({
       max_auth_age_seconds: 600,
     });
+  });
+});
+
+describe('seedOrganization', () => {
+  it('creates the mirror rows, the organization, and its roles once, and repairs the roles on every run', async () => {
+    const id = randomUUID();
+    organizationIds.add(id);
+    const seed = {
+      id,
+      name: 'Seeded',
+      users: [
+        { sub: sub('seed-alice'), email: 'seed-alice@example.com', displayName: 'Alice Adams' },
+        { sub: sub('seed-bob'), email: 'seed-bob@example.com', displayName: 'Bob Baker' },
+      ],
+      roles: [
+        { sub: sub('seed-alice'), role: 'admin' as const },
+        { sub: sub('seed-bob'), role: 'member' as const },
+      ],
+    };
+    const first = await seedOrganization({ db: database.db, authz }, seed);
+    expect(first.created).toBe(true);
+    expect(first.createdUsers).toEqual([sub('seed-alice'), sub('seed-bob')]);
+    expect(first.organization).toMatchObject({
+      id,
+      name: 'Seeded',
+      isPersonal: false,
+      ownerId: null,
+      policy: {},
+    });
+    expect(first.token).not.toBe('');
+    expect(await service.getUser(sub('seed-bob'))).toMatchObject({
+      email: 'seed-bob@example.com',
+      displayName: 'Bob Baker',
+    });
+
+    const alice = { sub: sub('seed-alice') };
+    const bob = { sub: sub('seed-bob') };
+    expect((await service.getOrganization(alice, id, fullyConsistent))?.id).toBe(id);
+    expect((await service.getOrganization(bob, id, fullyConsistent))?.id).toBe(id);
+    expect(await service.getOrganization({ sub: sub('eve') }, id, fullyConsistent)).toBeUndefined();
+    await expect(service.setMembership(bob, id, sub('eve'), 'member')).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+
+    // A rerun creates nothing and rewrites nothing a user or an admin changed, but puts the roles back.
+    await service.setPolicy(alice, id, { max_auth_age_seconds: 600 });
+    await service.setMembership(alice, id, sub('seed-bob'), null);
+    expect(await service.getOrganization(bob, id, fullyConsistent)).toBeUndefined();
+    const second = await seedOrganization(
+      { db: database.db, authz },
+      { ...seed, name: 'Renamed', users: [{ ...seed.users[1]!, displayName: 'Robert' }] },
+    );
+    expect(second.created).toBe(false);
+    expect(second.createdUsers).toEqual([]);
+    expect(second.organization).toEqual({
+      ...first.organization,
+      policy: { max_auth_age_seconds: 600 },
+    });
+    expect(second.token).not.toBe(first.token);
+    expect((await service.getUser(sub('seed-bob')))?.displayName).toBe('Bob Baker');
+    expect((await service.getOrganization(bob, id, fullyConsistent))?.id).toBe(id);
+  });
+
+  it('refuses an ID SpiceDB would not accept before writing anything', async () => {
+    const id = randomUUID();
+    await expect(
+      seedOrganization(
+        { db: database.db, authz },
+        { id, name: 'Broken', users: [], roles: [{ sub: 'has:colon', role: 'admin' }] },
+      ),
+    ).rejects.toThrow(/invalid SpiceDB object ID/);
+    expect(
+      await database.db.select().from(organizations).where(eq(organizations.id, id)),
+    ).toHaveLength(0);
   });
 });
 
