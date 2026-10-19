@@ -1,6 +1,8 @@
 # Auth Stack Exercise — Architecture & Context
 
-> **📜 Design/decision log.** This folder is the planning artifact for the project. The body is kept current: a correction rewrites the paragraph or table it affects, so that each section is accurate on its own, and the decision log (§12, append-only and chronological) records what changed and, when it matters, what the text said before; `docs/TICKETS.md` keeps per-ticket dated notes as the record of how each ticket went. The root `README.md` is the human-readable version of this document for someone running and reviewing the project, and it is kept in sync at the end of every phase.
+> **📜 Design/decision log.** This folder is the planning artifact for the project.
+>
+> The body is kept current: a correction rewrites the paragraph or table it affects, so that each section is accurate on its own, and the decision log (§12, append-only and chronological) records what changed and, when it matters, what the text said before; `docs/TICKETS.md` keeps per-ticket dated notes as the record of how each ticket went. The root `README.md` is the human-readable version of this document for someone running and reviewing the project, and it is kept in sync at the end of every phase.
 
 > **Read this first.** This document is the shared context for every ticket and PR in this repository (`docs/TICKETS.md`). It captures the problem, the architecture, the authorization model, the consistency model, the deployment shape, the security posture, and the phase plan, so any ticket can be picked up without re-deriving context.
 
