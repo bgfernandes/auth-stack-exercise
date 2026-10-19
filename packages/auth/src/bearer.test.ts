@@ -30,7 +30,10 @@ describe('createBearerVerifier', () => {
   let op: FakeOp;
   let verifier: BearerVerifier;
   const now = () => Math.floor(Date.now() / 1000);
-  const accessToken = (overrides: Record<string, unknown> = {}, header: { typ?: string } = {}) =>
+  const accessToken = (
+    overrides: Record<string, unknown> = {},
+    header: { typ?: string; alg?: 'RS256' | 'ES256' } = {},
+  ) =>
     op.sign(
       {
         iss: op.issuer,
@@ -93,9 +96,18 @@ describe('createBearerVerifier', () => {
     expect((await refused(verifier.verify(`Bearer ${foreign}`))).code).toBe('invalid_token');
   });
 
-  it('refuses an expired token, another issuer, and an audience without the project', async () => {
+  it('refuses a token signed with another algorithm, even with its key in the JWKS', async () => {
+    const error = await refused(
+      verifier.verify(`Bearer ${await accessToken({}, { alg: 'ES256' })}`),
+    );
+    expect(error.code).toBe('invalid_token');
+    expect((error.cause as { code?: string }).code).toBe('ERR_JOSE_ALG_NOT_ALLOWED');
+  });
+
+  it('refuses an expired token, one without exp, another issuer, and an audience without the project', async () => {
     for (const overrides of [
       { exp: now() - 60 },
+      { exp: undefined },
       { iss: 'https://other.test' },
       { aud: CLIENT },
       { aud: ['other-project'] },

@@ -66,8 +66,15 @@ export interface FakeOp {
   readonly revocations: { token: string; tokenTypeHint: string | null }[];
   /** Every revocation request from now on is answered with `status` (RFC 7009 §2.2.1: a server error). */
   refuseRevocation(status?: number): void;
-  /** Signs arbitrary claims with the OP's key (tickets 15 and 18 build bearer and logout tokens with it); `typ` goes in the header. */
-  sign(claims: Record<string, unknown>, header?: { typ?: string }): Promise<string>;
+  /**
+   * Signs arbitrary claims with the OP's key (tickets 15 and 18 build bearer and logout tokens with it); `typ`
+   * goes in the header. The key is RS256, as Zitadel's; `alg: 'ES256'` signs with the OP's second key, published
+   * in the same JWKS, for the tests that prove the verifiers pin the algorithm.
+   */
+  sign(
+    claims: Record<string, unknown>,
+    header?: { typ?: string; alg?: 'RS256' | 'ES256' },
+  ): Promise<string>;
 }
 
 interface PendingCode {
@@ -92,8 +99,19 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
   const issuer = options.issuer ?? 'https://op.test';
   const { clientId, projectId } = options;
   const accessTokenSeconds = options.accessTokenSeconds ?? 600;
-  const { privateKey, publicKey } = await generateKeyPair('ES256');
-  const jwk: JWK = { ...(await exportJWK(publicKey)), kid: 'test-key', use: 'sig', alg: 'ES256' };
+  const [rsa, ec] = await Promise.all([generateKeyPair('RS256'), generateKeyPair('ES256')]);
+  const jwk: JWK = {
+    ...(await exportJWK(rsa.publicKey)),
+    kid: 'test-key',
+    use: 'sig',
+    alg: 'RS256',
+  };
+  const ecJwk: JWK = {
+    ...(await exportJWK(ec.publicKey)),
+    kid: 'test-key-ec',
+    use: 'sig',
+    alg: 'ES256',
+  };
 
   const metadata: ServerMetadata = {
     issuer,
@@ -104,7 +122,7 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
     end_session_endpoint: `${issuer}/end_session`,
     response_types_supported: ['code'],
     code_challenge_methods_supported: ['S256'],
-    id_token_signing_alg_values_supported: ['ES256'],
+    id_token_signing_alg_values_supported: ['RS256'],
     token_endpoint_auth_methods_supported: ['none'],
   };
 
@@ -115,10 +133,15 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
   let revocationStatus: number | undefined;
   let tamper: IdTokenOverrides | undefined;
 
-  const sign = (claims: Record<string, unknown>, header: { typ?: string } = {}): Promise<string> =>
-    new SignJWT(claims)
-      .setProtectedHeader({ alg: 'ES256', kid: jwk.kid as string, ...header })
-      .sign(privateKey);
+  const sign = (
+    claims: Record<string, unknown>,
+    header: { typ?: string; alg?: 'RS256' | 'ES256' } = {},
+  ): Promise<string> => {
+    const { alg = 'RS256', ...rest } = header;
+    const key = alg === 'ES256' ? ec : rsa;
+    const kid = (alg === 'ES256' ? ecJwk : jwk).kid as string;
+    return new SignJWT(claims).setProtectedHeader({ alg, kid, ...rest }).sign(key.privateKey);
+  };
 
   async function idToken(user: FakeUser, nonce: string | undefined): Promise<string> {
     const now = Math.floor(Date.now() / 1000);
@@ -208,7 +231,7 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
     const { pathname } = new URL(url);
     if (!url.startsWith(issuer)) return new Response('not the OP', { status: 502 });
     if (pathname === '/.well-known/openid-configuration') return json(metadata);
-    if (pathname === '/jwks') return json({ keys: [jwk] });
+    if (pathname === '/jwks') return json({ keys: [jwk, ecJwk] });
     if (pathname === '/token' && request.method === 'POST') return token(request);
     if (pathname === '/revoke' && request.method === 'POST') return revoke(request);
     return new Response('not found', { status: 404 });

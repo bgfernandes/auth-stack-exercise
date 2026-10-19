@@ -327,10 +327,12 @@ export function createOidcClient(
     async verifyLogoutToken(logoutToken) {
       let payload: JWTPayload;
       try {
-        // `aud` must contain this client's ID (an ID token's audience; Zitadel adds the project ID, which jose
-        // tolerates: a string audience is matched against every member of an array). `iat` is required of a
-        // logout token where an ID token's validation only checks it when present.
+        // RS256 only, the algorithm Zitadel signs with, as the bearer verifier pins it. `aud` must contain this
+        // client's ID (an ID token's audience; Zitadel adds the project ID, which jose tolerates: a string
+        // audience is matched against every member of an array). `iat` is required of a logout token where an
+        // ID token's validation only checks it when present.
         ({ payload } = await jwtVerify(logoutToken, await signingKey(), {
+          algorithms: ['RS256'],
           issuer: config.issuer,
           audience: config.clientId,
           requiredClaims: ['iat', 'exp'],

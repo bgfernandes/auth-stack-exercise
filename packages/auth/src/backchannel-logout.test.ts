@@ -86,10 +86,14 @@ describe('verifyLogoutToken', () => {
     expect(error.code).toBe('logout_token_invalid');
   });
 
-  it('refuses a token signed by another key, and what is not a JWT', async () => {
+  it('refuses a token signed by another key or with another algorithm, and what is not a JWT', async () => {
     const other = await createFakeOp({ clientId: CLIENT_ID });
     const foreign = await other.sign(logoutClaims());
     expect((await failure(client.verifyLogoutToken(foreign))).code).toBe('logout_token_invalid');
+    const es256 = await op.sign(logoutClaims(), { alg: 'ES256' });
+    const refused = await failure(client.verifyLogoutToken(es256));
+    expect(refused.code).toBe('logout_token_invalid');
+    expect((refused.cause as { code?: string }).code).toBe('ERR_JOSE_ALG_NOT_ALLOWED');
     expect((await failure(client.verifyLogoutToken('not.a.jwt'))).code).toBe(
       'logout_token_invalid',
     );
