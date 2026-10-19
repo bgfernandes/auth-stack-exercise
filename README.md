@@ -243,35 +243,90 @@ Stated in full because the exercise asked for them. Each is deliberate; the reas
 
 ## What is built and what is planned
 
-Tickets in their intended order; numbers are stable identifiers, so the order is the list, not the number. The reasoning for the order is §11.
+Tickets in their intended order of implementation; numbers are stable identifiers, so the order is the list, not the number. The reasoning for the order is §11; each ticket's notes are in `docs/TICKETS.md`.
 
-| Phase | Ticket | Status |
+### Phase 0, foundation
+
+| Ticket | What | Status |
 | --- | --- | --- |
-| 0 Foundation | 0 · 1 · 2 · 3 · 4 · 5 | Done |
-| 1 Vertical slice | 6 · 7 · 8 · 15 · 16 · 9 · 10 · 11 · 12 · 13 · 13a | Done |
-| 1 | 13b · 14 | 13b open · 14 this file |
-| 2 Services | 19a · 17 · 17b · 18 · 19 · 20 | Done |
-| 2 | 19b · 17a · 4a | Open |
-| 3 Consistency and audit | 21 · 21a | Done |
-| 3 | 22 | Open |
-| 4 Hardening | 23 | Done |
-| 4 | 23a · 24 · 20a · 8a · 8b · 20b · 25 · 10a | Open |
-| 5 Comments domain | 26 · 27 · 28 | Open |
-| 6 to 9 | 29 · 30 · 31 · 32 | Open |
+| 0 | Design documents and working agreement | Done |
+| 1 | Monorepo scaffold and the CI checks | Done |
+| 2 | Compose infrastructure | Done |
+| 3 | Zitadel spike: one real login from inside compose | Done |
+| 4 | Bootstrap container | Done |
+| 5 | Tiltfile and the CI integration job | Done |
 
-The tickets, row by row:
+### Phase 1, the vertical slice
 
-- **0 Foundation:** 0 docs and working agreement · 1 monorepo scaffold and CI checks · 2 compose infrastructure · 3 Zitadel spike (one real login from inside compose) · 4 bootstrap container · 5 Tiltfile and the CI integration job.
-- **1 Vertical slice:** 6 SpiceDB schema and `packages/authz` · 7 `db-core`, `tenancy`, `documents` · 8 `packages/auth`, sessions in Redis · 15 bearer verification and scope gate · 16 `tenancy-api` · 9 `dashboard-web` shell · 10 just-in-time provisioning · 11 dashboard with the three states and the edit flow · 12 seeds · 13 Playwright suite · 13a the suites against Tilt.
-- **1, 13b open · 14 this file:** 13b the Tilt suites in CI · 14 this README.
-- **2 Services:** 19a `dashboard-api` · 17 `tenancy-web` · 17b TLS at Traefik for Zitadel · 18 back-channel logout sink · 19 `dashboard-web` over HTTP to `dashboard-api` · 20 single sign-on and sign-out end to end.
-- **2, open:** 19b document creation · 17a invitations · 4a confidential clients.
-- **3 Consistency and audit:** 21 listings at `minimize_latency` and the New Enemy tests · 21a read your own write.
-- **3, open:** 22 decision audit log.
-- **4 Hardening:** 23 CSRF tokens, security headers, CSP.
-- **4, open:** 23a rate limits · 24 sign-in policies and step-up · 20a re-validation backstop · 8a session claims after refresh · 8b refresh lock across instances · 20b log out everywhere · 25 coverage pass · 10a provisioning spike.
-- **5 Comments domain:** 26 Zitadel Actions spike · 27 `comments-api` · 28 `comments-web`.
-- **6 to 9:** 29 OpenTelemetry · 30 Kubernetes · 31 API gateway · 32 broker a second identity provider.
+| Ticket | What | Status |
+| --- | --- | --- |
+| 6 | SpiceDB schema and `packages/authz` | Done |
+| 7 | `db-core`, `tenancy`, `documents` packages | Done |
+| 8 | `packages/auth`: OIDC client, sessions in Redis | Done |
+| 15 | Bearer verification and the scope gate | Done |
+| 16 | `tenancy-api` | Done |
+| 9 | `dashboard-web` shell: login, logout, protected routes | Done |
+| 10 | Just-in-time provisioning and the personal workspace | Done |
+| 11 | Dashboard with the three states and the edit flow | Done |
+| 12 | Seeds: the Acme scenario | Done |
+| 13 | Playwright suite: login and edit for the three users | Done |
+| 13a | The test suites against Tilt | Done |
+| 13b | The Tilt suites in CI | Open |
+| 14 | This README | This file |
+
+### Phase 2, services
+
+| Ticket | What | Status |
+| --- | --- | --- |
+| 19a | `dashboard-api` | Done |
+| 17 | `tenancy-web`: organizations, members, policy | Done |
+| 17b | TLS at Traefik for Zitadel | Done |
+| 18 | Back-channel logout sink | Done |
+| 19 | `dashboard-web` over HTTP to `dashboard-api` | Done |
+| 20 | Single sign-on and sign-out end to end | Done |
+| 19b | Document creation | Open |
+| 17a | Invitations with a uniform response | Open |
+| 4a | Confidential clients: private-key JWT client authentication | Open |
+
+### Phase 3, consistency and audit
+
+| Ticket | What | Status |
+| --- | --- | --- |
+| 21 | Listings at `minimize_latency` and the New Enemy tests | Done |
+| 21a | Read your own write on the dashboard | Done |
+| 22 | Decision audit log | Open |
+
+### Phase 4, hardening
+
+| Ticket | What | Status |
+| --- | --- | --- |
+| 23 | CSRF tokens, security headers, CSP | Done |
+| 23a | Rate limits | Open |
+| 24 | Sign-in policies and the step-up flow | Open |
+| 20a | Re-validation of the IdP session, the backstop for a missed logout | Open |
+| 8a | Session claims re-read after a token refresh | Open |
+| 8b | Refresh lock across instances | Open |
+| 8c | A refused refresh ends the session | Open |
+| 20b | Log out everywhere | Open |
+| 25 | Coverage pass and input-validation audit | Open |
+| 10a | Provisioning without cross-domain calls from the BFFs (spike) | Open |
+
+### Phase 5, the comments domain
+
+| Ticket | What | Status |
+| --- | --- | --- |
+| 26 | Zitadel Actions spike: RFC 9068 claims in access tokens | Open |
+| 27 | `comments-api` | Open |
+| 28 | `comments-web` and the cross-domain test | Open |
+
+### Phases 6 to 9
+
+| Ticket | What | Status |
+| --- | --- | --- |
+| 29 | OpenTelemetry tracing | Open |
+| 30 | Kubernetes | Open |
+| 31 | API gateway | Open |
+| 32 | Broker a second identity provider | Open |
 
 ## Further reading
 
