@@ -141,7 +141,7 @@ describe('createNextAuth', () => {
   });
 
   /** The binding again, with a hook; the OP and the store are the ones of this test. */
-  function withHook(onLogin: (session: Session) => Promise<void>): NextAuth {
+  function withHook(onLogin: (session: Session) => Promise<string | void>): NextAuth {
     return createNextAuth({
       options,
       store,
@@ -178,6 +178,44 @@ describe('createNextAuth', () => {
       .split(';')[0]
       ?.split('=')[1] as string;
     expect(id).toBe(seen[0]?.id);
+  });
+
+  it('callback lands where onLogin says, a path resolved against the app, with the cookie set', async () => {
+    const hooked = withHook(() => Promise.resolve('/dashboard?created=doc-1'));
+    const login = await hooked.login();
+    const stash = setCookies(login).get('dashboard_web_session_login') as string;
+    const callback = op.authorize(new URL(login.headers.get('location') as string), alice);
+    const response = await hooked.callback(
+      new Request(callback, { headers: { cookie: cookieHeader(stash) } }),
+    );
+    expect(response.status).toBe(303);
+    expect(response.headers.get('location')).toBe(`${APP}/dashboard?created=doc-1`);
+    expect(setCookies(response).has('dashboard_web_session')).toBe(true);
+  });
+
+  it('a landing path outside the app fails the login like a thrown hook: a host bug, never a redirect elsewhere', async () => {
+    // An absolute URL, a protocol-relative one, and the backslash form browsers read as one (WHATWG URL).
+    for (const path of [
+      'https://evil.test/dashboard',
+      '//evil.test/dashboard',
+      '/\\evil.test/dashboard',
+    ]) {
+      const hooked = withHook(() => Promise.resolve(path));
+      const login = await hooked.login();
+      const stash = setCookies(login).get('dashboard_web_session_login') as string;
+      const callback = op.authorize(new URL(login.headers.get('location') as string), alice);
+      const response = await hooked.callback(
+        new Request(callback, { headers: { cookie: cookieHeader(stash) } }),
+      );
+      expect(response.status).toBe(400);
+      expect(setCookies(response).has('dashboard_web_session')).toBe(false);
+      await expect(store.listByUser('alice')).resolves.toEqual([]);
+      expect(records.at(-1)).toEqual({
+        errorCode: 'login_hook_failed',
+        reason: `onLogin returned a landing path outside the app: ${path}`,
+      });
+    }
+    expect(events).toEqual(['auth.login_failed', 'auth.login_failed', 'auth.login_failed']);
   });
 
   it('a failing onLogin fails the login: no session, no cookie, the generic response, the reason logged', async () => {
