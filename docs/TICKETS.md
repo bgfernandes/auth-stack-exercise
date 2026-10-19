@@ -485,7 +485,7 @@ Split from ticket 13a on 2026-10-19. A third stack job in `ci.yml`, proving the 
 
 **Tests:** bootstrap reconciliation (key present, key missing, handoff missing); `packages/auth` with the fake OP verifying the `client_assertion`; the existing end-to-end suites.
 
-**Status:** Open (found 2026-10-19 by the submission-day review).
+**Status:** Open (found 2026-10-19 by the 2026-10-19 review).
 
 ---
 
@@ -674,7 +674,7 @@ The refresh mutex is per process (`inFlight` in `createAccessTokenProvider()`); 
 
 Fill gaps in unit and integration coverage, `pnpm audit` in CI (non-blocking), refresh the trade-offs and gaps section.
 
-> **2026-10-19 (review):** Also here, from the submission-day reviews: `pnpm audit` added to CI (non-blocking); `webAppConfig()` moved out of bootstrap's `index.ts` (which runs `main()` at load) so it can be unit-tested; the header comment of `packages/auth/src/oidc.ts` corrected (openid-client v6 does not verify the signature of an ID token received from the token endpoint unless non-repudiation checks are on, which OIDC Core §3.1.3.7 permits); registration's unverified-email behaviour either changed in Zitadel's settings or kept and stated.
+> **2026-10-19 (review):** Also here, from the 2026-10-19 reviews: `pnpm audit` added to CI (non-blocking); `webAppConfig()` moved out of bootstrap's `index.ts` (which runs `main()` at load) so it can be unit-tested; the header comment of `packages/auth/src/oidc.ts` corrected (openid-client v6 does not verify the signature of an ID token received from the token endpoint unless non-repudiation checks are on, which OIDC Core §3.1.3.7 permits); registration's unverified-email behaviour either changed in Zitadel's settings or kept and stated.
 
 > **2026-10-19:** The input validation audit of §11's phase 4 row belongs here (decided when ticket 23 was specified): a review of every route boundary of the four apps against §9's input row (a schema on every body, bounded strings, IDs checked for shape, query parameters that may repeat), fixing what it finds; a review, not a feature.
 
