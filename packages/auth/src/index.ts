@@ -14,7 +14,11 @@ export {
   type AccessTokenProvider,
   type AccessTokenProviderOptions,
 } from './access-token';
-export { handleBackchannelLogout, type BackchannelLogoutOptions } from './backchannel-logout';
+export {
+  handleBackchannelLogout,
+  MAX_BODY_BYTES,
+  type BackchannelLogoutOptions,
+} from './backchannel-logout';
 export {
   assertScopeStrings,
   BearerError,
