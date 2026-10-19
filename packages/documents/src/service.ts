@@ -12,6 +12,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import {
   atLeastAsFresh,
   fullyConsistent,
+  minimizeLatency,
   ref,
   relationship,
   remove,
@@ -50,6 +51,12 @@ export interface DocumentsService {
    * (§6.5): the dashboard's hints, decided at the listing level of §7.3.
    */
   listVisibleDocuments(user: UserContext, consistency: Consistency): Promise<VisibleDocument[]>;
+  /**
+   * The listing consistency for a reader who just wrote `documentId` (§7.3, read your own write): at least as
+   * fresh as the row's token, so the write's effect on the listing is there at once; the cached snapshot when
+   * no row has that ID, malformed or unknown. A freshness floor only: it never widens what the reader may see.
+   */
+  listingFreshAs(documentId: string): Promise<Consistency>;
   /**
    * The document's direct shares (§6.8), for a caller with `document#share`: read at least as fresh as the
    * row's token, which the last share stored (§7.3), so the set is the one that share left; `forbidden` for a
@@ -254,6 +261,11 @@ export function createDocumentsService(deps: {
           updatedAt: row.updatedAt,
         }))
         .sort(byPlace);
+    },
+
+    async listingFreshAs(documentId) {
+      const row = await load(documentId);
+      return row ? atLeastAsFresh(row.zedtoken) : minimizeLatency;
     },
 
     async getDocumentForEdit(user, id) {

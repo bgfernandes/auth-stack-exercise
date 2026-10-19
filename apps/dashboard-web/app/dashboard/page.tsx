@@ -8,30 +8,44 @@ import { listDocuments } from '../../lib/documents';
 import type { VisibleDocument } from '@auth-stack/documents/client';
 
 interface Props {
-  searchParams: Promise<{ saved?: string | string[]; shared?: string | string[] }>;
+  searchParams: Promise<{
+    created?: string | string[];
+    saved?: string | string[];
+    shared?: string | string[];
+  }>;
 }
 
 /**
  * The protected page (docs/README.md §6.5): every document the user may view, grouped by organization and
  * project, with "Edit" where the bulk check allowed `edit` and a read-only marker otherwise, and "Share" where
  * it allowed `share`. The markers are hints: the edit and share pages and their routes check again. The listing
- * runs at `minimize_latency` (§7.3), so a document shared or edited a moment ago may be missing or stale here
- * for a few seconds, while every page behind a link is exact. `proxy.ts` sends a request without a session to the login;
- * this is the second check.
+ * runs at `minimize_latency` (§7.3), so a document someone else shared or edited a moment ago may be missing or
+ * stale here for a few seconds, while every page behind a link is exact; the row the user just wrote themselves
+ * (`created` by the first login, `saved`, `shared`) hints the API to list at least as fresh as that row, so
+ * their own write is here at once. `proxy.ts` sends a request without a session to the login; this is the
+ * second check.
  */
 export default async function DashboardPage({ searchParams }: Props) {
   const user = await getCurrentUser();
   if (!user) redirect('/auth/login');
-  const rows = await listDocuments();
+  const { created, saved, shared } = await searchParams;
+  const freshAs = [created, saved, shared].find(
+    (value): value is string => typeof value === 'string',
+  );
+  const rows = await listDocuments(freshAs);
   // A session whose token can no longer be refreshed: the user logs in again.
   if (!rows) redirect('/auth/login');
-  const { saved, shared } = await searchParams;
   const savedRow = typeof saved === 'string' ? rows.find((row) => row.id === saved) : undefined;
   const sharedRow = typeof shared === 'string' ? rows.find((row) => row.id === shared) : undefined;
   const groups = groupByPlace(rows);
   return (
     <main>
       <h1>{`Welcome, ${displayName(user)}`}</h1>
+      {created !== undefined && (
+        <p className="flash" role="status">
+          Your personal workspace is ready.
+        </p>
+      )}
       {saved !== undefined && (
         <p className="flash" role="status">
           {savedRow ? `Saved “${savedRow.name}”.` : 'Saved.'}

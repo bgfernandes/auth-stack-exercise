@@ -4,7 +4,9 @@
  * the `sub` (userinfo asked by `tenancy-api` with the same token), then `dashboard-api` creates the "Personal"
  * project with its "Welcome" document in that organization. Both calls are idempotent and key on the absence of
  * what they create, so a seeded user gets a workspace on first login too, and a repeat is two reads. A failure
- * of either propagates: the binding deletes the session and fails the login.
+ * of either propagates: the binding deletes the session and fails the login. A first login lands on a dashboard
+ * hinted with the "Welcome" document it created, so the listing holds the new workspace at once (§7.3: the
+ * writer's own write); a repeat lands where every login does.
  */
 import { type Session } from '@auth-stack/auth';
 import { type DocumentsClient } from '@auth-stack/documents/client';
@@ -23,7 +25,7 @@ export type LoginSession = Pick<Session, 'sub' | 'accessToken'>;
 
 export function createWorkspaceProvisioner(
   deps: ProvisioningDeps,
-): (session: LoginSession) => Promise<void> {
+): (session: LoginSession) => Promise<string | undefined> {
   const { tenancy, documents, logger } = deps;
   return async (session) => {
     const user = { sub: session.sub, accessToken: session.accessToken };
@@ -39,5 +41,8 @@ export function createWorkspaceProvisioner(
         projectCreated: workspace.created,
       });
     }
+    return workspace.created
+      ? `/dashboard?created=${encodeURIComponent(workspace.document.id)}`
+      : undefined;
   };
 }

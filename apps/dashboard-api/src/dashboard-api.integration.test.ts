@@ -166,6 +166,24 @@ const json = (name: string) => ({ ...as(name), 'content-type': 'application/json
 describe('dashboard-api against the stack', () => {
   let welcome: DocumentWire;
 
+  /** `[id, can_edit, can_share, organization name]` per row of the caller's listing, hinted with `fresh_as` or not. */
+  const list = async (name: string, freshAs?: string) =>
+    (
+      await app.inject({
+        url: freshAs === undefined ? '/documents' : `/documents?fresh_as=${freshAs}`,
+        headers: as(name),
+      })
+    )
+      .json<{
+        documents: {
+          id: string;
+          can_edit: boolean;
+          can_share: boolean;
+          organization: { name: string };
+        }[];
+      }>()
+      .documents.map((row) => [row.id, row.can_edit, row.can_share, row.organization.name]);
+
   it('creates the personal workspace for an organization admin, once', async () => {
     const first = await app.inject({
       method: 'POST',
@@ -188,6 +206,16 @@ describe('dashboard-api against the stack', () => {
       updated_by: sub('alice'),
     });
     welcome = body.document;
+    // Read your own write (§7.3, ticket 21a): the listing hinted with the new row lists it at once, where the
+    // cached snapshot may miss it for one window; a hint that is no row is ignored, never an error.
+    expect(await list('alice', welcome.id)).toEqual([[welcome.id, true, true, 'Acme']]);
+    for (const hint of [randomUUID(), 'not-a-row']) {
+      const ignored = await app.inject({
+        url: `/documents?fresh_as=${hint}`,
+        headers: as('alice'),
+      });
+      expect(ignored.statusCode).toBe(200);
+    }
     const second = await app.inject({
       method: 'POST',
       url: `/organizations/${ACME}/personal-project`,
@@ -231,17 +259,6 @@ describe('dashboard-api against the stack', () => {
     expect(shared.statusCode).toBe(200);
     expect(shared.json()).toEqual(welcome);
 
-    const list = async (name: string) =>
-      (await app.inject({ url: '/documents', headers: as(name) }))
-        .json<{
-          documents: {
-            id: string;
-            can_edit: boolean;
-            can_share: boolean;
-            organization: { name: string };
-          }[];
-        }>()
-        .documents.map((row) => [row.id, row.can_edit, row.can_share, row.organization.name]);
     const read = async (name: string) =>
       (await app.inject({ url: `/documents/${welcome.id}`, headers: as(name) })).statusCode;
     expect(await read('alice')).toBe(200);
@@ -249,6 +266,8 @@ describe('dashboard-api against the stack', () => {
     expect(await read('bob')).toBe(403);
     expect(await read('dave')).toBe(404);
 
+    // The share stored its token on the row, so a listing hinted with the row is exact at once for anyone.
+    expect(await list('bob', welcome.id)).toEqual([[welcome.id, false, false, 'Acme']]);
     await eventually(() => list('alice'), [[welcome.id, true, true, 'Acme']]);
     await eventually(() => list('bob'), [[welcome.id, false, false, 'Acme']]);
     await eventually(() => list('carol'), [[welcome.id, true, false, 'Acme']]);

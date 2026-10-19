@@ -137,6 +137,16 @@ describe('ensurePersonalProject', () => {
     });
     expect(first.document.zedtoken).not.toBe('');
 
+    // Read your own write (§7.3): a listing at least as fresh as the new row lists it at once, where the cached
+    // snapshot may still miss it; an ID that is no row, unknown or malformed, leaves the snapshot as it is.
+    const freshAs = await service.listingFreshAs(first.document.id);
+    expect(freshAs).toEqual(atLeastAsFresh(first.document.zedtoken));
+    expect((await service.listVisibleDocuments(alice, freshAs)).map((row) => row.id)).toContain(
+      first.document.id,
+    );
+    expect(await service.listingFreshAs(randomUUID())).toEqual(minimizeLatency);
+    expect(await service.listingFreshAs('not-a-uuid')).toEqual(minimizeLatency);
+
     const second = await service.ensurePersonalProject(alice, ACME);
     expect(second.created).toBe(false);
     expect(second.project.id).toBe(first.project.id);

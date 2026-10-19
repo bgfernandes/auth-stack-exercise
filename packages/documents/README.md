@@ -25,9 +25,12 @@ const documents = createDocumentsService({ db, authz: createAuthz(authzOptionsFr
 // Login callback (§6.4), after tenancy provisioned the personal organization: idempotent, race-safe.
 const { project, document, created } = await documents.ensurePersonalProject(user, organizationId);
 
-// Dashboard (§6.5): one lookup of `view`, one bulk check of `edit`, at the listing level of §7.3: a cached
-// snapshot that may lag a write by up to one quantization window, for everyone including the writer.
+// Dashboard (§6.5): one lookup of `view`, one bulk check of `edit` and `share`, at the listing level of §7.3: a
+// cached snapshot that may lag a write by up to one quantization window. For the user who just wrote a row,
+// `listingFreshAs(id)` gives the consistency at least as fresh as that row's stored token (the cached snapshot
+// when the ID is no row), so their next listing holds their own write.
 const rows = await documents.listVisibleDocuments(user, minimizeLatency); // { id, name, project, organization, canEdit, canShare }
+const own = await documents.listVisibleDocuments(user, await documents.listingFreshAs(document.id));
 
 // Edit form and save (§6.5, §7.3): `edit` at least as fresh as the row's token to read, fully consistent to write.
 const row = await documents.getDocumentForEdit(user, id);
@@ -59,8 +62,10 @@ import {
 
 const documents = httpDocumentsClientFromEnv(); // DASHBOARD_API_URL; or createHttpDocumentsClient({ baseUrl, fetch })
 
-// The same five calls as the service, as the user, over HTTP; the API picks the listing's consistency.
+// The same calls as the service, as the user, over HTTP; the API picks the listing's consistency: the cached
+// snapshot, or at least as fresh as the row `freshAs` names (`GET /documents?fresh_as=<id>`), for the writer.
 const rows = await documents.listVisibleDocuments(user);
+const own = await documents.listVisibleDocuments(user, { freshAs: document.id });
 const row = await documents.getDocumentForEdit(user, id);
 const values = documentValuesSchema.parse({ value1, value2 }); // the BFF checks the rule before calling
 const updated = await documents.updateDocument(user, id, values);

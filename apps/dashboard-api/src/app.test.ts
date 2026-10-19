@@ -11,7 +11,7 @@ import { type FastifyInstance } from 'fastify';
 
 import { createBearerVerifier, type ScopeResolver } from '@auth-stack/auth';
 import { createFakeOp, type FakeOp } from '@auth-stack/auth/testing';
-import { type Consistency } from '@auth-stack/authz';
+import { atLeastAsFresh, minimizeLatency, type Consistency } from '@auth-stack/authz';
 import {
   DocumentsError,
   parseDocumentShares,
@@ -125,6 +125,13 @@ class FakeDocuments implements DocumentsService {
     if (!this.access.has(user.sub)) this.access.set(user.sub, new Map());
     this.access.get(user.sub)?.set(document.id, 'edit');
     return Promise.resolve({ project, document, created: true });
+  }
+
+  /** A known row's token is `token-of-<id>`, so a test can tell which row a listing was made fresh as. */
+  listingFreshAs(documentId: string): Promise<Consistency> {
+    return Promise.resolve(
+      this.documents.has(documentId) ? atLeastAsFresh(`token-of-${documentId}`) : minimizeLatency,
+    );
   }
 
   listVisibleDocuments(user: UserContext, consistency: Consistency): Promise<VisibleDocument[]> {
@@ -306,6 +313,34 @@ describe('dashboard-api', () => {
         Array.from({ length: 3 }, () => 'minimize_latency'),
       );
       expect(service.calls[0]?.user).toEqual({ sub: 'carol', accessToken: carol });
+    });
+
+    it('lists at least as fresh as the row fresh_as names, and at minimize_latency for anything else', async () => {
+      const budget = service.add('Budget', { alice: 'edit' });
+      const hinted = await app.inject({
+        url: `/documents?fresh_as=${budget.id}`,
+        headers: bearer(alice),
+      });
+      expect(hinted.statusCode).toBe(200);
+      expect(hinted.json<{ documents: { id: string }[] }>().documents.map((row) => row.id)).toEqual(
+        [budget.id],
+      );
+      // An unknown row, a malformed ID, a repeated parameter: the plain listing, never an error.
+      for (const query of [
+        `fresh_as=${randomUUID()}`,
+        'fresh_as=not-a-row',
+        `fresh_as=${budget.id}&fresh_as=${budget.id}`,
+      ]) {
+        const response = await app.inject({ url: `/documents?${query}`, headers: bearer(alice) });
+        expect(response.statusCode).toBe(200);
+        expect(response.json<{ documents: { id: string }[] }>().documents).toHaveLength(1);
+      }
+      expect(service.calls.map((call) => call.consistency)).toEqual([
+        atLeastAsFresh(`token-of-${budget.id}`),
+        minimizeLatency,
+        minimizeLatency,
+        minimizeLatency,
+      ]);
     });
   });
 
@@ -709,6 +744,12 @@ describe('dashboard-api', () => {
         name: 'Welcome',
         projectId: workspace.project.id,
       });
+      // The writer's next listing, fresh as the row just written (§7.3), goes out as the query parameter.
+      expect(
+        (await client.listVisibleDocuments(user, { freshAs: workspace.document.id })).map(
+          (row) => row.id,
+        ),
+      ).toContain(workspace.document.id);
       expect(service.calls.map((call) => call.user.accessToken)).toEqual([
         carol,
         alice,
@@ -716,7 +757,11 @@ describe('dashboard-api', () => {
         alice,
         alice,
         alice,
+        alice,
       ]);
+      expect(service.calls.at(-1)?.consistency).toEqual(
+        atLeastAsFresh(`token-of-${workspace.document.id}`),
+      );
 
       const viewer = { sub: 'carol', accessToken: carol };
       await expect(client.getDocumentForEdit(viewer, budget.id)).rejects.toMatchObject({

@@ -519,7 +519,7 @@
 
 ---
 
-## Phase 3 — Consistency and audit (ticket 21 specified on 2026-10-19; ticket 22 stays a stub until it starts)
+## Phase 3 — Consistency and audit (tickets 21 and 21a specified on 2026-10-19; ticket 22 stays a stub until it starts)
 
 ### Ticket 21 — Listings at `minimize_latency`, the New Enemy tests, and sharing from the dashboard (3.5 h)
 
@@ -558,7 +558,9 @@ The per-row token and the write-path `fully_consistent` checks exist since phase
 
 **Acceptance criteria:** on a fresh stack (CI), the three user specs pass without the reload; a share or a save is on the writer's next dashboard at once.
 
-**Status:** Open.
+> **2026-10-19 (built):** As specified, in four steps. The service's `listingFreshAs(id)` turns a document ID into the listing's consistency, at least as fresh as the row's stored token or the cached snapshot when no row has the ID (malformed included: `load` already refuses a non-UUID before the database), so the token never leaves the API; `GET /documents?fresh_as=<id>` takes it, a repeated parameter or an unknown ID leaving the plain listing with no error, since a bad hint must not break the dashboard; the client sends it as the `freshAs` option. The login hook of `@auth-stack/auth/next` may return the landing path, resolved against the app's URL as `afterLoginPath` is; two choices by the maintainer: a path resolving outside the app's origin (an absolute URL, `//host`, the backslash form the WHATWG URL parser reads as one, all three tested) fails the login like a thrown hook, and the first dashboard shows "Your personal workspace is ready." `dashboard-web`'s provisioner returns `/dashboard?created=<welcome document id>` when it created the workspace, and the dashboard passes the first of `created`, `saved`, `shared` as the hint; `tenancy-web`'s hook returns nothing, since its landing lists organizations fully consistent. One thing the ticket did not say: the e2e login helper matched the landing URL exactly, so a first login would have hung it; it allows the query now. What is observable end to end is the first login only: a save changes none of the writer's rows and a share none of the sharer's, so the share spec's new assertion proves the hint costs the sharer nothing, and the hint's effect after a share is proved by the API's integration test, exact at once for the viewer named by the row where the plain listing is polled. Verified: lint, Prettier, type-check, the unit tests (the hook's landing and refusals, the provisioner's path, the route's hint), the 74 integration tests, and both Playwright suites against a stack started under a throwaway compose project with fresh volumes, so the three user logins were first logins (three `workspace.provisioned` lines, eleven hinted listings, no token in any app's log), the specs asserting the dashboard at once. §6.4 and §7.3 say the writer's listing is exact; the root README's `dashboard-web` row says what the landing URL names.
+
+**Status:** Done (2026-10-19).
 
 ### Ticket 22 — Decision audit log and per-organization audit page (2.5 h)
 

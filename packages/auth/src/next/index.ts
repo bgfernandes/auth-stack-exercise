@@ -30,11 +30,14 @@ export interface NextAuthOptions {
   afterLoginPath?: string;
   /**
    * Runs on every completed login with the new session, before the browser is sent on and before the session
-   * cookie exists (docs/README.md §4.4 step 4: the provisioning calls, with `session.accessToken`). A throw fails
-   * the login: the session is deleted, no cookie is set, the browser gets the generic failed response, and the
-   * reason is logged under `login_hook_failed`.
+   * cookie exists (docs/README.md §4.4 step 4: the provisioning calls, with `session.accessToken`). It may
+   * return where this login lands instead of `afterLoginPath`: a path relative to the app's own origin (a
+   * first login landing on a page that lists what the hook just created, §6.4). A throw fails the login: the
+   * session is deleted, no cookie is set, the browser gets the generic failed response, and the reason is
+   * logged under `login_hook_failed`; a returned path that resolves outside the app's origin counts as a throw,
+   * since it is a bug of the host, never a redirect elsewhere.
    */
-  onLogin?: (session: Session) => Promise<void>;
+  onLogin?: (session: Session) => Promise<string | void>;
   /** The response of the callback when the login fails, whatever the reason; a plain 400 by default. */
   loginFailed?: (code: AuthError['code']) => NextResponse;
   logger?: AuthLogger;
@@ -75,6 +78,14 @@ export function createNextAuth(init: NextAuthOptions): NextAuth {
     maxAge: STASH_LIFETIME_SECONDS,
   });
   const afterLoginUrl = new URL(init.afterLoginPath ?? '/', options.appUrl);
+
+  /** A landing path the hook returned, resolved as `afterLoginPath` is; one that lands elsewhere is refused. */
+  function landingUrl(path: string): URL {
+    const url = new URL(path, options.appUrl);
+    if (url.origin !== afterLoginUrl.origin)
+      throw new Error(`onLogin returned a landing path outside the app: ${path}`);
+    return url;
+  }
   const loginFailed =
     init.loginFailed ??
     (() => new NextResponse('Login failed. Please try again.', { status: 400 }));
@@ -111,9 +122,11 @@ export function createNextAuth(init: NextAuthOptions): NextAuth {
         );
         const login = await client.completeLogin(new URL(request.url), stash);
         const session = await store.create(sessionFromLogin(login));
+        let landing = afterLoginUrl;
         if (init.onLogin) {
           try {
-            await init.onLogin(session);
+            const path = await init.onLogin(session);
+            if (path !== undefined) landing = landingUrl(path);
           } catch (error) {
             // No session without its provisioning: the next login runs the hook again.
             await store.delete(session.id);
@@ -124,7 +137,7 @@ export function createNextAuth(init: NextAuthOptions): NextAuth {
             );
           }
         }
-        response = NextResponse.redirect(afterLoginUrl, 303);
+        response = NextResponse.redirect(landing, 303);
         response.cookies.set(cookieName, session.id, sessionCookie);
       } catch (error) {
         const code = error instanceof AuthError ? error.code : 'token_invalid';

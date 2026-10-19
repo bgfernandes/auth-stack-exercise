@@ -54,7 +54,8 @@ export function seedPassword(): string {
 
 /**
  * Logs in from the app's login route through Zitadel's Login V2 pages (the login name, then the password) and
- * waits for the dashboard, where the callback lands a successful login.
+ * waits for the dashboard, where the callback lands a successful login: a first login with `?created=<id>`,
+ * the ID of the workspace's document (§6.4), so the match allows a query.
  */
 export async function logIn(page: Page, email: string, password: string): Promise<void> {
   await page.goto('/auth/login');
@@ -62,7 +63,7 @@ export async function logIn(page: Page, email: string, password: string): Promis
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Continue' }).click();
-  await page.waitForURL('/dashboard');
+  await page.waitForURL(/\/dashboard(\?.*)?$/);
 }
 
 /**
@@ -123,9 +124,9 @@ export async function dashboardRows(page: Page): Promise<DashboardRow[]> {
 export const LISTING_LAG_MS = 7_000;
 
 /**
- * The dashboard reloaded until it shows `rows`, inside the lag; the last rows seen are what fails. A first
- * login's dashboard may miss the personal workspace created a moment before (§6.4, §7.3; ticket 21a makes that
- * listing exact), and another user's share or edit reaches a listing with the same lag.
+ * The dashboard reloaded until it shows `rows`, inside the lag; the last rows seen are what fails. Another
+ * user's share or edit reaches a listing with the lag of §7.3; the user's own write is exact at once, since the
+ * dashboard they land on names it (§6.4), so only another user's dashboard needs this.
  */
 export async function dashboardShows(
   page: Page,

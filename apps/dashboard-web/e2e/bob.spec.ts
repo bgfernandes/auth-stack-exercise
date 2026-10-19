@@ -2,7 +2,7 @@
 import { test, expect } from '@playwright/test';
 
 import {
-  dashboardShows,
+  dashboardRows,
   editAndRestore,
   logIn,
   logOut,
@@ -19,8 +19,8 @@ test('bob logs in, sees Marketing editable and no Finance, edits Budget, logs ou
 }) => {
   await logIn(page, seed.users.bob.email, seedPassword());
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Welcome, Bob Baker');
-  // Reloaded inside the lag: a first login's workspace may be missing from the listing for one window (§7.3).
-  await dashboardShows(page, [
+  // Exact at once, a first login included: the landing names the workspace it created (§6.4, §7.3).
+  expect(await dashboardRows(page)).toEqual([
     row('Acme', 'Marketing', 'Budget', 'edit'),
     row('Acme', 'Marketing', 'Launch plan', 'edit'),
     row('Personal', 'Personal', 'Welcome', 'edit'),

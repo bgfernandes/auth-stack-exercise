@@ -2,15 +2,32 @@
  * Sharing from the dashboard (docs/README.md §6.8) and the listing's lag (§7.3) in the browser: Alice shares
  * Payroll with Bob as a viewer; Bob, in a browser context of his own, sees it on his dashboard once the listing
  * catches up, read-only, inside the bound a listing may lag; Alice takes it back; Bob's edit page refuses at
- * once, since the row's token postdates the removal, and his dashboard loses the row inside the bound. Payroll
+ * once, since the row's token postdates the removal, and his dashboard loses the row inside the bound. Alice's
+ * own dashboard, landed on with the row she shared, is exact at once (§7.3: the writer's own write). Payroll
  * ends with no direct share, as the seed left it, whatever happens in between.
  */
 import { test, expect } from '@playwright/test';
 
-import { BASE_URL, dashboardShows, logIn, logOut, readSeed, row, seedPassword } from './stack';
+import {
+  BASE_URL,
+  dashboardRows,
+  dashboardShows,
+  logIn,
+  logOut,
+  readSeed,
+  row,
+  seedPassword,
+} from './stack';
 
 const seed = readSeed();
 const payroll = seed.documents.payroll;
+
+const alicesRows = [
+  row('Acme', 'Finance', 'Payroll', 'edit'),
+  row('Acme', 'Marketing', 'Budget', 'edit'),
+  row('Acme', 'Marketing', 'Launch plan', 'edit'),
+  row('Personal', 'Personal', 'Welcome', 'edit'),
+];
 
 const bobsRows = (payrollAccess?: 'read-only') => [
   ...(payrollAccess ? [row('Acme', 'Finance', 'Payroll', payrollAccess)] : []),
@@ -41,6 +58,9 @@ test('alice shares Payroll with Bob, who sees it read-only once the listing catc
     await page.getByRole('button', { name: 'Save' }).click();
     await expect(page).toHaveURL(`/dashboard?shared=${payroll.id}`);
     await expect(page.getByRole('status')).toHaveText(`Shared “${payroll.name}”.`);
+    // Her listing, at least as fresh as the row she just shared, is exact at once; a share changes nothing in
+    // it, so what this proves is that the hint costs the sharer nothing.
+    expect(await dashboardRows(page)).toEqual(alicesRows);
 
     // Bob's listing may lag the share by up to one window (§7.3); his row reads are exact at once.
     await logIn(bobPage, seed.users.bob.email, seedPassword());

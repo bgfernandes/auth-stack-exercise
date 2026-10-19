@@ -107,13 +107,19 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   app.get('/health', { config: { public: true } }, () => ({ status: 'ok' }));
 
-  app.get(
+  app.get<{ Querystring: { fresh_as?: string | string[] } }>(
     '/documents',
     { preHandler: app.requireScope(DOCUMENTS_API_SCOPES.read) },
     async (request) => {
-      // The listing level of §7.3: a cached snapshot, stale by up to one quantization window, for everyone
-      // including the user who just wrote; every content read is gated per row with the row's token.
-      const rows = await service.listVisibleDocuments(userOf(request), minimizeLatency);
+      // The listing level of §7.3: a cached snapshot, stale by up to one quantization window; every content
+      // read is gated per row with the row's token. `fresh_as=<document id>` names a row the caller just wrote,
+      // and the listing is then at least as fresh as the token stored on it, so the writer reads their own
+      // write (ticket 21a); anything that is not one row's ID leaves the snapshot as it is, with no error: a
+      // bad hint must not break the dashboard. A freshness floor only: it never widens what the caller may see.
+      const freshAs = request.query.fresh_as;
+      const consistency =
+        typeof freshAs === 'string' ? await service.listingFreshAs(freshAs) : minimizeLatency;
+      const rows = await service.listVisibleDocuments(userOf(request), consistency);
       return { documents: rows.map(toVisibleDocumentWire) };
     },
   );
