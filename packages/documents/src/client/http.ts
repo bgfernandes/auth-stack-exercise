@@ -6,6 +6,7 @@
  * reads right after a save.
  */
 import {
+  documentSharesWire,
   documentsWire,
   documentWire,
   fromDocumentWire,
@@ -16,13 +17,20 @@ import {
   type DocumentValuesWire,
 } from './wire';
 
-import type { DocumentSummary, PersonalWorkspaceSummary, VisibleDocument } from './index';
+import type {
+  DocumentShares,
+  DocumentSummary,
+  PersonalWorkspaceSummary,
+  VisibleDocument,
+} from './index';
 import type { UserContext } from '@auth-stack/tenancy/client';
 
 /** The calls a BFF makes into the documents domain (§6.5), each on behalf of the user. */
 export interface DocumentsClient {
-  /** Every document the user may view, with `canEdit` decided (the dashboard); the API picks the consistency. */
+  /** Every document the user may view, with `canEdit` and `canShare` decided (the dashboard); the API picks the consistency. */
   listVisibleDocuments(user: UserContext): Promise<VisibleDocument[]>;
+  /** The document's direct shares (§6.8), for a caller who may share it; `forbidden` (403) for an editor or viewer, `not_found` (404) otherwise. */
+  getDocumentShares(user: UserContext, id: string): Promise<DocumentShares>;
   /** The row for the edit form; `forbidden` (403) when the user may only view it, `not_found` (404) otherwise. */
   getDocumentForEdit(user: UserContext, id: string): Promise<DocumentSummary>;
   /** The content write; the same refusals as the read, and `invalid_input` (400) for values the service refuses. */
@@ -135,6 +143,11 @@ export function createHttpDocumentsClient(options: HttpDocumentsClientOptions): 
       return fromDocumentWire(
         documentWire.parse(await call(user, 'PUT', documentPath(id), payload)),
       );
+    },
+
+    async getDocumentShares(user, id) {
+      const wire = documentSharesWire.parse(await call(user, 'GET', `${documentPath(id)}/shares`));
+      return { editors: wire.editors, viewers: wire.viewers };
     },
 
     async setDocumentShares(user, id, shares) {

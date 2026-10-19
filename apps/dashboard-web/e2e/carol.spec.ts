@@ -5,7 +5,7 @@
 import { test, expect } from '@playwright/test';
 
 import {
-  dashboardRows,
+  dashboardShows,
   editAndRestore,
   logIn,
   logOut,
@@ -22,7 +22,8 @@ test('carol logs in, sees the three states, edits Launch plan, is read-only on B
 }) => {
   await logIn(page, seed.users.carol.email, seedPassword());
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Welcome, Carol Clark');
-  expect(await dashboardRows(page)).toEqual([
+  // Reloaded inside the lag: a first login's workspace may be missing from the listing for one window (§7.3).
+  await dashboardShows(page, [
     row('Acme', 'Marketing', 'Budget', 'read-only'),
     row('Acme', 'Marketing', 'Launch plan', 'edit'),
     row('Personal', 'Personal', 'Welcome', 'edit'),

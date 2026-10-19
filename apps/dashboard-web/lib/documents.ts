@@ -4,13 +4,18 @@
  * context here and nowhere near a component. The API's refusals become the pages' states (`lib/api-refusal.ts`);
  * anything else surfaces.
  */
-import { type DocumentSummary, type VisibleDocument } from '@auth-stack/documents/client';
+import {
+  type DocumentShares,
+  type DocumentSummary,
+  type VisibleDocument,
+} from '@auth-stack/documents/client';
+import { type Member } from '@auth-stack/tenancy/client';
 
 import { refusalOf } from './api-refusal';
 import { clients } from './clients';
 import { getCurrentUserContext } from './current-user';
 
-/** Every document the user may view, with the "Edit" hint decided; undefined when there is no usable session. */
+/** Every document the user may view, with the "Edit" and "Share" hints decided; undefined when there is no usable session. */
 export async function listDocuments(): Promise<VisibleDocument[] | undefined> {
   const user = await getCurrentUserContext();
   if (!user) return undefined;
@@ -36,6 +41,44 @@ export async function documentForEdit(id: string): Promise<EditState> {
   if (!user) return { state: 'unauthenticated' };
   try {
     return { state: 'document', document: await clients().documents.getDocumentForEdit(user, id) };
+  } catch (error) {
+    const state = refusalOf(error);
+    if (state) return { state };
+    throw error;
+  }
+}
+
+export type ShareState =
+  | {
+      state: 'shares';
+      document: DocumentSummary;
+      shares: DocumentShares;
+      /** The owning organization's members, the user left out, as tenancy lists them (admins first). */
+      members: Member[];
+    }
+  /** The user may view the document but not share it (§6.5: forbidden). */
+  | { state: 'forbidden' }
+  | { state: 'not_found' }
+  | { state: 'unauthenticated' };
+
+/**
+ * What the share page shows (§6.8): the document as the edit page reads it (its name and organization), its
+ * direct shares as the API reads them at the row's token (§7.3), and the owning organization's members from
+ * `tenancy-api`, which is the only list a share may name; or why none of it can be shown.
+ */
+export async function documentForShare(id: string): Promise<ShareState> {
+  const user = await getCurrentUserContext();
+  if (!user) return { state: 'unauthenticated' };
+  try {
+    const document = await clients().documents.getDocumentForEdit(user, id);
+    const shares = await clients().documents.getDocumentShares(user, id);
+    const members = (await clients().tenancy.listMembers(user, document.organizationId)) ?? [];
+    return {
+      state: 'shares',
+      document,
+      shares,
+      members: members.filter((member) => member.sub !== user.sub),
+    };
   } catch (error) {
     const state = refusalOf(error);
     if (state) return { state };

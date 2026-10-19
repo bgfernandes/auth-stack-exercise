@@ -144,6 +144,22 @@ afterAll(async () => {
 });
 
 const as = (name: string) => ({ authorization: `Bearer ${tokens.get(name) ?? ''}` });
+/**
+ * How long a listing may lag a write (§7.3): one quantization window (5 s, pinned in compose), the tenth of it
+ * SpiceDB may add for cache reuse, and cache propagation. A per-row read is exact at once; only listings wait.
+ */
+const LISTING_LAG_MS = 7_000;
+
+/** Polls `read` until it equals `expected`, inside the listing lag; the last value is what fails. */
+async function eventually<T>(read: () => Promise<T>, expected: T): Promise<void> {
+  const deadline = Date.now() + LISTING_LAG_MS;
+  let last = await read();
+  while (JSON.stringify(last) !== JSON.stringify(expected) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    last = await read();
+  }
+  expect(last).toEqual(expected);
+}
 /** A request with a body: Fastify refuses an empty body declared as JSON, so the type travels with one only. */
 const json = (name: string) => ({ ...as(name), 'content-type': 'application/json' });
 
@@ -204,7 +220,8 @@ describe('dashboard-api against the stack', () => {
       ).toBe(404);
     }
 
-    // Alice shares it: Bob may view, Carol may edit; the token stored by the share makes the next reads see it.
+    // Alice shares it: Bob may view, Carol may edit. The token stored by the share makes the per-row reads see
+    // it at once; the listings run at `minimize_latency` and may lag by one window (§7.3), so they are polled.
     const shared = await app.inject({
       method: 'PUT',
       url: `/documents/${welcome.id}/shares`,
@@ -216,19 +233,42 @@ describe('dashboard-api against the stack', () => {
 
     const list = async (name: string) =>
       (await app.inject({ url: '/documents', headers: as(name) }))
-        .json<{ documents: { id: string; can_edit: boolean; organization: { name: string } }[] }>()
-        .documents.map((row) => [row.id, row.can_edit, row.organization.name]);
-    expect(await list('alice')).toEqual([[welcome.id, true, 'Acme']]);
-    expect(await list('bob')).toEqual([[welcome.id, false, 'Acme']]);
-    expect(await list('carol')).toEqual([[welcome.id, true, 'Acme']]);
-    expect(await list('dave')).toEqual([]);
-
+        .json<{
+          documents: {
+            id: string;
+            can_edit: boolean;
+            can_share: boolean;
+            organization: { name: string };
+          }[];
+        }>()
+        .documents.map((row) => [row.id, row.can_edit, row.can_share, row.organization.name]);
     const read = async (name: string) =>
       (await app.inject({ url: `/documents/${welcome.id}`, headers: as(name) })).statusCode;
     expect(await read('alice')).toBe(200);
     expect(await read('carol')).toBe(200);
     expect(await read('bob')).toBe(403);
     expect(await read('dave')).toBe(404);
+
+    await eventually(() => list('alice'), [[welcome.id, true, true, 'Acme']]);
+    await eventually(() => list('bob'), [[welcome.id, false, false, 'Acme']]);
+    await eventually(() => list('carol'), [[welcome.id, true, false, 'Acme']]);
+    expect(await list('dave')).toEqual([]);
+
+    // The share page's read: the set the share left, for Alice; 403 for Carol, who edits by share; 404 for Dave.
+    const shares = await app.inject({
+      url: `/documents/${welcome.id}/shares`,
+      headers: as('alice'),
+    });
+    expect(shares.statusCode).toBe(200);
+    expect(shares.json()).toEqual({ editors: [sub('carol')], viewers: [sub('bob')] });
+    expect(
+      (await app.inject({ url: `/documents/${welcome.id}/shares`, headers: as('carol') }))
+        .statusCode,
+    ).toBe(403);
+    expect(
+      (await app.inject({ url: `/documents/${welcome.id}/shares`, headers: as('dave') }))
+        .statusCode,
+    ).toBe(404);
 
     const write = async (name: string, values: { value_1: string; value_2: string }) =>
       app.inject({
@@ -287,6 +327,6 @@ describe('dashboard-api against the stack', () => {
     expect(replaced.statusCode).toBe(200);
     expect(await read('bob')).toBe(404);
     expect(await read('carol')).toBe(200);
-    expect(await list('bob')).toEqual([]);
-  });
+    await eventually(() => list('bob'), []);
+  }, 30_000);
 });

@@ -140,6 +140,7 @@ class FakeDocuments implements DocumentsService {
         project: { id: project.id, name: project.name },
         organization: { id: document.organizationId, name: ACME_NAME },
         canEdit: level === 'edit',
+        canShare: this.sharers.has(user.sub),
         updatedAt: document.updatedAt,
       });
     }
@@ -169,6 +170,13 @@ class FakeDocuments implements DocumentsService {
     };
     this.documents.set(id, updated);
     return Promise.resolve(updated);
+  }
+
+  getDocumentShares(user: UserContext, id: string): Promise<DocumentShares> {
+    this.calls.push({ method: 'getDocumentShares', user });
+    const document = this.documents.get(id);
+    if (!document || !this.sharers.has(user.sub)) return Promise.reject(this.denied(user, id));
+    return Promise.resolve(this.shares.get(id) ?? { editors: [], viewers: [] });
   }
 
   setDocumentShares(user: UserContext, id: string, shares: unknown): Promise<Document> {
@@ -266,7 +274,7 @@ describe('dashboard-api', () => {
   });
 
   describe('GET /documents', () => {
-    it('lists what the caller may view in the wire format, at full consistency, with the caller as context', async () => {
+    it('lists what the caller may view in the wire format, at minimize_latency, with the caller as context', async () => {
       const budget = service.add('Budget', { alice: 'edit', carol: 'view' });
       const payroll = service.add('Payroll', { alice: 'edit' });
       const response = await app.inject({ url: '/documents', headers: bearer(carol) });
@@ -279,6 +287,7 @@ describe('dashboard-api', () => {
             project: { id: budget.projectId, name: 'Budget project' },
             organization: { id: ACME, name: 'Acme' },
             can_edit: false,
+            can_share: false,
             updated_at: '2026-10-18T10:00:00.000Z',
           },
         ],
@@ -286,15 +295,15 @@ describe('dashboard-api', () => {
       const forAlice = await app.inject({ url: '/documents', headers: bearer(alice) });
       expect(forAlice.json<{ documents: { id: string; can_edit: boolean }[] }>().documents).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ id: budget.id, can_edit: true }),
-          expect.objectContaining({ id: payroll.id, can_edit: true }),
+          expect.objectContaining({ id: budget.id, can_edit: true, can_share: true }),
+          expect.objectContaining({ id: payroll.id, can_edit: true, can_share: true }),
         ]),
       );
       expect((await app.inject({ url: '/documents', headers: bearer(bob) })).json()).toEqual({
         documents: [],
       });
       expect(service.calls.map((call) => call.consistency?.level)).toEqual(
-        Array.from({ length: 3 }, () => 'fully_consistent'),
+        Array.from({ length: 3 }, () => 'minimize_latency'),
       );
       expect(service.calls[0]?.user).toEqual({ sub: 'carol', accessToken: carol });
     });
@@ -433,6 +442,35 @@ describe('dashboard-api', () => {
       });
       expect(response.statusCode).toBe(415);
       expect(response.json()).toEqual({ error: 'bad_request' });
+    });
+  });
+
+  describe('GET /documents/:id/shares', () => {
+    it('answers the shares to whoever may share, 403 to a viewer, 404 to anyone else', async () => {
+      const budget = service.add('Budget', { alice: 'edit', carol: 'view' });
+      service.shares.set(budget.id, { editors: ['bob'], viewers: ['carol'] });
+      const response = await app.inject({
+        url: `/documents/${budget.id}/shares`,
+        headers: bearer(alice),
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ editors: ['bob'], viewers: ['carol'] });
+      const viewer = await app.inject({
+        url: `/documents/${budget.id}/shares`,
+        headers: bearer(carol),
+      });
+      expect(viewer.statusCode).toBe(403);
+      expect(viewer.json()).toEqual({ error: 'forbidden' });
+      const stranger = await app.inject({
+        url: `/documents/${budget.id}/shares`,
+        headers: bearer(bob),
+      });
+      expect(stranger.statusCode).toBe(404);
+      expect(stranger.json()).toEqual({ error: 'not_found' });
+      expect(service.calls.at(-1)).toEqual({
+        method: 'getDocumentShares',
+        user: { sub: 'bob', accessToken: bob },
+      });
     });
   });
 
@@ -631,6 +669,7 @@ describe('dashboard-api', () => {
           project: { id: budget.projectId, name: 'Budget project' },
           organization: { id: ACME, name: 'Acme' },
           canEdit: false,
+          canShare: false,
           updatedAt: budget.updatedAt,
         },
       ]);
@@ -657,6 +696,10 @@ describe('dashboard-api', () => {
       });
       expect(shared).toMatchObject({ id: budget.id, value1: 'three' });
       expect(service.shares.get(budget.id)).toEqual({ editors: ['bob'], viewers: [] });
+      expect(await client.getDocumentShares(user, budget.id)).toEqual({
+        editors: ['bob'],
+        viewers: [],
+      });
       const workspace = await client.ensurePersonalProject(user, ACME);
       expect(workspace).toMatchObject({
         created: true,
@@ -668,6 +711,7 @@ describe('dashboard-api', () => {
       });
       expect(service.calls.map((call) => call.user.accessToken)).toEqual([
         carol,
+        alice,
         alice,
         alice,
         alice,

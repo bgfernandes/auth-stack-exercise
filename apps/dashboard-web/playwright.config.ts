@@ -1,7 +1,7 @@
 /**
- * The end-to-end suite (docs/TICKETS.md tickets 13 and 20): the login-and-edit flow of the three seeded users,
- * and the single sign-on and sign-out between the two web apps, driven through a real browser against a running
- * stack. Nothing is started here: the apps must already answer at `E2E_BASE_URL` (default: the compose stack
+ * The end-to-end suite (docs/TICKETS.md tickets 13, 20, and 21): the login-and-edit flow of the three seeded
+ * users, the single sign-on and sign-out between the two web apps, and sharing a document from the dashboard,
+ * driven through a real browser against a running stack. Nothing is started here: the apps must already answer at `E2E_BASE_URL` (default: the compose stack
  * with the apps profile, or Tilt, both at dashboard.localtest.me:3000) and, for the sign-on spec, at
  * `E2E_TENANCY_WEB_URL` (tenancy.localtest.me:3001), and bootstrap must have written `.local/config/seed.json`,
  * which the specs read for the users and document IDs.
@@ -16,11 +16,11 @@ const CI = Boolean(process.env.CI);
 
 export default defineConfig({
   testDir: './e2e',
-  // The spec files are independent (disjoint documents, one browser context and so one IdP session each), so
-  // they may run in parallel; the tests inside a file run in order, since each walks one user's flow. One worker
-  // on CI, where the stack shares two cores.
+  // One file at a time: the share spec changes what Bob's dashboard lists while it runs, which Bob's own spec
+  // asserts exactly, so the files are not independent any more (they were until ticket 21). The tests inside a
+  // file run in order, since each walks one user's flow.
   fullyParallel: false,
-  ...(CI ? { workers: 1 } : {}),
+  workers: 1,
   // One retry on CI: a run that passed on the retry is reported as flaky, not hidden. None locally.
   retries: CI ? 1 : 0,
   forbidOnly: CI,

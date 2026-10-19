@@ -15,7 +15,7 @@ The service also needs a `TenancyClient` ([`@auth-stack/tenancy/client`](../tena
 ## Usage
 
 ```ts
-import { authzOptionsFromEnv, createAuthz, fullyConsistent } from '@auth-stack/authz';
+import { authzOptionsFromEnv, createAuthz, minimizeLatency } from '@auth-stack/authz';
 import { createDb } from '@auth-stack/db-core';
 import { createDocumentsService, DocumentsError, schema } from '@auth-stack/documents';
 
@@ -25,14 +25,17 @@ const documents = createDocumentsService({ db, authz: createAuthz(authzOptionsFr
 // Login callback (§6.4), after tenancy provisioned the personal organization: idempotent, race-safe.
 const { project, document, created } = await documents.ensurePersonalProject(user, organizationId);
 
-// Dashboard (§6.5): one lookup of `view`, one bulk check of `edit`; phase 1 lists at full consistency.
-const rows = await documents.listVisibleDocuments(user, fullyConsistent); // { id, name, project, organization, canEdit }
+// Dashboard (§6.5): one lookup of `view`, one bulk check of `edit`, at the listing level of §7.3: a cached
+// snapshot that may lag a write by up to one quantization window, for everyone including the writer.
+const rows = await documents.listVisibleDocuments(user, minimizeLatency); // { id, name, project, organization, canEdit, canShare }
 
 // Edit form and save (§6.5, §7.3): `edit` at least as fresh as the row's token to read, fully consistent to write.
 const row = await documents.getDocumentForEdit(user, id);
 const updated = await documents.updateDocument(user, id, { value1, value2 }); // stores the check's token with the values
 
-// Share (§6.8, §7.3): replaces the document's direct shares with this set; `share` fully consistent, member IDs only.
+// Share (§6.8, §7.3): the direct shares as the last share left them (`share` at least as fresh as the row's token),
+// and their replacement with a set; `share` fully consistent, member IDs only.
+const shares = await documents.getDocumentShares(user, id); // { editors: [...subs], viewers: [...subs] }
 const shared = await documents.setDocumentShares(user, id, { editors: [bobSub], viewers: [] }); // stores the write's token
 ```
 

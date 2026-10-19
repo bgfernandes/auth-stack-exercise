@@ -45,8 +45,17 @@ export interface DocumentsService {
    * The user needs `organization#create_project`, checked at full consistency.
    */
   ensurePersonalProject(user: UserContext, organizationId: string): Promise<PersonalWorkspace>;
-  /** Every document the user may view, with `canEdit` from one bulk check, both at `consistency` (§6.5). */
+  /**
+   * Every document the user may view, with `canEdit` and `canShare` from one bulk check, all at `consistency`
+   * (§6.5): the dashboard's hints, decided at the listing level of §7.3.
+   */
   listVisibleDocuments(user: UserContext, consistency: Consistency): Promise<VisibleDocument[]>;
+  /**
+   * The document's direct shares (§6.8), for a caller with `document#share`: read at least as fresh as the
+   * row's token, which the last share stored (§7.3), so the set is the one that share left; `forbidden` for a
+   * user who may view the document without sharing it, `not_found` otherwise.
+   */
+  getDocumentShares(user: UserContext, id: string): Promise<DocumentShares>;
   /** The row for the edit form: `edit` at least as fresh as the row's token; `view` only is forbidden. */
   getDocumentForEdit(user: UserContext, id: string): Promise<Document>;
   /** Validates the values, checks `edit` at full consistency, stores values and the check's token together. */
@@ -105,12 +114,15 @@ export function createDocumentsService(deps: {
       : new DocumentsError('not_found', 'document not found');
   }
 
-  /** The direct shares on the row, read fully consistent so a replacement deletes what is really there. */
-  async function currentShares(documentId: string): Promise<DocumentShares> {
+  /** The direct shares on the row: fully consistent for a replacement, so its deletes name what is really there. */
+  async function currentShares(
+    documentId: string,
+    consistency: Consistency,
+  ): Promise<DocumentShares> {
     const shares: DocumentShares = { editors: [], viewers: [] };
     const found = await authz.readRelationships(
       { resourceType: 'document', resourceId: documentId },
-      fullyConsistent,
+      consistency,
     );
     for (const { relation, subject } of found) {
       if (subject.type !== 'user') continue;
@@ -218,8 +230,12 @@ export function createDocumentsService(deps: {
         .from(documents)
         .innerJoin(projects, eq(documents.projectId, projects.id))
         .where(inArray(documents.id, ids));
-      const editable = await authz.bulkCheck(
-        rows.map((row) => ({ resource: ref('document', row.id), permission: 'edit', subject })),
+      // One bulk request decides both hints (§6.5): `edit` then `share` for every row, two answers per row.
+      const hints = await authz.bulkCheck(
+        rows.flatMap((row) => [
+          { resource: ref('document', row.id), permission: 'edit' as const, subject },
+          { resource: ref('document', row.id), permission: 'share' as const, subject },
+        ]),
         consistency,
       );
       const names = new Map<string, string | undefined>();
@@ -233,7 +249,8 @@ export function createDocumentsService(deps: {
           name: row.name,
           project: { id: row.projectId, name: row.projectName },
           organization: { id: row.organizationId, name: names.get(row.organizationId) },
-          canEdit: editable[index] ?? false,
+          canEdit: hints[2 * index] ?? false,
+          canShare: hints[2 * index + 1] ?? false,
           updatedAt: row.updatedAt,
         }))
         .sort(byPlace);
@@ -268,6 +285,15 @@ export function createDocumentsService(deps: {
       return updated;
     },
 
+    async getDocumentShares(user, id) {
+      const row = await load(id);
+      if (!row) throw new DocumentsError('not_found', 'document not found');
+      const consistency = atLeastAsFresh(row.zedtoken);
+      const share = await check(user, id, 'share', consistency);
+      if (!share.allowed) throw await denied(user, row, consistency, 'share');
+      return currentShares(id, consistency);
+    },
+
     async setDocumentShares(user, id, shares) {
       const desired = parseDocumentShares(shares);
       const row = await load(id);
@@ -290,7 +316,7 @@ export function createDocumentsService(deps: {
 
       // The difference between what is there and what is wanted, written in one atomic call. Two concurrent
       // replacements race; the later write wins whole, which is what replacing a set means.
-      const current = await currentShares(id);
+      const current = await currentShares(id, fullyConsistent);
       const updates: RelationshipUpdate[] = [];
       for (const role of ['editors', 'viewers'] as const) {
         const relation = role === 'editors' ? 'editor' : 'viewer';

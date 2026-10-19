@@ -53,6 +53,7 @@ describe('the documents wire format', () => {
         project: { id: document.projectId, name: 'Marketing' },
         organization: { id: document.organizationId, name: 'Acme' },
         canEdit: false,
+        canShare: false,
         updatedAt: at,
       },
       {
@@ -61,6 +62,7 @@ describe('the documents wire format', () => {
         project: { id: '5eed0000-0000-4000-8000-000000000005', name: 'Personal' },
         organization: { id: '5eed0000-0000-4000-8000-000000000006', name: undefined },
         canEdit: true,
+        canShare: true,
         updatedAt: at,
       },
     ];
@@ -69,7 +71,11 @@ describe('the documents wire format', () => {
       id: '5eed0000-0000-4000-8000-000000000006',
       name: null,
     });
-    expect(wire.documents[0]).toMatchObject({ can_edit: false, updated_at: at.toISOString() });
+    expect(wire.documents[0]).toMatchObject({
+      can_edit: false,
+      can_share: false,
+      updated_at: at.toISOString(),
+    });
     expect(documentsWire.parse(wire).documents.map(fromVisibleDocumentWire)).toEqual(rows);
   });
 

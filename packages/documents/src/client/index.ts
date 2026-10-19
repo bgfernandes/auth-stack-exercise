@@ -74,7 +74,15 @@ export interface VisibleDocument {
   /** The name is undefined when tenancy does not show the organization to the user. */
   organization: { id: string; name: string | undefined };
   canEdit: boolean;
+  /** Whether the "Share" hint applies: `document#share`, decided in the same bulk check as `edit`. */
+  canShare: boolean;
   updatedAt: Date;
+}
+
+/** The direct shares of a document (§6.8), by `sub`: what `GET /documents/:id/shares` answers and `PUT` receives. */
+export interface DocumentShares {
+  editors: string[];
+  viewers: string[];
 }
 
 /** The personal workspace (§6.4) as `POST /organizations/:id/personal-project` answers it. */

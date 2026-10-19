@@ -12,13 +12,17 @@ import { eq, sql } from 'drizzle-orm';
 import { ZodError } from 'zod';
 
 import {
+  atLeastAsFresh,
   authzOptionsFromEnv,
   createAuthz,
   fullyConsistent,
+  minimizeLatency,
   ref,
   relationship,
+  remove,
   touch,
   type Authz,
+  type Consistency,
 } from '@auth-stack/authz';
 import { ensureSchema } from '@auth-stack/authz/schema';
 import {
@@ -186,11 +190,14 @@ describe('listVisibleDocuments, getDocumentForEdit, updateDocument', () => {
         project: { id: project.id, name: 'Personal' },
         organization: { id: ACME, name: 'Acme' },
         canEdit: true,
+        canShare: true,
         updatedAt: document.updatedAt,
       },
     ]);
     const forBob = await service.listVisibleDocuments(bob, fullyConsistent);
-    expect(forBob.map((row) => [row.id, row.canEdit])).toEqual([[document.id, false]]);
+    expect(forBob.map((row) => [row.id, row.canEdit, row.canShare])).toEqual([
+      [document.id, false, false],
+    ]);
     expect(await service.listVisibleDocuments(carol, fullyConsistent)).toEqual([]);
 
     expect((await service.getDocumentForEdit(alice, document.id)).id).toBe(document.id);
@@ -291,6 +298,17 @@ describe('setDocumentShares', () => {
       updatedBy: document.updatedBy,
     });
     expect(await sharesOf(document.id)).toEqual([`editor:${dave.sub}`, `viewer:${bob.sub}`].sort());
+    // The share page's read sees the set the share left, at the row's token; it is for sharers only.
+    expect(await service.getDocumentShares(alice, document.id)).toEqual({
+      editors: [dave.sub],
+      viewers: [bob.sub],
+    });
+    await expect(service.getDocumentShares(dave, document.id)).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+    await expect(service.getDocumentShares(carol, document.id)).rejects.toMatchObject({
+      code: 'not_found',
+    });
     expect((await service.getDocumentForEdit(dave, document.id)).id).toBe(document.id);
     await expect(service.getDocumentForEdit(bob, document.id)).rejects.toMatchObject({
       code: 'forbidden',
@@ -355,6 +373,159 @@ describe('setDocumentShares', () => {
     ).rejects.toBeInstanceOf(ZodError);
     expect(await sharesOf(document.id)).toEqual([]);
   });
+});
+
+describe('the New Enemy problem (§7)', () => {
+  // The window inside which a `minimize_latency` answer is the snapshot before a write: compose pins SpiceDB's
+  // `--datastore-revision-quantization-interval` at 5 s, and SpiceDB may keep serving a window's revision for a
+  // tenth of that after it ends (`--datastore-revision-quantization-max-staleness-percent`, 0.1 by default).
+  // What a listing may lag is that plus cache propagation; the tests allow seven seconds.
+  const WINDOW_MS = 5_000;
+  const LAG_MS = 7_000;
+  const erin = user('erin');
+
+  beforeAll(async () => {
+    await authz.writeRelationships([
+      touch(relationship(ref('organization', ACME), 'member', ref('user', erin.sub))),
+    ]);
+  });
+
+  /**
+   * A project of its own with Bob as an editor and one document, Bob's role written before the seed so that the
+   * token the seed stores on the row postdates the grant: Bob's reads at the row's token see it at once (§7.3).
+   */
+  async function fixture() {
+    const project = randomUUID();
+    const id = randomUUID();
+    await authz.writeRelationships([
+      touch(relationship(ref('project', project), 'editor', ref('user', bob.sub))),
+    ]);
+    await seedDocuments(
+      { db: database.db, authz },
+      {
+        organizationId: ACME,
+        createdBy: alice.sub,
+        projects: [{ id: project, name: `Enemy ${project.slice(0, 8)}` }],
+        documents: [{ id, projectId: project, name: 'Secret', value1: 'a', value2: 'b' }],
+      },
+    );
+    return { project, document: await service.getDocumentForEdit(bob, id) };
+  }
+
+  const canView = async (sub: string, id: string, consistency: Consistency) =>
+    (
+      await authz.check({
+        resource: ref('document', id),
+        permission: 'view',
+        subject: ref('user', sub),
+        consistency,
+      })
+    ).allowed;
+  const lists = async (sub: string, id: string, consistency: Consistency) =>
+    (await service.listVisibleDocuments({ sub, accessToken: 'unused' }, consistency)).some(
+      (row) => row.id === id,
+    );
+
+  /** Polls `read` until it returns `expected`, inside the lag; the time it took, or a failure with the last value. */
+  async function within(
+    ms: number,
+    read: () => Promise<boolean>,
+    expected: boolean,
+  ): Promise<number> {
+    const started = Date.now();
+    let last = await read();
+    while (last !== expected && Date.now() - started < ms) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      last = await read();
+    }
+    expect(last).toBe(expected);
+    return Date.now() - started;
+  }
+
+  /**
+   * Puts a test inside a quantization window whose snapshot predates the removal it is about to make, going by
+   * what SpiceDB serves rather than by the clock. SpiceDB pins a window's snapshot to the first transaction at
+   * or after the window's start, and serves the head until one lands (observed on the Postgres datastore: a
+   * write that is the first of its window is visible at `minimize_latency` at once). So: wait until the
+   * fixture is visible at that level, then make one more write, the anchor, so that whichever transaction the
+   * window pins to, the anchor or an earlier one, holds the fixture and precedes what the test writes next;
+   * and keep away from the boundary by the clock as well, so the test's own writes stay inside the window.
+   */
+  async function inStaleWindow() {
+    const { project, document } = await fixture();
+    await within(LAG_MS, () => canView(bob.sub, document.id, minimizeLatency), true);
+    const phase = Date.now() % WINDOW_MS;
+    if (phase < 500 || phase > WINDOW_MS - 1_500) {
+      await new Promise((resolve) => setTimeout(resolve, WINDOW_MS - phase + 500));
+    }
+    await authz.writeRelationships([
+      touch(relationship(ref('organization', ACME), 'member', ref('user', erin.sub))),
+    ]);
+    expect(await canView(bob.sub, document.id, minimizeLatency)).toBe(true);
+    return { project, document, start: Date.now() };
+  }
+
+  /**
+   * The removal that opens the window: Bob loses his project role, the write tenancy's membership change makes
+   * (tenancy is faked here). The stale snapshot still holds it until the window ends.
+   */
+  const removeBob = (project: string) =>
+    authz.writeRelationships([
+      remove(relationship(ref('project', project), 'editor', ref('user', bob.sub))),
+    ]);
+
+  /**
+   * What both cases assert once the row carries a token that postdates the removal: the old snapshot still
+   * allows and still lists (the New Enemy, inside the window), while a read at the row's token, and at the
+   * head, refuses, and the listing converges inside the lag.
+   */
+  async function assertEnemyThenToken(document: { id: string; zedtoken: string }, start: number) {
+    const stale = await canView(bob.sub, document.id, minimizeLatency);
+    const listed = await lists(bob.sub, document.id, minimizeLatency);
+    const elapsed = Date.now() - start;
+    // The window is the premise: a run that may have outlived it proves nothing either way, so say so.
+    if (elapsed > 1_000) throw new Error(`the run took ${elapsed} ms, too long for one window`);
+    expect(stale).toBe(true);
+    expect(listed).toBe(true);
+
+    expect(await canView(bob.sub, document.id, atLeastAsFresh(document.zedtoken))).toBe(false);
+    expect(await canView(bob.sub, document.id, fullyConsistent)).toBe(false);
+    await expect(service.getDocumentForEdit(bob, document.id)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    expect(await lists(bob.sub, document.id, fullyConsistent)).toBe(false);
+
+    // Convergence: the listing and the check each inside the lag, polled apart, since SpiceDB may serve either
+    // call the old revision for a while after the window ends (the max-staleness allowance is taken per call).
+    const since = Date.now();
+    await within(LAG_MS, () => lists(bob.sub, document.id, minimizeLatency), false);
+    await within(LAG_MS, () => canView(bob.sub, document.id, minimizeLatency), false);
+    expect(Date.now() - since).toBeLessThan(LAG_MS);
+  }
+
+  it('case 2, an old ACL applied to new content: removed, then edited, Bob reads nothing at the row token', async () => {
+    const { project, document, start } = await inStaleWindow();
+    await removeBob(project);
+    const edited = await service.updateDocument(alice, document.id, {
+      value1: 'after',
+      value2: 'removal',
+    });
+    expect(edited.zedtoken).not.toBe(document.zedtoken);
+    await assertEnemyThenToken(edited, start);
+  }, 30_000);
+
+  it('case 1, update order neglected: removed, then shared to Erin, Bob reads nothing and Erin reads at once', async () => {
+    const { project, document, start } = await inStaleWindow();
+    await removeBob(project);
+    const shared = await service.setDocumentShares(alice, document.id, {
+      editors: [erin.sub],
+      viewers: [],
+    });
+    expect(shared.zedtoken).not.toBe(document.zedtoken);
+    // The grant is no false negative either: the row's token postdates it (§7.3's share row).
+    expect((await service.getDocumentForEdit(erin, document.id)).id).toBe(document.id);
+    await assertEnemyThenToken(shared, start);
+  }, 30_000);
 });
 
 describe('seedDocuments', () => {
