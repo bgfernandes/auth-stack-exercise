@@ -1,6 +1,8 @@
 import Link from 'next/link';
 
-import { displayName, getCurrentUser } from '../lib/current-user';
+import { CSRF_FIELD } from '@auth-stack/auth';
+
+import { displayName, getCsrfToken, getCurrentUser } from '../lib/current-user';
 
 import type { ReactNode } from 'react';
 
@@ -11,9 +13,13 @@ export const metadata = { title: 'Dashboard' };
 // Every page reads the session, so none is prerendered: the build renders nothing and reads no configuration.
 export const dynamic = 'force-dynamic';
 
-/** The frame of every page: the app name, and who is signed in with the logout form, or the login link. */
+/**
+ * The frame of every page: the app name, and who is signed in with the logout form, or the login link. The
+ * logout form carries the session's synchronizer token (docs/README.md §9, "CSRF"), as every form does.
+ */
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const user = await getCurrentUser();
+  const csrfToken = user && (await getCsrfToken());
   return (
     <html lang="en">
       <body>
@@ -26,6 +32,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
               <>
                 <span>{displayName(user)}</span>
                 <form method="post" action="/auth/logout">
+                  <input type="hidden" name={CSRF_FIELD} value={csrfToken} />
                   <button type="submit">Log out</button>
                 </form>
               </>

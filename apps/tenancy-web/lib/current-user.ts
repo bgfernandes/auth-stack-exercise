@@ -35,6 +35,18 @@ export const getCurrentUserContext = cache(async (): Promise<UserContext | undef
   return accessToken ? { sub: session.sub, accessToken } : undefined;
 });
 
+/** The session's synchronizer token for the forms (docs/README.md §9, "CSRF"); undefined without a session. */
+export const getCsrfToken = cache(async (): Promise<string | undefined> => {
+  const session = await currentSession();
+  return session && auth().csrfTokenOf(session);
+});
+
+/** Whether a posted form's `csrf_token` is the session's; false without a session. */
+export async function verifyCsrfToken(presented: unknown): Promise<boolean> {
+  const session = await currentSession();
+  return session !== undefined && auth().verifyCsrfToken(session, presented);
+}
+
 /** What the pages greet the user by: the name from the ID token, the email, or the subject. */
 export function displayName(user: CurrentUser): string {
   return user.name ?? user.email ?? user.sub;

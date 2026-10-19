@@ -11,6 +11,7 @@ describe('redact', () => {
         accessToken: 'at',
         refresh_token: 'rt',
         idToken: 'idt',
+        csrf_token: 'ct',
         sessionId: 'sid',
         nested: { Authorization: 'Bearer x', cookie: 'a=b', list: [{ password: 'p', ok: 1 }] },
       }),
@@ -20,6 +21,7 @@ describe('redact', () => {
       accessToken: '[redacted]',
       refresh_token: '[redacted]',
       idToken: '[redacted]',
+      csrf_token: '[redacted]',
       sessionId: '[redacted]',
       nested: {
         Authorization: '[redacted]',

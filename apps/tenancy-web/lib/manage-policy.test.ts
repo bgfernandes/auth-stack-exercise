@@ -35,11 +35,15 @@ describe('policyFromForm', () => {
 describe('the policy route', () => {
   const setPolicy = jest.fn<TenancyClient['setPolicy']>();
   const userFromRequest = jest.fn<(request: Request) => Promise<typeof alice | undefined>>();
+  /** The session's token, as the page rendered it; the fake verifies the value and nothing else. */
+  const TOKEN = 'the-sessions-token';
+  const verifyCsrfToken = jest.fn<(presented: unknown) => Promise<boolean>>();
   const events: string[] = [];
   const handle = createPolicyHandler({
     tenancy: { setPolicy },
     appUrl: APP_URL,
     userFromRequest,
+    verifyCsrfToken,
     logger: {
       info: (event) => {
         events.push(event);
@@ -49,11 +53,12 @@ describe('the policy route', () => {
       },
     },
   });
-  const post = (fields: Record<string, string>, origin = APP_URL) =>
+  /** A post of the form's fields with the session's token, unless `token` says otherwise (null: none). */
+  const post = (fields: Record<string, string>, origin = APP_URL, token: string | null = TOKEN) =>
     new Request(`${APP_URL}/organizations/${ACME}/policy`, {
       method: 'POST',
       headers: { origin },
-      body: new URLSearchParams(fields),
+      body: new URLSearchParams(token === null ? fields : { ...fields, csrf_token: token }),
     });
 
   beforeEach(() => {
@@ -61,6 +66,9 @@ describe('the policy route', () => {
       .mockReset()
       .mockResolvedValue({ id: ACME, name: 'Acme', isPersonal: false, policy: {} });
     userFromRequest.mockReset().mockResolvedValue(alice);
+    verifyCsrfToken
+      .mockReset()
+      .mockImplementation((presented) => Promise.resolve(presented === TOKEN));
     events.length = 0;
   });
 
@@ -69,6 +77,13 @@ describe('the policy route', () => {
     userFromRequest.mockResolvedValue(undefined);
     expect((await handle(post({}), ACME)).status).toBe(401);
     expect(setPolicy).not.toHaveBeenCalled();
+  });
+
+  it('refuses a form without the session’s token, before any call', async () => {
+    expect((await handle(post({ require_mfa: 'on' }, APP_URL, null), ACME)).status).toBe(403);
+    expect((await handle(post({ require_mfa: 'on' }, APP_URL, 'other'), ACME)).status).toBe(403);
+    expect(setPolicy).not.toHaveBeenCalled();
+    expect(events).toEqual(['policy.rejected', 'policy.rejected']);
   });
 
   it('saves the policy the form carries and goes back to the page', async () => {

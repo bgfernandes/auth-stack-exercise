@@ -10,6 +10,7 @@ import { test, expect } from '@playwright/test';
 
 import {
   BASE_URL,
+  csrfToken,
   dashboardRows,
   dashboardShows,
   logIn,
@@ -90,9 +91,14 @@ test('alice shares Payroll with Bob, who sees it read-only once the listing catc
     );
     await logOut(bobPage, seed.users.bob.email);
   } finally {
-    // The seed's state whatever happened above: Payroll has no direct share. The same-origin POST of the form.
+    // The seed's state whatever happened above: Payroll has no direct share. The same-origin POST of the form,
+    // with the session's token as Alice's page carries it.
     await page.request.post(`/documents/${payroll.id}/shares`, {
-      form: { [`role:${seed.users.bob.id}`]: 'none', [`role:${seed.users.carol.id}`]: 'none' },
+      form: {
+        [`role:${seed.users.bob.id}`]: 'none',
+        [`role:${seed.users.carol.id}`]: 'none',
+        csrf_token: await csrfToken(page),
+      },
       headers: { origin: BASE_URL },
       maxRedirects: 0,
     });

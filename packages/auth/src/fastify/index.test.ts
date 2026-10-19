@@ -5,7 +5,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { createBearerVerifier, fromScopeClaim, type ScopeResolver } from '../bearer';
 import { createFakeOp, type FakeOp } from '../testing/fake-op';
 
-import { apiServerOptions, bearerPlugin, echoRequestId } from './index';
+import { apiSecurityHeaders, apiServerOptions, bearerPlugin, echoRequestId } from './index';
 
 const PROJECT = 'project-1';
 
@@ -36,6 +36,7 @@ describe('bearerPlugin', () => {
     op = await createFakeOp({ clientId: 'first-party', projectId: PROJECT });
     app = Fastify({ ...apiServerOptions(), logger: false });
     echoRequestId(app);
+    apiSecurityHeaders(app);
     await app.register(bearerPlugin, {
       verifier: createBearerVerifier({
         issuer: op.issuer,
@@ -57,6 +58,22 @@ describe('bearerPlugin', () => {
     await app.ready();
   });
   afterAll(() => app.close());
+
+  it('sends the security headers of §9 on every response, a refusal and the health endpoint included', async () => {
+    const health = await app.inject({ method: 'GET', url: '/health' });
+    const refused = await app.inject({ method: 'GET', url: '/me' });
+    expect(health.statusCode).toBe(200);
+    expect(refused.statusCode).toBe(401);
+    for (const response of [health, refused]) {
+      expect(response.headers).toMatchObject({
+        'content-security-policy': "default-src 'none'; frame-ancestors 'none'",
+        'x-content-type-options': 'nosniff',
+        'referrer-policy': 'no-referrer',
+        'x-frame-options': 'DENY',
+        'cache-control': 'no-store',
+      });
+    }
+  });
 
   it('lets a public route through without a token and denies every other route by default', async () => {
     expect((await app.inject({ url: '/health' })).statusCode).toBe(200);

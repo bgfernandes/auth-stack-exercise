@@ -1,10 +1,10 @@
 /**
- * The save route's handler (docs/README.md §6.5, §9): a same-origin `POST` of the edit form, as the signed-in
- * user, validated before anything is looked up, enforced by `dashboard-api` at full consistency, answered with a
+ * The save route's handler (docs/README.md §6.5, §9): a same-origin `POST` of the edit form carrying the session's
+ * synchronizer token, as the signed-in user, validated before anything is looked up, enforced by `dashboard-api` at full consistency, answered with a
  * redirect the browser follows or with the status a replayed `curl` reads. Built with its dependencies so the
  * unit tests fake them; `app/documents/[id]/route.ts` binds it to the app.
  */
-import { assertSameOrigin } from '@auth-stack/auth';
+import { assertSameOrigin, CSRF_FIELD } from '@auth-stack/auth';
 import { documentValuesSchema, type DocumentsClient } from '@auth-stack/documents/client';
 import { type UserContext } from '@auth-stack/tenancy/client';
 
@@ -17,6 +17,8 @@ export interface DocumentSaverDeps {
   appUrl: string;
   /** The user behind the request's session cookie, with a live access token; undefined when there is none. */
   userFromRequest: (request: Request) => Promise<UserContext | undefined>;
+  /** Whether the posted `csrf_token` is the session's (§9, "CSRF"): the third layer, after the origin check. */
+  verifyCsrfToken: (presented: unknown) => Promise<boolean>;
   logger: Pick<AppLogger, 'info' | 'warn'>;
 }
 
@@ -30,7 +32,7 @@ const TEXT_OF = {
 } as const;
 
 export function createDocumentSaver(deps: DocumentSaverDeps): DocumentSaver {
-  const { documents, appUrl, userFromRequest, logger } = deps;
+  const { documents, appUrl, userFromRequest, verifyCsrfToken, logger } = deps;
   const redirect = (path: string) => Response.redirect(new URL(path, appUrl), 303);
 
   return async (request, documentId) => {
@@ -48,6 +50,10 @@ export function createDocumentSaver(deps: DocumentSaverDeps): DocumentSaver {
     // Validation before any lookup: a bad body answers the same for every ID, so it leaks nothing (§9).
     const form = await formOf(request);
     if (!form) return new Response('Bad Request', { status: 400 });
+    if (!(await verifyCsrfToken(form.get(CSRF_FIELD)))) {
+      logger.warn('document.save_rejected', { reason: 'csrf_token_invalid' });
+      return new Response('Forbidden', { status: 403 });
+    }
     const values = documentValuesSchema.safeParse({
       value1: form.get('value1'),
       value2: form.get('value2'),

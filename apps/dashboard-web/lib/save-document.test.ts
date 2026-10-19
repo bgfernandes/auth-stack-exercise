@@ -11,6 +11,9 @@ const alice = { sub: 'alice', accessToken: 'at-secret' };
 const updateDocument =
   jest.fn<(user: unknown, id: string, values: unknown) => Promise<DocumentSummary>>();
 const userFromRequest = jest.fn<(request: Request) => Promise<typeof alice | undefined>>();
+/** The session's token, as the page rendered it; the fake verifies the value and nothing else. */
+const TOKEN = 'the-sessions-token';
+const verifyCsrfToken = jest.fn<(presented: unknown) => Promise<boolean>>();
 const events: { level: string; event: string; fields: Record<string, unknown> | undefined }[] = [];
 const logger = {
   info: (event: string, fields?: Record<string, unknown>) => {
@@ -24,13 +27,22 @@ const save = createDocumentSaver({
   documents: { updateDocument },
   appUrl: APP_URL,
   userFromRequest,
+  verifyCsrfToken,
   logger,
 });
 
 function post(
-  options: { origin?: string; body?: BodyInit; headers?: Record<string, string> } = {},
+  options: {
+    origin?: string;
+    body?: BodyInit;
+    headers?: Record<string, string>;
+    /** The form's `csrf_token`: the session's unless given, none when null. */
+    token?: string | null;
+  } = {},
 ) {
   const body = options.body ?? new URLSearchParams({ value1: 'Goodbye', value2: 'Moon' });
+  if (body instanceof URLSearchParams && options.token !== null)
+    body.set('csrf_token', options.token ?? TOKEN);
   return new Request(`${APP_URL}/documents/${DOCUMENT_ID}`, {
     method: 'POST',
     headers: { ...(options.origin ? { origin: options.origin } : {}), ...options.headers },
@@ -41,6 +53,9 @@ function post(
 beforeEach(() => {
   updateDocument.mockReset();
   userFromRequest.mockReset().mockResolvedValue(alice);
+  verifyCsrfToken
+    .mockReset()
+    .mockImplementation((presented) => Promise.resolve(presented === TOKEN));
   events.length = 0;
 });
 
@@ -51,6 +66,22 @@ describe('the save route', () => {
     expect(userFromRequest).not.toHaveBeenCalled();
     expect(updateDocument).not.toHaveBeenCalled();
     expect(events.map((e) => [e.level, e.event])).toEqual([['warn', 'document.save_rejected']]);
+  });
+
+  it('refuses a form without the session’s token, after the origin and the session, before any call', async () => {
+    const missing = await save(post({ origin: APP_URL, token: null }), DOCUMENT_ID);
+    const wrong = await save(
+      post({ origin: APP_URL, token: 'another-sessions-token' }),
+      DOCUMENT_ID,
+    );
+    for (const response of [missing, wrong]) expect(response.status).toBe(403);
+    expect(userFromRequest).toHaveBeenCalledTimes(2);
+    expect(verifyCsrfToken.mock.calls).toEqual([[null], ['another-sessions-token']]);
+    expect(updateDocument).not.toHaveBeenCalled();
+    expect(events).toEqual([
+      { level: 'warn', event: 'document.save_rejected', fields: { reason: 'csrf_token_invalid' } },
+      { level: 'warn', event: 'document.save_rejected', fields: { reason: 'csrf_token_invalid' } },
+    ]);
   });
 
   it('answers 401 without a session', async () => {

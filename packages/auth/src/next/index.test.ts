@@ -1,6 +1,8 @@
 /** The Next.js binding with plain `Request`s: the cookies it sets and the responses of each route helper. */
 import { beforeEach, describe, expect, it } from '@jest/globals';
+import { NextResponse } from 'next/server';
 
+import { csrfTokenOf } from '../csrf';
 import { createOidcClient } from '../oidc';
 import { type Session, type SessionStore } from '../session';
 import { createMemorySessionStore } from '../stores/memory';
@@ -48,6 +50,7 @@ describe('createNextAuth', () => {
       store,
       client: createOidcClient(options.oidc, { fetch: op.fetch, serverMetadata: op.metadata }),
       afterLoginPath: '/dashboard',
+      development: false,
       logger: {
         warn: (event, fields) => {
           events.push(event);
@@ -265,6 +268,38 @@ describe('createNextAuth', () => {
     expect(events).toContain('auth.logout_rejected');
   });
 
+  it('logout refuses a form without the session’s token and keeps the session', async () => {
+    const { sessionCookie, sessionId } = await loggedIn();
+    const session = (await store.get(sessionId)) as Session;
+    const logout = (body?: URLSearchParams | string) =>
+      auth.logout(
+        new Request(`${APP}/auth/logout`, {
+          method: 'POST',
+          headers: { cookie: cookieHeader(sessionCookie), origin: APP },
+          ...(body === undefined ? {} : { body }),
+        }),
+      );
+    const noForm = await logout();
+    const noToken = await logout(new URLSearchParams({ other: 'field' }));
+    const wrongToken = await logout(
+      new URLSearchParams({ csrf_token: auth.csrfTokenOf({ id: 'another-session' }) }),
+    );
+    const json = await logout(JSON.stringify({ csrf_token: auth.csrfTokenOf(session) }));
+    for (const response of [noForm, noToken, wrongToken, json]) {
+      expect(response.status).toBe(403);
+      expect(setCookies(response).size).toBe(0);
+    }
+    await expect(store.get(sessionId)).resolves.toBeDefined();
+    expect(events).toEqual(Array<string>(4).fill('auth.logout_rejected'));
+    expect(records.map((r) => r.reason)).toEqual([
+      'form carries no csrf_token',
+      'form carries no csrf_token',
+      "csrf_token is not the session's",
+      'form carries no csrf_token',
+    ]);
+    expect(JSON.stringify(records)).not.toContain(auth.csrfTokenOf(session));
+  });
+
   it('logout deletes the session, clears the cookie, and ends the IdP session', async () => {
     const { sessionCookie, sessionId } = await loggedIn();
     const idToken = (await store.get(sessionId))?.idToken as string;
@@ -272,6 +307,9 @@ describe('createNextAuth', () => {
       new Request(`${APP}/auth/logout`, {
         method: 'POST',
         headers: { cookie: cookieHeader(sessionCookie), origin: APP },
+        body: new URLSearchParams({
+          csrf_token: auth.csrfTokenOf((await store.get(sessionId)) as Session),
+        }),
       }),
     );
     expect(response.status).toBe(303);
@@ -288,6 +326,44 @@ describe('createNextAuth', () => {
       new Request(`${APP}/auth/logout`, { method: 'POST', headers: { origin: APP } }),
     );
     expect(noSession.headers.get('location')).toBe(`${APP}/`);
+  });
+
+  it('derives the synchronizer token from the session with the app’s secret', async () => {
+    const { sessionId } = await loggedIn();
+    const session = (await store.get(sessionId)) as Session;
+    const token = auth.csrfTokenOf(session);
+    expect(token).toBe(csrfTokenOf(session, options.sessionSecret));
+    expect(auth.verifyCsrfToken(session, token)).toBe(true);
+    expect(auth.verifyCsrfToken({ id: 'another' }, token)).toBe(false);
+    expect(auth.verifyCsrfToken(session, undefined)).toBe(false);
+  });
+
+  it('securityHeaders sets the headers of §9 on every response, the policy on the request too, a nonce each time', () => {
+    const request = new Request(`${APP}/dashboard`, { headers: { accept: 'text/html' } });
+    const first = auth.securityHeaders(request);
+    const next = first.next();
+    const policy = next.headers.get('content-security-policy') as string;
+    const nonce = /'nonce-([^']+)'/.exec(policy)?.[1] as string;
+    expect(policy).toBe(
+      `default-src 'self'; script-src 'self' 'nonce-${nonce}' 'strict-dynamic'; style-src 'self' 'nonce-${nonce}'; img-src 'self'; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self' https://op.test; frame-ancestors 'none'; upgrade-insecure-requests`,
+    );
+    expect(next.headers.get('strict-transport-security')).toBe(
+      'max-age=31536000; includeSubDomains',
+    );
+    expect(next.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(next.headers.get('referrer-policy')).toBe('same-origin');
+    expect(next.headers.get('x-frame-options')).toBe('DENY');
+    // How `NextResponse.next({ request })` carries a request header to the page: Next.js reads the nonce there.
+    expect(next.headers.get('x-middleware-request-content-security-policy')).toBe(policy);
+    expect(next.headers.get('x-middleware-request-accept')).toBe('text/html');
+
+    const redirect = first.apply(NextResponse.redirect(`${APP}/auth/login`, 307));
+    expect(redirect.status).toBe(307);
+    expect(redirect.headers.get('content-security-policy')).toBe(policy);
+    expect(redirect.headers.has('x-middleware-request-content-security-policy')).toBe(false);
+
+    const second = auth.securityHeaders(request).next().headers.get('content-security-policy');
+    expect(second).not.toBe(policy);
   });
 
   it('backchannelLogout removes the session the IdP names, with no origin check and no cookie', async () => {

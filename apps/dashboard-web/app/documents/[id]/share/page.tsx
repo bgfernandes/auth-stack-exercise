@@ -1,6 +1,9 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 
+import { CSRF_FIELD } from '@auth-stack/auth';
+
+import { getCsrfToken } from '../../../../lib/current-user';
 import { documentForShare } from '../../../../lib/documents';
 
 import type { Member } from '@auth-stack/tenancy/client';
@@ -16,7 +19,8 @@ type Role = 'none' | 'viewer' | 'editor';
  * The share form (docs/README.md §6.8): the members of the organization that owns the document, each with the
  * direct access they hold on it, none, viewer, or editor, as the API read them at the row's token (§7.3); shown
  * only to a user with `document#share`. Project roles are not shown or changed here: a project editor keeps
- * editing whatever this form says. The form posts the whole set to `POST /documents/:id/shares`.
+ * editing whatever this form says. The form posts the whole set to `POST /documents/:id/shares` with the
+ * session's synchronizer token (§9, "CSRF").
  */
 export default async function ShareDocumentPage({ params, searchParams }: Props) {
   const { id } = await params;
@@ -26,6 +30,7 @@ export default async function ShareDocumentPage({ params, searchParams }: Props)
   if (result.state === 'forbidden') return <Forbidden />;
   const { document, shares, members } = result;
   const { error } = await searchParams;
+  const csrfToken = await getCsrfToken();
   const roleOf = (member: Member): Role =>
     shares.editors.includes(member.sub)
       ? 'editor'
@@ -51,6 +56,7 @@ export default async function ShareDocumentPage({ params, searchParams }: Props)
         <p>Nobody to share with: you are the only member of this organization.</p>
       ) : (
         <form method="post" action={`/documents/${document.id}/shares`}>
+          <input type="hidden" name={CSRF_FIELD} value={csrfToken} />
           <table>
             <thead>
               <tr>

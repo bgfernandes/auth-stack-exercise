@@ -1,6 +1,7 @@
 /**
  * `@auth-stack/auth/fastify`: the bearer verification and the scope gate as a Fastify plugin (docs/README.md
- * §6.7, §9), plus the server options every API shares (request IDs, log redaction). Deny by default: once the
+ * §6.7, §9), plus the server options every API shares (request IDs, log redaction) and the security headers of
+ * §9 on every response (`apiSecurityHeaders`). Deny by default: once the
  * plugin is registered, every route needs a valid bearer token unless it says `config: { public: true }` (the
  * health endpoint); `fastify.requireScope(...)` adds the scope check to a route. Failures answer per RFC 6750
  * §3: `401` with `WWW-Authenticate: Bearer` or `Bearer error="invalid_token"`, `403` with
@@ -19,6 +20,7 @@ import {
   type Principal,
   type ScopeResolver,
 } from '../bearer';
+import { API_SECURITY_HEADERS } from '../headers';
 
 import type {
   FastifyBaseLogger,
@@ -145,5 +147,12 @@ export function apiServerOptions(
 export function echoRequestId(fastify: FastifyInstance): void {
   fastify.addHook('onSend', async (request, reply) => {
     reply.header('x-request-id', request.id);
+  });
+}
+
+/** The security headers of §9 on every response, errors and the health endpoint included. Register once per server. */
+export function apiSecurityHeaders(fastify: FastifyInstance): void {
+  fastify.addHook('onSend', async (_request, reply) => {
+    for (const [name, value] of Object.entries(API_SECURITY_HEADERS)) reply.header(name, value);
   });
 }

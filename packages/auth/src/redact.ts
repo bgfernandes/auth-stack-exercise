@@ -7,7 +7,7 @@
 const REDACTED = '[redacted]';
 
 const SENSITIVE_KEY =
-  /^(access_?token|refresh_?token|id_?token|token|session_?id|sid|session|cookie|set-cookie|authorization|password|secret|code|code_?verifier|state|nonce)$/i;
+  /^(access_?token|refresh_?token|id_?token|csrf_?token|token|session_?id|sid|session|cookie|set-cookie|authorization|password|secret|code|code_?verifier|state|nonce)$/i;
 
 export function redact<T>(value: T): T {
   return redactValue(value, 0) as T;

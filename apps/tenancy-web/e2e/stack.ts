@@ -75,6 +75,14 @@ export async function logOut(page: Page, email: string): Promise<void> {
   await expect(page.getByLabel('Password')).toBeVisible();
 }
 
+/**
+ * The session's synchronizer token (docs/README.md §9, "CSRF"), read from the header's logout form, which every
+ * page of a signed-in user carries: what a crafted post must send to reach the authorization decision.
+ */
+export async function csrfToken(page: Page): Promise<string> {
+  return page.locator('form[action="/auth/logout"] input[name="csrf_token"]').inputValue();
+}
+
 export interface MemberRow {
   name: string;
   email: string;
