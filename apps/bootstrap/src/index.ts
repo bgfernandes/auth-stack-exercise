@@ -72,8 +72,9 @@ export function webAppConfig(publicUrl: string): OidcAppConfig {
     authMethodType: 'OIDC_AUTH_METHOD_TYPE_NONE',
     accessTokenType: 'OIDC_TOKEN_TYPE_JWT',
     idTokenUserinfoAssertion: true,
-    // Allows an http:// redirect URI on a host other than localhost (ticket 3); off behind TLS.
-    devMode: true,
+    // Allows an http:// redirect URI on a host other than localhost (ticket 3). Only while the app is served
+    // over plain HTTP: behind TLS the flag would let a plain-HTTP redirect URI stay registered unnoticed.
+    devMode: !publicUrl.startsWith('https://'),
     // Zitadel calls this URL server to server (§4.4 step 6; the sink of `@auth-stack/auth`). It is the public
     // URL: Zitadel resolves the hostname at registration time, and the app's service name is not in DNS until
     // the app starts, which happens after bootstrap. zitadel-api maps the hostname to the host gateway.

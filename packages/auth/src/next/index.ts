@@ -16,7 +16,7 @@ import { assertSameOrigin, cookieAttributes, readCookie, type CookieAttributes }
 import { CSRF_FIELD, csrfTokenOf, verifyCsrfToken } from '../csrf';
 import { AuthError } from '../errors';
 import { newNonce, webSecurityHeaders } from '../headers';
-import { createOidcClient, type OidcClient } from '../oidc';
+import { createOidcClient, type OidcClient, type TokenTypeHint } from '../oidc';
 import { redact, type AuthLogger } from '../redact';
 import { sessionFromLogin, type Session, type SessionStore } from '../session';
 import { openStash, sealStash, STASH_LIFETIME_SECONDS } from '../stash';
@@ -63,7 +63,7 @@ export interface NextAuth {
   login(): Promise<NextResponse>;
   /** Completes a login: the session is created and its cookie set; any failure is the generic failed response. */
   callback(request: Request): Promise<NextResponse>;
-  /** Ends the session and sends the browser to the IdP's end-session endpoint; a same-origin form carrying the session's token only. */
+  /** Ends the session, revokes its tokens, and sends the browser to the IdP's end-session endpoint; a same-origin form carrying the session's token only. */
   logout(request: Request): Promise<NextResponse>;
   /** The back-channel logout sink (§4.4 step 6): the IdP's logout token in, the sessions it names gone. */
   backchannelLogout(request: Request): Promise<NextResponse>;
@@ -114,6 +114,27 @@ export function createNextAuth(init: NextAuthOptions): NextAuth {
 
   const clear = (response: NextResponse, name: string, attributes: CookieAttributes) =>
     response.cookies.set(name, '', { ...attributes, maxAge: 0 });
+
+  async function revokeTokens(session: Session): Promise<void> {
+    const tokens: [string | undefined, TokenTypeHint][] = [
+      [session.refreshToken, 'refresh_token'],
+      [session.accessToken, 'access_token'],
+    ];
+    for (const [token, tokenTypeHint] of tokens) {
+      if (!token) continue;
+      try {
+        await client.revoke(token, tokenTypeHint);
+      } catch (error) {
+        logger?.warn(
+          'auth.revocation_failed',
+          redact({
+            tokenTypeHint,
+            reason: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      }
+    }
+  }
 
   async function liveSession(id: string | undefined): Promise<Session | undefined> {
     if (!id) return undefined;
@@ -207,6 +228,10 @@ export function createNextAuth(init: NextAuthOptions): NextAuth {
         }
       }
       if (id) await store.delete(id);
+      // The tokens the session held are revoked at the issuer (RFC 7009), the refresh token first: a stolen
+      // refresh token mints new access tokens, an access token is bounded by its ten minutes. Best effort: the
+      // session is already gone, and a logout never fails because the revocation did.
+      if (session) await revokeTokens(session);
       // The IdP session ends too (§4.4 step 5); without a session of our own there is no ID token to hint with.
       const target = session
         ? await client.endSessionUrl(session.idToken)

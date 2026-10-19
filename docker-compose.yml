@@ -14,7 +14,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD}
     ports:
       # Published for processes run on the host by Tilt (ticket 5).
-      - '5432:5432'
+      - '127.0.0.1:5432:5432'
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -260,7 +260,7 @@ services:
       --telemetry-endpoint ""
     ports:
       # gRPC, published for processes run on the host by Tilt (ticket 5).
-      - '50051:50051'
+      - '127.0.0.1:50051:50051'
     healthcheck:
       test: ['CMD', 'grpc_health_probe', '-addr=localhost:50051']
       interval: 5s
@@ -280,7 +280,7 @@ services:
     command: ['redis-server', '--appendonly', 'yes']
     ports:
       # Published for processes run on the host by Tilt (ticket 5).
-      - '6379:6379'
+      - '127.0.0.1:6379:6379'
     volumes:
       - redis-data:/data
     healthcheck:

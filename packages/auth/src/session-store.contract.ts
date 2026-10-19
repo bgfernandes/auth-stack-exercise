@@ -54,7 +54,8 @@ export function describeSessionStoreContract(
         ...session(),
         createdAt: BASE,
         lastSeenAt: BASE,
-        absoluteExpiresAt: BASE + 600_000,
+        // The absolute limit counts from the authentication time, 5 s before the creation here.
+        absoluteExpiresAt: BASE - 5_000 + 600_000,
       });
       await expect(store.get(created.id)).resolves.toEqual(created);
       await expect(store.get('unknown')).resolves.toBeUndefined();
@@ -74,6 +75,27 @@ export function describeSessionStoreContract(
       expect(got).toEqual(created);
       expect(got).not.toHaveProperty('sid');
       expect(got).not.toHaveProperty('refreshToken');
+      // Without an authentication time the absolute limit counts from the creation.
+      expect(created.absoluteExpiresAt).toBe(BASE + 600_000);
+    });
+
+    it('anchors the absolute limit to an authentication time older than the creation, never later', async () => {
+      // An app signed into 100 s after the IdP login shares that login's window.
+      const { id } = await store.create(session({ authTime: BASE - 100_000 }));
+      const got = await store.get(id);
+      expect(got?.absoluteExpiresAt).toBe(BASE - 100_000 + 600_000);
+      for (let elapsed = 0; elapsed < 500_000; elapsed += 50_000) {
+        await expect(store.touch(id)).resolves.toBe(true);
+        clock.now += 50_000;
+      }
+      // Touched 50 s ago and created 500 s ago, but authenticated 600 s ago.
+      await expect(store.get(id)).resolves.toBeUndefined();
+      await expect(store.touch(id)).resolves.toBe(false);
+
+      // A token claiming an authentication after the creation (clock skew) does not extend the window.
+      clock.now = BASE;
+      const later = await store.create(session({ authTime: BASE + 100_000 }));
+      expect(later.absoluteExpiresAt).toBe(BASE + 600_000);
     });
 
     it('expires an untouched session at the idle limit', async () => {
@@ -126,17 +148,19 @@ export function describeSessionStoreContract(
       await expect(store.listByUser(session().sub)).resolves.toEqual([]);
     });
 
-    it('deleteByLogoutToken: sid only, sub only, both, and a mismatched pair', async () => {
+    it('deleteByLogoutToken: sid only, sub only, both, a mismatched pair, and an unknown sid with a known sub', async () => {
       const sub = `bob-${run}`;
       const a = await store.create(session({ sub, sid: `sid-a-${run}` }));
       const b = await store.create(session({ sub, sid: `sid-a-${run}` }));
       const c = await store.create(session({ sub, sid: `sid-c-${run}` }));
       const d = await store.create(session({ sub: `dan-${run}`, sid: `sid-d-${run}` }));
 
+      // A mismatched pair: a sid of bob's sessions with dan's sub removes nothing of either user.
       await expect(
         store.deleteByLogoutToken({ sid: `sid-a-${run}`, sub: `dan-${run}` }),
       ).resolves.toBe(0);
       await expect(store.get(a.id)).resolves.toBeDefined();
+      await expect(store.get(d.id)).resolves.toBeDefined();
 
       await expect(store.deleteByLogoutToken({ sid: `sid-a-${run}` })).resolves.toBe(2);
       await expect(store.get(a.id)).resolves.toBeUndefined();
@@ -148,8 +172,15 @@ export function describeSessionStoreContract(
       ).resolves.toBe(1);
       await expect(store.get(d.id)).resolves.toBeUndefined();
 
-      await expect(store.deleteByLogoutToken({ sub })).resolves.toBe(1);
+      // A sid no live session carries, with a known sub: every session of the user, not nothing.
+      await expect(store.deleteByLogoutToken({ sid: `sid-unknown-${run}`, sub })).resolves.toBe(1);
       await expect(store.get(c.id)).resolves.toBeUndefined();
+      await expect(store.deleteByLogoutToken({ sid: `sid-unknown-${run}`, sub })).resolves.toBe(0);
+      await expect(store.deleteByLogoutToken({ sid: `sid-unknown-${run}` })).resolves.toBe(0);
+
+      const e = await store.create(session({ sub, sid: `sid-e-${run}` }));
+      await expect(store.deleteByLogoutToken({ sub })).resolves.toBe(1);
+      await expect(store.get(e.id)).resolves.toBeUndefined();
       await expect(store.deleteByLogoutToken({})).resolves.toBe(0);
     });
 

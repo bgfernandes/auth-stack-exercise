@@ -158,7 +158,7 @@
 
 ---
 
-## Phase 1 — Vertical slice (minimum viable submission)
+## Phase 1 — Vertical slice (the minimum that stands on its own)
 
 ### Ticket 6 — SpiceDB schema and `packages/authz` (3 h)
 
@@ -394,17 +394,19 @@ Split from ticket 13a on 2026-10-19. A third stack job in `ci.yml`, proving the 
 
 ---
 
-### Ticket 14 — Root README v1: run instructions, architecture, trade-offs 📝 docs (2 h)
+### Ticket 14 — Root README: architecture, structure, run instructions, trade-offs and gaps 📝 docs (2 h)
 
 **Read first:** `docs/README.md` (all).
 
 **Description:** Write the human-readable README: what this is, architecture diagram and a short tour of the repo, how to run (compose; Tilt), the seeded users table, how to try the three states, how authorization and consistency work in two paragraphs each, the security posture summary, **trade-offs, shortcuts, and gaps** (an explicit list, updated every phase), and **future work** (every unreached phase, from `docs/README.md` §11). Link to `docs/README.md` for the full design.
 
-**Acceptance criteria:** a reader who has never seen the repo can run it and see the three states in under ten minutes following only the README. With ticket 14 merged, the submission is viable.
+**Acceptance criteria:** a reader who has never seen the repo can run it and see the three states in under ten minutes following only the README. With ticket 14 merged, the project stands on its own.
 
 > **2026-10-15:** The "how to run" part is no longer this ticket's: the root README's **Development** section is kept current by every ticket that changes the local setup (rule in `CLAUDE.md`), starting with ticket 1. Ticket 14 reviews that section for a first-time reader rather than writing it.
 
-**Status:** Open.
+> **2026-10-19 (built):** Written as a stand-alone document for a reviewer who never opens `docs/`: what the system does, the architecture (components, request flow, ownership, login, consistency), the repository structure, the design decisions with the alternatives named, running it (prerequisites, compose, the CA step, Tilt, the seeded scenario, sign-up as observed, the `curl` replays, tests), the trade-offs, shortcuts, and gaps in three groups with their tickets, the ticket table by phase, and how the project was built. The same branch carries the fixes of 2026-10-19 recorded in the decision log (loopback ports; revocation at logout with an end-to-end test against Zitadel; `devMode` by scheme; the sink's body bound; RS256 and `exp`; the absolute lifetime from `auth_time` with `max_age` on login; the clock tolerance; the unknown-`sid` fallback) and the corrections that mark unbuilt controls as planned in `docs/README.md`.
+
+**Status:** Done (2026-10-19).
 
 ---
 
@@ -472,6 +474,18 @@ Split from ticket 13a on 2026-10-19. A third stack job in `ci.yml`, proving the 
 > **2026-10-19:** Skipped for now at the maintainer's choice; phase 3 starts with ticket 21.
 
 **Status:** Open.
+
+---
+
+### Ticket 4a — Confidential clients: private-key JWT client authentication for the BFFs (1.5 h)
+
+**Read first:** `docs/README.md` §4.4 ("Client type: an omission, recorded"), ticket 4, ticket 8.
+
+**Description:** The BFFs are registered as public clients (`OIDC_AUTH_METHOD_TYPE_NONE`) with the refresh-token grant; a server-side BFF is a confidential client (RFC 6749 §2.1) and RFC 9700 §4.14 tolerates refresh tokens at public clients only with rotation or sender-constraining. Register `dashboard-web` and `tenancy-web` with `OIDC_AUTH_METHOD_TYPE_PRIVATE_KEY_JWT` (the method the API applications already use), generate the key pair in bootstrap, keep the private key in the app's handoff file under `.local/config/` (never in the Zitadel volume), and reconcile on re-runs (a key already registered is kept; a missing handoff file triggers a new key and the old one's removal). `packages/auth`'s `configure()` uses `openid-client`'s `PrivateKeyJwt` client authentication for the code exchange, refresh, and revocation; PKCE stays. The end-to-end suites prove login, refresh, logout, and revocation unchanged. README of `packages/auth` and `docker/README.md` updated; §4.4's paragraph rewritten to describe the built state.
+
+**Tests:** bootstrap reconciliation (key present, key missing, handoff missing); `packages/auth` with the fake OP verifying the `client_assertion`; the existing end-to-end suites.
+
+**Status:** Open (found 2026-10-19 by the 2026-10-19 review).
 
 ---
 
@@ -622,7 +636,7 @@ Split from ticket 23 on 2026-10-19. `@fastify/rate-limit` on the write routes of
 
 ### Ticket 24 — Authentication-context policies: `requireAuthContext` and the step-up flow (3 h)
 
-`organizations.policy` (from tenancy, cached) honoured by the BFFs: `requireAuthContext({ maxAge, amr })` in `packages/auth` reads `auth_time` and `amr` from the session, produces the RFC 9470 challenge, and the web apps turn it into a re-authentication (`prompt=login`, `max_age`) and retry. The seeded Acme organization gets `policy.max_auth_age_seconds: 600` (policy is per organization, §5.1) so a reviewer who logged in more than ten minutes earlier sees a step-up on their next write; personal organizations keep `{}`. README section on where policies live (§9.1).
+`organizations.policy` (from tenancy, cached) honoured by the BFFs: `requireAuthContext({ maxAge, amr })` in `packages/auth` reads `auth_time` and `amr` from the session, produces the RFC 9470 challenge, and the web apps turn it into a re-authentication and retry. Decided 2026-10-19 from the OIDC checklist review: re-authentication uses `max_age` alone (OIDC Core §3.1.2.1), not `prompt=login`, which recreates the IdP session and rotates `sid` (ticket 8a's concern), and the gate reads `acr` where the provider emits it and `amr`/`auth_time` otherwise; the pending form state is stashed before the step-up redirect and restored after it. The seeded Acme organization gets `policy.max_auth_age_seconds: 600` (policy is per organization, §5.1) so a reviewer who logged in more than ten minutes earlier sees a step-up on their next write; personal organizations keep `{}`. README section on where policies live (§9.1).
 
 > **2026-10-17:** Per the preamble rule added in ticket 6, this ticket writes or updates the README of every package it implements or changes (`packages/auth`) in the same PR.
 
@@ -636,11 +650,55 @@ Found while building ticket 20: nothing backs up a logout token that never arriv
 
 **Acceptance criteria:** with `dashboard-web`'s sink route answering `404` (the state before ticket 18), a logout on `tenancy-web` still ends `dashboard-web`'s session within the interval; the ticket 20 spec unchanged, since the sink stays the first line.
 
+> **2026-10-19:** The observation that Zitadel keeps honouring a refresh token after the session that issued it ended is tracked upstream as [zitadel/zitadel#12637](https://github.com/zitadel/zitadel/issues/12637) (open enhancement, reported on 4.17.1 through 4.19.4, no maintainer response at the time of writing): `DELETE /v2/sessions/{id}` makes introspection report the access token inactive, yet the refresh grant still succeeds until idle or absolute expiry; commenters cite RFC 9700 §4.14.2 and CWE-613, and the workarounds listed there (track the session-to-token link in the application, deactivate the user or the organization) are the ones this ticket's re-validation replaces. Revoking the refresh token at logout (ticket 14's fix) covers the app-initiated case; this ticket covers the ones the app never sees.
+
+**Status:** Open.
+
+### Ticket 8a — Re-read the session's claims after a token refresh (1.5 h)
+
+`refresh()` stores the new tokens but neither `sid`, `auth_time`, nor `amr` from the refreshed ID token: `SessionPatch` admits no claims and the Redis `UPDATE` script cannot move a session between `sid:` index sets. If the provider rotates `sid` on re-authentication (not established for Zitadel; ticket 20a), the session is orphaned from back-channel logout. Extend `SessionPatch` with the claims, make the `UPDATE` script `SREM`/`SADD` the `sid:` index when `sid` changes, and add a contract test. Also pin `id_token_signed_response_alg: 'RS256'` in the client metadata, next to the clock tolerance.
+
+**Status:** Open (found 2026-10-19 by the OIDC checklist review).
+
+### Ticket 8c — Treat a refused refresh as the end of the session (Zitadel answers `invalid_request`, not `invalid_grant`) (0.5 h)
+
+**Read first:** `docs/README.md` §4.4 step 7; `packages/auth/src/access-token.ts` (`refresh()`); the revocation spec of ticket 14 (`apps/dashboard-web/e2e/revocation.spec.ts`).
+
+**Description:** `refresh()` ends the session (deletes it, returns `undefined`, the BFF redirects to login) only when the token endpoint answers `invalid_grant`, the code RFC 6749 §5.2 prescribes for a revoked, expired, or otherwise invalid refresh token; any other refusal rethrows `refresh_failed`, which a BFF turns into a 500. Zitadel never answers `invalid_grant` for a refresh refusal, so against this provider a stale session ends in an error page instead of a login. Found on 2026-10-19 while proving revocation end to end (the spec pins Zitadel's actual body).
+
+What Zitadel does, from its source at v4.19.4 (verified 2026-10-19, `internal/api/oidc/error.go`, `internal/api/oidc/token_refresh.go`, `internal/command/oidc_session_model.go`): every refusal of a refresh grant is a Zitadel-internal error, `Errors.OIDCSession.RefreshTokenInvalid` from `CheckRefreshToken` (session not active, i.e. revoked or ended: `OIDCS-s3hjk`; the presented token is not the session's current one, i.e. rotated or reused: `OIDCS-28ubl`; absolute or idle expiry passed: `OIDCS-3jt2w`) or `Errors.User.RefreshToken.Invalid` for a token that never existed or cannot be parsed. `oidcError()` then maps any internal error with an HTTP status below 500 to `invalid_request` and puts the internal message in `error_description`; the `zitadel/oidc` library's `DefaultToServerError` produces `invalid_grant` only for its own JWT-validation errors, which a refresh refusal never raises. So `invalid_request` is Zitadel's systematic answer for the whole family, not a special case, and no setting changes it. No upstream issue was found about the code itself; the related open enhancement [zitadel/zitadel#12637](https://github.com/zitadel/zitadel/issues/12637) (refresh tokens still minted after `DELETE /v2/sessions`, reported on 4.17 to 4.19.4) is ticket 20a's concern. A third-party report that Zitadel answers a rotated token with `invalid_grant` is contradicted by the source above and by the observed body.
+
+The fix, in `refresh()`: treat as "session over" any `invalid_grant`, and any `invalid_request` whose `error_description` is `Errors.OIDCSession.RefreshTokenInvalid` or `Errors.User.RefreshToken.Invalid` (a `ProviderQuirks` entry in the client configuration, so the vendor strings live in one place and a provider that follows the RFC needs none); keep every other error as `refresh_failed`, since a network or server error must not log the user out. The safer variant, ending the session on any 4xx from the token endpoint, loses the distinction between "your session ended" and "the provider rejected our request" and is not taken. Test with the fake OP answering each shape; the end-to-end suite gains a case that ends the IdP session from the console (`DELETE /v2/sessions/{id}`, ticket 18's path), waits past the access-token lifetime, and expects the next dashboard request to land on the login rather than an error page.
+
+**Status:** Open (found 2026-10-19).
+
+### Ticket 8d — Encrypt the session's tokens at rest (1.5 h)
+
+**Read first:** `docs/README.md` §4.4 (`SessionStore`), §9 (Session cookie, Secrets); `packages/auth/src/session.ts` and the two stores.
+
+**Description:** The session store writes `accessToken`, `refreshToken`, and `idToken` as plaintext fields, so anyone who can read the store (a Redis dump or backup, a replica, an operator, a leaked `REDIS_URL`) holds every live user's refresh token, and until ticket 4a a refresh token mints access tokens with `client_id` alone. Redis authentication and TLS are deployment settings and do not change this. Encrypt the token fields in `packages/auth` before any store sees them, so the Redis and memory adapters stay unaware: AES-256-GCM with a per-field random nonce, keyed by a dedicated `SESSION_ENCRYPTION_KEY` (32 bytes, base64, distinct from `SESSION_SECRET`, which signs the login stash and the CSRF token), with a key id stored beside the ciphertext and a `SESSION_ENCRYPTION_KEYS` map for rotation (decrypt with any listed key, encrypt with the current one). The session ID stays plaintext (it is the lookup key); `sub`, `sid`, and the claims stay plaintext (the indexes need them; they are not credentials). A session whose key id is no longer known is treated as absent, which logs the user out rather than failing the request. The `.env` gets a labelled development key like the others.
+
+**Tests:** round trip through both stores; a stored value is not the token (the contract test reads the raw hash); rotation (encrypt under key 2, decrypt a value written under key 1); unknown key id yields no session. The README of `packages/auth` and the root README's trade-offs updated.
+
+**Status:** Open (found 2026-10-20 while reviewing the trade-offs list).
+
+### Ticket 8b — A refresh lock across instances (1 h)
+
+The refresh mutex is per process (`inFlight` in `createAccessTokenProvider()`); two instances of a BFF refreshing the same session can trip the provider's rotation reuse detection. A Redis `SET NX PX` lock keyed by session ID around the refresh, with the re-read fallback kept. Also give `openid-client`'s per-request calls (token, refresh, revocation) a timeout, since logout now makes two of them.
+
+**Status:** Open (found 2026-10-19 by the OIDC checklist review).
+
+### Ticket 20b — Log out everywhere (1 h)
+
+`listByUser` and `deleteByUser` exist in the session store with no caller outside the package. A page listing the user's sessions of this app and a form to end them all, in both web apps, then the IdP session through `end_session`; a note that ending sessions of the other app relies on the back-channel logout that the IdP sends (ticket 18) and its backstop (ticket 20a).
+
 **Status:** Open.
 
 ### Ticket 25 — Test coverage pass and README trade-offs update (2 h)
 
 Fill gaps in unit and integration coverage, `pnpm audit` in CI (non-blocking), refresh the trade-offs and gaps section.
+
+> **2026-10-19 (review):** Also here, from the 2026-10-19 reviews: `pnpm audit` added to CI (non-blocking); `webAppConfig()` moved out of bootstrap's `index.ts` (which runs `main()` at load) so it can be unit-tested; the header comment of `packages/auth/src/oidc.ts` corrected (openid-client v6 does not verify the signature of an ID token received from the token endpoint unless non-repudiation checks are on, which OIDC Core §3.1.3.7 permits); registration's unverified-email behaviour either changed in Zitadel's settings or kept and stated.
 
 > **2026-10-19:** The input validation audit of §11's phase 4 row belongs here (decided when ticket 23 was specified): a review of every route boundary of the four apps against §9's input row (a schema on every body, bounded strings, IDs checked for shape, query parameters that may repeat), fixing what it finds; a review, not a feature.
 

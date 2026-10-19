@@ -4,7 +4,7 @@
  */
 import { beforeEach, describe, expect, it } from '@jest/globals';
 
-import { handleBackchannelLogout } from './backchannel-logout';
+import { handleBackchannelLogout, MAX_BODY_BYTES } from './backchannel-logout';
 import { AuthError } from './errors';
 import { BACKCHANNEL_LOGOUT_EVENT, createOidcClient, type OidcClient } from './oidc';
 import { type NewSession, type SessionStore } from './session';
@@ -86,10 +86,14 @@ describe('verifyLogoutToken', () => {
     expect(error.code).toBe('logout_token_invalid');
   });
 
-  it('refuses a token signed by another key, and what is not a JWT', async () => {
+  it('refuses a token signed by another key or with another algorithm, and what is not a JWT', async () => {
     const other = await createFakeOp({ clientId: CLIENT_ID });
     const foreign = await other.sign(logoutClaims());
     expect((await failure(client.verifyLogoutToken(foreign))).code).toBe('logout_token_invalid');
+    const es256 = await op.sign(logoutClaims(), { alg: 'ES256' });
+    const refused = await failure(client.verifyLogoutToken(es256));
+    expect(refused.code).toBe('logout_token_invalid');
+    expect((refused.cause as { code?: string }).code).toBe('ERR_JOSE_ALG_NOT_ALLOWED');
     expect((await failure(client.verifyLogoutToken('not.a.jwt'))).code).toBe(
       'logout_token_invalid',
     );
@@ -200,6 +204,60 @@ describe('handleBackchannelLogout', () => {
     expect(events).toEqual(Array<string>(5).fill('warn:auth.backchannel_logout_rejected'));
     expect(records.every((r) => r.errorCode === 'logout_token_invalid')).toBe(true);
     expect(JSON.stringify(records)).not.toContain(stale);
+  });
+
+  it('refuses a body above 8 KiB with 400 before reading it, by Content-Length or while streaming', async () => {
+    const alice = await store.create(session('alice', 'sid-alice'));
+    const token = await op.sign(logoutClaims());
+    const oversized = `logout_token=${token}&pad=${'x'.repeat(MAX_BODY_BYTES)}`;
+    let pulls = 0;
+    const streamed = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        if (pulls > 64) controller.close();
+        else controller.enqueue(new TextEncoder().encode('x'.repeat(1024)));
+      },
+    });
+    const responses = [
+      await handleBackchannelLogout(
+        new Request('https://app.test/auth/backchannel-logout', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded',
+            'content-length': String(MAX_BODY_BYTES + 1),
+          },
+          body: 'logout_token=short',
+        }),
+        { client, store, logger },
+      ),
+      await post(oversized),
+      await handleBackchannelLogout(
+        new Request('https://app.test/auth/backchannel-logout', {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: streamed,
+          duplex: 'half',
+        }),
+        { client, store, logger },
+      ),
+    ];
+    for (const response of responses) {
+      expect(response.status).toBe(400);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      expect(await response.json()).toMatchObject({ error: 'invalid_request' });
+    }
+    expect(pulls).toBeLessThan(64);
+    await expect(store.get(alice.id)).resolves.toBeDefined();
+    expect(events).toEqual(Array<string>(3).fill('warn:auth.backchannel_logout_rejected'));
+    expect(records.every((r) => r.errorCode === 'logout_token_invalid')).toBe(true);
+    expect(records.every((r) => String(r.reason).includes('larger than'))).toBe(true);
+
+    // A body at the limit is read in full.
+    const padded = `logout_token=${token}&pad=`;
+    const atLimit = padded + 'x'.repeat(MAX_BODY_BYTES - padded.length);
+    expect(atLimit).toHaveLength(MAX_BODY_BYTES);
+    expect((await post(atLimit)).status).toBe(200);
+    await expect(store.get(alice.id)).resolves.toBeUndefined();
   });
 
   it('lets a store failure propagate rather than answering 200', async () => {

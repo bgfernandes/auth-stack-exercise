@@ -143,6 +143,42 @@ describe('createNextAuth', () => {
     await expect(store.listByUser('alice')).resolves.toEqual([]);
   });
 
+  it('callback fails a login whose authentication is older than the session limit, rather than looping', async () => {
+    const lax = await createFakeOp({ clientId: 'dashboard-web', ignoresMaxAge: true });
+    const stale = createNextAuth({
+      options: { ...options, oidc: { ...options.oidc, maxAgeSeconds: 600 } },
+      store,
+      client: createOidcClient(
+        { ...options.oidc, maxAgeSeconds: 600 },
+        { fetch: lax.fetch, serverMetadata: lax.metadata },
+      ),
+      logger: {
+        warn: (event, fields) => {
+          events.push(event);
+          records.push(fields ?? {});
+        },
+      },
+    });
+    const login = await stale.login();
+    expect(new URL(login.headers.get('location') as string).searchParams.get('max_age')).toBe(
+      '600',
+    );
+    const stash = setCookies(login).get('dashboard_web_session_login') as string;
+    const callback = lax.authorize(new URL(login.headers.get('location') as string), {
+      ...alice,
+      authTime: Math.floor(Date.now() / 1000) - 3_600,
+    });
+    const response = await stale.callback(
+      new Request(callback, { headers: { cookie: cookieHeader(stash) } }),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe('Login failed. Please try again.');
+    expect(setCookies(response).has('dashboard_web_session')).toBe(false);
+    await expect(store.listByUser('alice')).resolves.toEqual([]);
+    expect(events).toEqual(['auth.login_failed']);
+    expect(records[0]?.errorCode).toBe('stale_authentication');
+  });
+
   /** The binding again, with a hook; the OP and the store are the ones of this test. */
   function withHook(onLogin: (session: Session) => Promise<string | void>): NextAuth {
     return createNextAuth({
@@ -326,6 +362,48 @@ describe('createNextAuth', () => {
       new Request(`${APP}/auth/logout`, { method: 'POST', headers: { origin: APP } }),
     );
     expect(noSession.headers.get('location')).toBe(`${APP}/`);
+  });
+
+  it('logout revokes the refresh token and then the access token at the provider', async () => {
+    const { sessionCookie, sessionId } = await loggedIn();
+    const session = (await store.get(sessionId)) as Session;
+    const response = await auth.logout(
+      new Request(`${APP}/auth/logout`, {
+        method: 'POST',
+        headers: { cookie: cookieHeader(sessionCookie), origin: APP },
+        body: new URLSearchParams({ csrf_token: auth.csrfTokenOf(session) }),
+      }),
+    );
+    expect(response.status).toBe(303);
+    expect(op.revocations).toEqual([
+      { token: session.refreshToken, tokenTypeHint: 'refresh_token' },
+      { token: session.accessToken, tokenTypeHint: 'access_token' },
+    ]);
+    expect(op.refreshTokens.has(session.refreshToken as string)).toBe(false);
+    expect(events).toEqual([]);
+  });
+
+  it('logout still ends the session when the revocation endpoint fails, and logs it without the tokens', async () => {
+    const { sessionCookie, sessionId } = await loggedIn();
+    const session = (await store.get(sessionId)) as Session;
+    op.refuseRevocation(503);
+    const response = await auth.logout(
+      new Request(`${APP}/auth/logout`, {
+        method: 'POST',
+        headers: { cookie: cookieHeader(sessionCookie), origin: APP },
+        body: new URLSearchParams({ csrf_token: auth.csrfTokenOf(session) }),
+      }),
+    );
+    expect(response.status).toBe(303);
+    expect(new URL(response.headers.get('location') as string).pathname).toBe('/end_session');
+    expect(setCookies(response).get('dashboard_web_session')).toMatch(/Max-Age=0/i);
+    await expect(store.get(sessionId)).resolves.toBeUndefined();
+    expect(op.revocations).toEqual([]);
+    expect(events).toEqual(['auth.revocation_failed', 'auth.revocation_failed']);
+    expect(records.map((r) => r.tokenTypeHint)).toEqual(['refresh_token', 'access_token']);
+    const logged = JSON.stringify(records);
+    expect(logged).not.toContain(session.refreshToken);
+    expect(logged).not.toContain(session.accessToken);
   });
 
   it('derives the synchronizer token from the session with the app’s secret', async () => {

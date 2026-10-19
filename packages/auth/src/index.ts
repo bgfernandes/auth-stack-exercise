@@ -14,11 +14,16 @@ export {
   type AccessTokenProvider,
   type AccessTokenProviderOptions,
 } from './access-token';
-export { handleBackchannelLogout, type BackchannelLogoutOptions } from './backchannel-logout';
+export {
+  handleBackchannelLogout,
+  MAX_BODY_BYTES,
+  type BackchannelLogoutOptions,
+} from './backchannel-logout';
 export {
   assertScopeStrings,
   BearerError,
   bearerOptionsFromEnv,
+  CLOCK_TOLERANCE_SECONDS,
   createBearerVerifier,
   fromScopeClaim,
   requireScopes,
@@ -60,9 +65,11 @@ export {
   type OidcClientOptions,
   type OidcFetch,
   type TokenSet,
+  type TokenTypeHint,
 } from './oidc';
 export { redact, type AuthLogger } from './redact';
 export {
+  absoluteExpiresAt,
   DEFAULT_SESSION_LIMITS,
   isExpired,
   newSessionId,

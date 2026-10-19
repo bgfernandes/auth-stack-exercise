@@ -2,16 +2,17 @@
  * The OIDC client of the BFFs (docs/README.md §4.4 steps 1, 3, 5, 6, 7) over `openid-client` v6: authorization
  * code with PKCE `S256` (RFC 7636), `state` and `nonce` bound to the login attempt through the stash, ID-token
  * validation (`iss`, `aud`, `exp`, `nonce`, signature against JWKS) by the library, refresh through the refresh
- * token, the RP-initiated logout URL, and the validation of a back-channel logout token against the same JWKS.
- * Discovery runs once per process and issuer.
+ * token, token revocation (RFC 7009) at logout, the RP-initiated logout URL, and the validation of a back-channel
+ * logout token against the same JWKS. Discovery runs once per process and issuer.
  */
 import { createRemoteJWKSet, customFetch, errors as joseErrors, jwtVerify } from 'jose';
 import * as oidc from 'openid-client';
 
+import { CLOCK_TOLERANCE_SECONDS } from './bearer';
 import { AuthError } from './errors';
+import { DEFAULT_SESSION_LIMITS, type LogoutTokenClaims } from './session';
 import { STASH_LIFETIME_SECONDS, type LoginStash } from './stash';
 
-import type { LogoutTokenClaims } from './session';
 import type { JWTPayload, JWTVerifyGetKey } from 'jose';
 
 export type OidcFetch = NonNullable<oidc.Configuration[typeof oidc.customFetch]>;
@@ -27,6 +28,15 @@ export interface OidcClientConfig {
   postLogoutRedirectUri: string;
   /** Defaults to `openid profile email offline_access`. */
   scope?: string;
+  /**
+   * The `max_age` of every authorization request (OpenID Connect Core 1.0 §3.1.2.1) and the bound on the ID
+   * token's `auth_time` at the callback: the OP must re-authenticate a user whose last authentication is older,
+   * and a token that is older anyway fails the login with `stale_authentication`. The session store's absolute
+   * limit by default (`DEFAULT_SESSION_LIMITS.absoluteSeconds`, 8 hours), and it must stay equal to the store's,
+   * since the store anchors that limit to `auth_time`: a larger value here lets a login create a session that is
+   * already past its absolute limit, and the browser loops between the app and the OP.
+   */
+  maxAgeSeconds?: number;
 }
 
 export interface OidcClientOptions {
@@ -58,6 +68,9 @@ export interface IdentityClaims {
   amr: string[];
 }
 
+/** The `token_type_hint` of RFC 7009 §2.1. */
+export type TokenTypeHint = 'access_token' | 'refresh_token';
+
 export interface LoginResult {
   tokens: TokenSet;
   claims: IdentityClaims;
@@ -70,6 +83,13 @@ export interface OidcClient {
   completeLogin(callbackUrl: URL, stash: LoginStash): Promise<LoginResult>;
   /** A new token set through the refresh token. Throws `AuthError('refresh_failed')`. */
   refresh(refreshToken: string): Promise<TokenSet>;
+  /**
+   * Revokes a token at the issuer's `revocation_endpoint` (RFC 7009 §2.1), with the client's own authentication
+   * (`client_id` alone for the public clients bootstrap registers). Throws `AuthError('revocation_failed')`,
+   * also when the issuer publishes no revocation endpoint; the server's answer on an unknown token is a success
+   * (§2.2), so a token already gone does not fail.
+   */
+  revoke(token: string, tokenTypeHint: TokenTypeHint): Promise<void>;
   /** The `end_session_endpoint` URL with `id_token_hint` and the registered post-logout redirect. */
   endSessionUrl(idToken: string | undefined): Promise<URL>;
   /**
@@ -96,11 +116,14 @@ async function configure(
   options: OidcClientOptions,
 ): Promise<oidc.Configuration> {
   const insecure = config.issuer.startsWith('http://');
+  // The leeway on the ID token's `exp`, `iat`, and `auth_time` is the one the bearer and logout-token verifiers
+  // give, pinned rather than left to the library's default so the three cannot drift apart.
+  const clientMetadata = { [oidc.clockTolerance]: CLOCK_TOLERANCE_SECONDS };
   if (options.serverMetadata) {
     const configuration = new oidc.Configuration(
       options.serverMetadata,
       config.clientId,
-      undefined,
+      clientMetadata,
       oidc.None(),
     );
     if (insecure) oidc.allowInsecureRequests(configuration);
@@ -111,7 +134,7 @@ async function configure(
   let pending = configurations.get(key);
   if (!pending) {
     pending = oidc
-      .discovery(new URL(config.issuer), config.clientId, undefined, oidc.None(), {
+      .discovery(new URL(config.issuer), config.clientId, clientMetadata, oidc.None(), {
         // The issuer is plain http inside compose; the library refuses that unless told otherwise.
         execute: insecure ? [oidc.allowInsecureRequests] : [],
         ...(options.fetch ? { [oidc.customFetch]: options.fetch } : {}),
@@ -173,11 +196,18 @@ function loginError(error: unknown): AuthError {
       cause: error,
     });
   }
-  if (error instanceof oidc.ClientError && error.code === 'OAUTH_JWT_CLAIM_COMPARISON_FAILED') {
+  if (error instanceof oidc.ClientError) {
     // The library's own error names the claim (its cause carries `{ claim, expected, claims }`).
     const inner = error.cause as { cause?: { claim?: unknown } } | undefined;
-    if (inner?.cause?.claim === 'nonce') {
+    if (error.code === 'OAUTH_JWT_CLAIM_COMPARISON_FAILED' && inner?.cause?.claim === 'nonce') {
       return new AuthError('nonce_mismatch', 'ID token nonce mismatch', { cause: error });
+    }
+    if (error.code === 'OAUTH_JWT_TIMESTAMP_CHECK_FAILED' && inner?.cause?.claim === 'auth_time') {
+      return new AuthError(
+        'stale_authentication',
+        "the ID token's auth_time is older than the requested max_age",
+        { cause: error },
+      );
     }
   }
   return new AuthError('token_invalid', 'token response failed validation', { cause: error });
@@ -210,15 +240,13 @@ function logoutTokenClaims(payload: JWTPayload): LogoutTokenClaims {
   return claims;
 }
 
-/** Seconds of leeway on `exp` and `iat`, as the bearer verifier gives access tokens. */
-const LOGOUT_TOKEN_CLOCK_TOLERANCE_SECONDS = 30;
-
 export function createOidcClient(
   config: OidcClientConfig,
   options: OidcClientOptions = {},
 ): OidcClient {
   const now = options.now ?? Date.now;
   const scope = config.scope ?? DEFAULT_SCOPE;
+  const maxAgeSeconds = config.maxAgeSeconds ?? DEFAULT_SESSION_LIMITS.absoluteSeconds;
   const configuration = () => configure(config, options);
 
   // The issuer's JWKS, from discovery, fetched and cached by jose; through the same `fetch` as everything else.
@@ -253,6 +281,7 @@ export function createOidcClient(
         code_challenge_method: 'S256',
         state: stash.state,
         nonce: stash.nonce,
+        max_age: String(maxAgeSeconds),
       });
       return { url, stash };
     },
@@ -272,13 +301,32 @@ export function createOidcClient(
           expectedState: stash.state,
           expectedNonce: stash.nonce,
           idTokenExpected: true,
+          // `max_age` was requested, so `auth_time` is required and checked against it (with the clock
+          // tolerance) by the library, see loginError; the exact check follows, on this clock.
+          maxAge: maxAgeSeconds,
         });
       } catch (error) {
         throw loginError(error);
       }
       const claims = response.claims();
       if (!claims) throw new AuthError('token_invalid', 'token response carries no ID token');
-      return { tokens: tokenSet(response, now()), claims: identityClaims(claims) };
+      const identity = identityClaims(claims);
+      if (identity.authTime === undefined) {
+        throw new AuthError(
+          'token_invalid',
+          'ID token carries no auth_time although max_age was requested',
+        );
+      }
+      // A session anchored to this authentication would be past its absolute limit already (the store counts
+      // the limit from `auth_time`), and the next login would get the same `auth_time` again from an OP that
+      // ignored `max_age`: fail the login instead of starting that loop.
+      if (identity.authTime + maxAgeSeconds * 1000 <= now()) {
+        throw new AuthError(
+          'stale_authentication',
+          `the ID token's auth_time is older than the requested max_age of ${maxAgeSeconds} s`,
+        );
+      }
+      return { tokens: tokenSet(response, now()), claims: identity };
     },
 
     async refresh(refreshToken) {
@@ -292,6 +340,21 @@ export function createOidcClient(
       }
     },
 
+    async revoke(token, tokenTypeHint) {
+      const configured = await configuration();
+      if (!configured.serverMetadata().revocation_endpoint) {
+        throw new AuthError('revocation_failed', 'the issuer publishes no revocation_endpoint');
+      }
+      try {
+        await oidc.tokenRevocation(configured, token, { token_type_hint: tokenTypeHint });
+      } catch (error) {
+        const detail = error instanceof oidc.ResponseBodyError ? error.error : 'request';
+        throw new AuthError('revocation_failed', `${tokenTypeHint} revocation failed: ${detail}`, {
+          cause: error,
+        });
+      }
+    },
+
     async endSessionUrl(idToken) {
       return oidc.buildEndSessionUrl(await configuration(), {
         ...(idToken ? { id_token_hint: idToken } : {}),
@@ -302,14 +365,16 @@ export function createOidcClient(
     async verifyLogoutToken(logoutToken) {
       let payload: JWTPayload;
       try {
-        // `aud` must contain this client's ID (an ID token's audience; Zitadel adds the project ID, which jose
-        // tolerates: a string audience is matched against every member of an array). `iat` is required of a
-        // logout token where an ID token's validation only checks it when present.
+        // RS256 only, the algorithm Zitadel signs with, as the bearer verifier pins it. `aud` must contain this
+        // client's ID (an ID token's audience; Zitadel adds the project ID, which jose tolerates: a string
+        // audience is matched against every member of an array). `iat` is required of a logout token where an
+        // ID token's validation only checks it when present.
         ({ payload } = await jwtVerify(logoutToken, await signingKey(), {
+          algorithms: ['RS256'],
           issuer: config.issuer,
           audience: config.clientId,
           requiredClaims: ['iat', 'exp'],
-          clockTolerance: LOGOUT_TOKEN_CLOCK_TOLERANCE_SECONDS,
+          clockTolerance: CLOCK_TOLERANCE_SECONDS,
           currentDate: new Date(now()),
         }));
       } catch (error) {

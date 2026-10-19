@@ -1,6 +1,8 @@
 # `@auth-stack/documents`
 
-The documents domain as a package ([`docs/README.md`](../../docs/README.md) §3.1, §5.2): projects under a tenancy organization and the documents whose two values the dashboard edits. Roles and shares live in SpiceDB; every document row carries the ZedToken of the check its last content write or share ran under (§7.3). The package root (schema, migrations, the service) is imported by `dashboard-api` ([`apps/dashboard-api`](../../apps/dashboard-api)) alone, plus bootstrap for the migrations and the seed; what a caller of that API needs, the HTTP client included, is on the subpath `@auth-stack/documents/client`, which is what a BFF imports.
+The documents domain as a package ([`docs/README.md`](../../docs/README.md) §3.1, §5.2): projects under a tenancy organization and the documents whose two values the dashboard edits. Roles and shares live in SpiceDB; every document row carries the ZedToken of the check its last content write or share ran under (§7.3).
+
+The package root (schema, migrations, the service) is imported by `dashboard-api` ([`apps/dashboard-api`](../../apps/dashboard-api)) alone, plus bootstrap for the migrations and the seed; what a caller of that API needs, the HTTP client included, is on the subpath `@auth-stack/documents/client`, which is what a BFF imports.
 
 ## Configuration
 
@@ -42,11 +44,19 @@ const shares = await documents.getDocumentShares(user, id); // { editors: [...su
 const shared = await documents.setDocumentShares(user, id, { editors: [bobSub], viewers: [] }); // stores the write's token
 ```
 
-`user` is the `UserContext` of the tenancy client (`{ sub, accessToken }`). A method that may not proceed throws `DocumentsError` with a `code`: `forbidden` when the user may view the document but not edit or share it (`403`), `not_found` when the document does not exist (a malformed ID included) or the user may not learn that it does (`404`), `not_a_member` when a share names a user who is not a member of the organization that owns the document (`400`; the IDs are Zitadel `sub`s, checked as `organization#view`, so an unknown account and a known non-member answer alike). Invalid input throws a `ZodError` (`value1` and `value2`: strings of 1 to 200 characters; `editors` and `viewers`: up to a hundred IDs each, no ID twice). Test for the error with `isDocumentsError(error)` rather than `instanceof`: a bundler can give a Next.js route handler and a server component separate copies of the package while the service they share was built by one of them.
+`user` is the `UserContext` of the tenancy client (`{ sub, accessToken }`). A method that may not proceed throws `DocumentsError` with a `code`:
+
+- `forbidden` when the user may view the document but not edit or share it (`403`);
+- `not_found` when the document does not exist (a malformed ID included) or the user may not learn that it does (`404`);
+- `not_a_member` when a share names a user who is not a member of the organization that owns the document (`400`; the IDs are Zitadel `sub`s, checked as `organization#view`, so an unknown account and a known non-member answer alike).
+
+Invalid input throws a `ZodError` (`value1` and `value2`: strings of 1 to 200 characters; `editors` and `viewers`: up to a hundred IDs each, no ID twice). Test for the error with `isDocumentsError(error)` rather than `instanceof`: a bundler can give a Next.js route handler and a server component separate copies of the package while the service they share was built by one of them.
 
 `setDocumentShares` reads the direct shares on the document fully consistent, writes the difference (TOUCH for every listed user, DELETE for every other) in one atomic call, and stores the write's token on the row without touching its values or writer; two concurrent replacements race and the later write wins whole. An unchanged set writes nothing and stores the check's token.
 
-`ensurePersonalProject` checks `organization#create_project` at full consistency, inserts the "Personal" project behind a partial unique index on `(organization_id) WHERE is_personal`, writes the project and document relationships with TOUCH, and inserts the "Welcome" document with the write's token, in one transaction. A grant made outside the service (a share, a seed) stores its token on the affected rows for the same reason: a read checks at least as fresh as the row, so a newer grant may otherwise stay invisible to it for one window.
+`ensurePersonalProject` checks `organization#create_project` at full consistency, inserts the "Personal" project behind a partial unique index on `(organization_id) WHERE is_personal`, writes the project and document relationships with TOUCH, and inserts the "Welcome" document with the write's token, in one transaction.
+
+A grant made outside the service (a share, a seed) stores its token on the affected rows for the same reason: a read checks at least as fresh as the row, so a newer grant may otherwise stay invisible to it for one window.
 
 ## The API's client, wire format, and scopes
 
@@ -73,7 +83,29 @@ const shared = await documents.setDocumentShares(user, id, { editors: [bobSub], 
 const { project, document, created } = await documents.ensurePersonalProject(user, organizationId);
 ```
 
-The subpath carries no schema and no database, so a BFF imports it alone. `DocumentsClient` is the interface; `createHttpDocumentsClient` sends every call with the user's access token as a bearer token, parses the answers with the wire schemas below, and caches nothing, since every answer is a permission decision for one user at one moment. An answer outside the contract throws `DocumentsClientError` with the `status` and the API's `code` (`forbidden`, `not_found`, `not_a_member`, `invalid_input`, the bearer plugin's `invalid_token` and `insufficient_scope`, or `http_error` for a body that is not the API's, such as a proxy's page); test for it with `isDocumentsClientError(error)` rather than `instanceof`, for the reason given above. `documentValuesSchema` lives here too, so a BFF validates the edit form with the same rule the service enforces, without importing the package root. The wire format is snake_case JSON with dates as ISO strings, defined once and used by `dashboard-api` to answer and by a client to parse: a document is `{ "id", "project_id", "organization_id", "name", "value_1", "value_2", "updated_at", "updated_by" }` (never the row's `zedtoken`); `GET /documents` answers `{ "documents": [{ "id", "name", "project": { "id", "name" }, "organization": { "id", "name" }, "can_edit", "updated_at" }] }` with `organization.name` null when tenancy does not show the organization to the user; `POST /organizations/:id/personal-project` answers `{ "project": { "id", "organization_id", "name", "is_personal", "created_at" }, "document", "created" }`. The request bodies are `{ "value_1", "value_2" }` for `PUT /documents/:id` and `{ "editors": [...], "viewers": [...] }` for `PUT /documents/:id/shares`; their schemas (`documentValuesWire`, `documentSharesWire`) check the shape only, the service owns the constraints. `DOCUMENTS_API_SCOPES` (`documents:read`, `documents:write`) names what the routes require and what bootstrap grants to each first-party client (§6.7). `VisibleDocument`, the dashboard row type, is defined here and re-exported by the package root.
+### The client
+
+The subpath carries no schema and no database, so a BFF imports it alone. `DocumentsClient` is the interface; `createHttpDocumentsClient` sends every call with the user's access token as a bearer token, parses the answers with the wire schemas below, and caches nothing, since every answer is a permission decision for one user at one moment.
+
+An answer outside the contract throws `DocumentsClientError` with the `status` and the API's `code` (`forbidden`, `not_found`, `not_a_member`, `invalid_input`, the bearer plugin's `invalid_token` and `insufficient_scope`, or `http_error` for a body that is not the API's, such as a proxy's page); test for it with `isDocumentsClientError(error)` rather than `instanceof`, for the reason given above.
+
+`documentValuesSchema` lives here too, so a BFF validates the edit form with the same rule the service enforces, without importing the package root.
+
+### The wire format
+
+The wire format is snake_case JSON with dates as ISO strings, defined once and used by `dashboard-api` to answer and by a client to parse:
+
+- a document is `{ "id", "project_id", "organization_id", "name", "value_1", "value_2", "updated_at", "updated_by" }` (never the row's `zedtoken`);
+- `GET /documents` answers `{ "documents": [{ "id", "name", "project": { "id", "name" }, "organization": { "id", "name" }, "can_edit", "updated_at" }] }` with `organization.name` null when tenancy does not show the organization to the user;
+- `POST /organizations/:id/personal-project` answers `{ "project": { "id", "organization_id", "name", "is_personal", "created_at" }, "document", "created" }`.
+
+The request bodies are `{ "value_1", "value_2" }` for `PUT /documents/:id` and `{ "editors": [...], "viewers": [...] }` for `PUT /documents/:id/shares`; their schemas (`documentValuesWire`, `documentSharesWire`) check the shape only, the service owns the constraints.
+
+### Scopes
+
+`DOCUMENTS_API_SCOPES` (`documents:read`, `documents:write`) names what the routes require and what bootstrap grants to each first-party client (§6.7).
+
+`VisibleDocument`, the dashboard row type, is defined here and re-exported by the package root.
 
 ## Seeding
 
@@ -93,7 +125,15 @@ const { createdProjects, createdDocuments, token } = await seedDocuments(
 );
 ```
 
-For bootstrap (`docs/README.md` §6.3), which is trusted and has no principal to check. The IDs are fixed UUIDs the caller chooses, so reruns match the same rows and a test seeds a scenario of its own under random ones. In one transaction: the projects and documents are created if absent, and an existing document keeps its values and its writer; every relationship (`project#organization`, `document#project`, the project roles `owner`, `editor`, `viewer`, the direct document shares `editor`, `viewer`) is TOUCHed on every run; and the write's token replaces `zedtoken` on every seeded document, so a share removed by hand, or a `sub` that changed with a reset IdP, is repaired by the next run and the edit page's read, at least as fresh as the row, sees it (§7.3). A document naming a project the seed does not is refused before anything is written.
+For bootstrap (`docs/README.md` §6.3), which is trusted and has no principal to check. The IDs are fixed UUIDs the caller chooses, so reruns match the same rows and a test seeds a scenario of its own under random ones.
+
+In one transaction:
+
+- the projects and documents are created if absent, and an existing document keeps its values and its writer;
+- every relationship (`project#organization`, `document#project`, the project roles `owner`, `editor`, `viewer`, the direct document shares `editor`, `viewer`) is TOUCHed on every run;
+- and the write's token replaces `zedtoken` on every seeded document, so a share removed by hand, or a `sub` that changed with a reset IdP, is repaired by the next run and the edit page's read, at least as fresh as the row, sees it (§7.3).
+
+A document naming a project the seed does not is refused before anything is written.
 
 ## Schema and migrations
 

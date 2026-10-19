@@ -1,6 +1,8 @@
 /**
  * Bearer verification for the APIs (docs/README.md §4.4, last paragraphs; §6.7): a JWT access token is verified
- * locally against the issuer's JWKS, with `iss`, `exp`, and that `aud` contains the project ID, and the subject
+ * locally against the issuer's JWKS (RS256 only, the algorithm Zitadel signs with: a token naming another
+ * algorithm is refused before any key is looked up), with `iss`, `exp` required, and that `aud` contains the
+ * project ID, and the subject
  * and client it names become the request's principal. No network call per request beyond the cached JWKS, and
  * the window that leaves (a token the IdP invalidated stays valid until `exp`) is bounded by the 10-minute
  * lifetime. The scope gate on top: `ScopeResolver` turns the token's claims into the client's scopes, and
@@ -18,13 +20,16 @@ import {
 
 export type JwksFetch = NonNullable<RemoteJWKSetOptions[typeof customFetch]>;
 
+/** Seconds of leeway on the time claims of every token this package verifies: bearer, logout, and ID tokens. */
+export const CLOCK_TOLERANCE_SECONDS = 30;
+
 export interface BearerOptions {
   /** What `iss` must be. */
   issuer: string;
   /** What `aud` must contain: the Zitadel project ID, since every API is an application of the one project. */
   audience: string;
   jwksUrl: string;
-  /** Seconds of leeway on `exp` and `nbf`; 30 by default. */
+  /** Seconds of leeway on `exp` and `nbf`; `CLOCK_TOLERANCE_SECONDS` (30) by default. */
   clockToleranceSeconds?: number;
   /** Replaces `fetch` for the JWKS (the tests' fake OP). */
   fetch?: JwksFetch;
@@ -111,7 +116,7 @@ export function createBearerVerifier(options: BearerOptions): BearerVerifier {
     createRemoteJWKSet(new URL(options.jwksUrl), {
       ...(options.fetch ? { [customFetch]: options.fetch } : {}),
     });
-  const clockTolerance = options.clockToleranceSeconds ?? 30;
+  const clockTolerance = options.clockToleranceSeconds ?? CLOCK_TOLERANCE_SECONDS;
 
   return {
     async verify(authorization) {
@@ -123,8 +128,10 @@ export function createBearerVerifier(options: BearerOptions): BearerVerifier {
       let typ: string | undefined;
       try {
         const result = await jwtVerify(match[1], getKey, {
+          algorithms: ['RS256'],
           issuer: options.issuer,
           audience: options.audience,
+          requiredClaims: ['exp'],
           clockTolerance,
         });
         payload = result.payload;
