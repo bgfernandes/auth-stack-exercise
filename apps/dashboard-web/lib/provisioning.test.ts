@@ -1,4 +1,4 @@
-/** The composition of the two provisioning calls, with both clients faked: order, arguments, outcome, failures. */
+/** The composition of the two provisioning calls, with both clients faked: order, arguments, outcome, landing, failures. */
 import { describe, expect, it, jest } from '@jest/globals';
 
 import { type DocumentsClient, type PersonalWorkspaceSummary } from '@auth-stack/documents/client';
@@ -44,7 +44,8 @@ describe('createWorkspaceProvisioner', () => {
       organizationCreated: true,
       projectCreated: true,
     });
-    await provision(session);
+    // The first login lands on a dashboard hinted with the document it created.
+    expect(await provision(session)).toBe('/dashboard?created=doc');
     expect(calls).toEqual(['provisionUser', 'ensurePersonalProject']);
     expect(provisionUser).toHaveBeenCalledWith(user);
     expect(ensurePersonalProject).toHaveBeenCalledWith(user, ORG);
@@ -60,16 +61,16 @@ describe('createWorkspaceProvisioner', () => {
 
   it('logs a seeded user whose organization existed but whose project did not', async () => {
     const { info, provision } = setup({ organizationCreated: false, projectCreated: true });
-    await provision(session);
+    expect(await provision(session)).toBe('/dashboard?created=doc');
     expect(info).toHaveBeenCalledWith(
       'workspace.provisioned',
       expect.objectContaining({ organizationCreated: false, projectCreated: true }),
     );
   });
 
-  it('a repeat login makes both calls and logs nothing', async () => {
+  it('a repeat login makes both calls, logs nothing, and lands where every login does', async () => {
     const { calls, info, provision } = setup({ organizationCreated: false, projectCreated: false });
-    await provision(session);
+    expect(await provision(session)).toBeUndefined();
     expect(calls).toEqual(['provisionUser', 'ensurePersonalProject']);
     expect(info).not.toHaveBeenCalled();
   });

@@ -54,7 +54,8 @@ export function seedPassword(): string {
 
 /**
  * Logs in from the app's login route through Zitadel's Login V2 pages (the login name, then the password) and
- * waits for the dashboard, where the callback lands a successful login.
+ * waits for the dashboard, where the callback lands a successful login: a first login with `?created=<id>`,
+ * the ID of the workspace's document (§6.4), so the match allows a query.
  */
 export async function logIn(page: Page, email: string, password: string): Promise<void> {
   await page.goto('/auth/login');
@@ -62,7 +63,7 @@ export async function logIn(page: Page, email: string, password: string): Promis
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Continue' }).click();
-  await page.waitForURL('/dashboard');
+  await page.waitForURL(/\/dashboard(\?.*)?$/);
 }
 
 /**

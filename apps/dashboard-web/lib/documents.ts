@@ -15,12 +15,19 @@ import { refusalOf } from './api-refusal';
 import { clients } from './clients';
 import { getCurrentUserContext } from './current-user';
 
-/** Every document the user may view, with the "Edit" and "Share" hints decided; undefined when there is no usable session. */
-export async function listDocuments(): Promise<VisibleDocument[] | undefined> {
+/**
+ * Every document the user may view, with the "Edit" and "Share" hints decided; undefined when there is no usable
+ * session. `freshAs` names a document the user just wrote (created, saved, or shared), and the API then lists
+ * at least as fresh as that row (§7.3), so the user reads their own write where the cached listing may miss it.
+ */
+export async function listDocuments(freshAs?: string): Promise<VisibleDocument[] | undefined> {
   const user = await getCurrentUserContext();
   if (!user) return undefined;
   try {
-    return await clients().documents.listVisibleDocuments(user);
+    return await clients().documents.listVisibleDocuments(
+      user,
+      freshAs === undefined ? {} : { freshAs },
+    );
   } catch (error) {
     if (refusalOf(error) === 'unauthenticated') return undefined;
     throw error;
