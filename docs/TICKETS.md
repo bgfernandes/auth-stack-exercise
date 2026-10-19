@@ -158,7 +158,7 @@
 
 ---
 
-## Phase 1 — Vertical slice (minimum viable submission)
+## Phase 1 — Vertical slice (the minimum that stands on its own)
 
 ### Ticket 6 — SpiceDB schema and `packages/authz` (3 h)
 
@@ -400,11 +400,11 @@ Split from ticket 13a on 2026-10-19. A third stack job in `ci.yml`, proving the 
 
 **Description:** Write the human-readable README: what this is, architecture diagram and a short tour of the repo, how to run (compose; Tilt), the seeded users table, how to try the three states, how authorization and consistency work in two paragraphs each, the security posture summary, **trade-offs, shortcuts, and gaps** (an explicit list, updated every phase), and **future work** (every unreached phase, from `docs/README.md` §11). Link to `docs/README.md` for the full design.
 
-**Acceptance criteria:** a reader who has never seen the repo can run it and see the three states in under ten minutes following only the README. With ticket 14 merged, the submission is viable.
+**Acceptance criteria:** a reader who has never seen the repo can run it and see the three states in under ten minutes following only the README. With ticket 14 merged, the project stands on its own.
 
 > **2026-10-15:** The "how to run" part is no longer this ticket's: the root README's **Development** section is kept current by every ticket that changes the local setup (rule in `CLAUDE.md`), starting with ticket 1. Ticket 14 reviews that section for a first-time reader rather than writing it.
 
-> **2026-10-19 (built):** Written as a stand-alone document for a reviewer who never opens `docs/`: what the system does, the architecture (components, request flow, ownership, login, consistency), the repository structure, the design decisions with the alternatives named, running it (prerequisites, compose, the CA step, Tilt, the seeded scenario, sign-up as observed, the `curl` replays, tests), the trade-offs, shortcuts, and gaps in three groups with their tickets, the ticket table by phase, and how the project was built. The same branch carries the submission-day fixes recorded in the decision log (loopback ports; revocation at logout with an end-to-end test against Zitadel; `devMode` by scheme; the sink's body bound; RS256 and `exp`; the absolute lifetime from `auth_time` with `max_age` on login; the clock tolerance; the unknown-`sid` fallback) and the corrections that mark unbuilt controls as planned in `docs/README.md`.
+> **2026-10-19 (built):** Written as a stand-alone document for a reviewer who never opens `docs/`: what the system does, the architecture (components, request flow, ownership, login, consistency), the repository structure, the design decisions with the alternatives named, running it (prerequisites, compose, the CA step, Tilt, the seeded scenario, sign-up as observed, the `curl` replays, tests), the trade-offs, shortcuts, and gaps in three groups with their tickets, the ticket table by phase, and how the project was built. The same branch carries the fixes of 2026-10-19 recorded in the decision log (loopback ports; revocation at logout with an end-to-end test against Zitadel; `devMode` by scheme; the sink's body bound; RS256 and `exp`; the absolute lifetime from `auth_time` with `max_age` on login; the clock tolerance; the unknown-`sid` fallback) and the corrections that mark unbuilt controls as planned in `docs/README.md`.
 
 **Status:** Done (2026-10-19).
 
