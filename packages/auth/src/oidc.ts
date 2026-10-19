@@ -2,8 +2,8 @@
  * The OIDC client of the BFFs (docs/README.md §4.4 steps 1, 3, 5, 6, 7) over `openid-client` v6: authorization
  * code with PKCE `S256` (RFC 7636), `state` and `nonce` bound to the login attempt through the stash, ID-token
  * validation (`iss`, `aud`, `exp`, `nonce`, signature against JWKS) by the library, refresh through the refresh
- * token, the RP-initiated logout URL, and the validation of a back-channel logout token against the same JWKS.
- * Discovery runs once per process and issuer.
+ * token, token revocation (RFC 7009) at logout, the RP-initiated logout URL, and the validation of a back-channel
+ * logout token against the same JWKS. Discovery runs once per process and issuer.
  */
 import { createRemoteJWKSet, customFetch, errors as joseErrors, jwtVerify } from 'jose';
 import * as oidc from 'openid-client';
@@ -58,6 +58,9 @@ export interface IdentityClaims {
   amr: string[];
 }
 
+/** The `token_type_hint` of RFC 7009 §2.1. */
+export type TokenTypeHint = 'access_token' | 'refresh_token';
+
 export interface LoginResult {
   tokens: TokenSet;
   claims: IdentityClaims;
@@ -70,6 +73,13 @@ export interface OidcClient {
   completeLogin(callbackUrl: URL, stash: LoginStash): Promise<LoginResult>;
   /** A new token set through the refresh token. Throws `AuthError('refresh_failed')`. */
   refresh(refreshToken: string): Promise<TokenSet>;
+  /**
+   * Revokes a token at the issuer's `revocation_endpoint` (RFC 7009 §2.1), with the client's own authentication
+   * (`client_id` alone for the public clients bootstrap registers). Throws `AuthError('revocation_failed')`,
+   * also when the issuer publishes no revocation endpoint; the server's answer on an unknown token is a success
+   * (§2.2), so a token already gone does not fail.
+   */
+  revoke(token: string, tokenTypeHint: TokenTypeHint): Promise<void>;
   /** The `end_session_endpoint` URL with `id_token_hint` and the registered post-logout redirect. */
   endSessionUrl(idToken: string | undefined): Promise<URL>;
   /**
@@ -289,6 +299,21 @@ export function createOidcClient(
         if (error instanceof AuthError) throw error;
         const detail = error instanceof oidc.ResponseBodyError ? error.error : 'validation';
         throw new AuthError('refresh_failed', `refresh failed: ${detail}`, { cause: error });
+      }
+    },
+
+    async revoke(token, tokenTypeHint) {
+      const configured = await configuration();
+      if (!configured.serverMetadata().revocation_endpoint) {
+        throw new AuthError('revocation_failed', 'the issuer publishes no revocation_endpoint');
+      }
+      try {
+        await oidc.tokenRevocation(configured, token, { token_type_hint: tokenTypeHint });
+      } catch (error) {
+        const detail = error instanceof oidc.ResponseBodyError ? error.error : 'request';
+        throw new AuthError('revocation_failed', `${tokenTypeHint} revocation failed: ${detail}`, {
+          cause: error,
+        });
       }
     },
 

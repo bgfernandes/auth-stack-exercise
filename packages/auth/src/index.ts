@@ -60,6 +60,7 @@ export {
   type OidcClientOptions,
   type OidcFetch,
   type TokenSet,
+  type TokenTypeHint,
 } from './oidc';
 export { redact, type AuthLogger } from './redact';
 export {

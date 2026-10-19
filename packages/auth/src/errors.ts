@@ -20,6 +20,8 @@ export type AuthErrorCode =
   | 'token_invalid'
   /** The refresh token was refused or the refresh response failed validation. */
   | 'refresh_failed'
+  /** The revocation endpoint refused a token, could not be reached, or the issuer publishes none (RFC 7009). */
+  | 'revocation_failed'
   /** A state-changing request did not come from the app's own origin (`assertSameOrigin`). */
   | 'forbidden_origin'
   /** A form post carried no synchronizer token, or one that is not the session's (`verifyCsrfToken`). */

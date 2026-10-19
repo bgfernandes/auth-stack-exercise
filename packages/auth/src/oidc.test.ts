@@ -134,6 +134,29 @@ describe('createOidcClient', () => {
     expect(oauthErrorOf(error)).toBe('invalid_grant');
   });
 
+  it('revokes a token with its type hint, and reports a refused or unsupported revocation', async () => {
+    const { url, stash } = await client.beginLogin();
+    const { tokens } = await client.completeLogin(op.authorize(url, alice), stash);
+    await client.revoke(tokens.refreshToken as string, 'refresh_token');
+    expect(op.revocations).toEqual([
+      { token: tokens.refreshToken, tokenTypeHint: 'refresh_token' },
+    ]);
+    expect(op.refreshTokens.has(tokens.refreshToken as string)).toBe(false);
+    // RFC 7009 §2.2: a token the server does not know is a success too.
+    await expect(client.revoke('never-issued', 'access_token')).resolves.toBeUndefined();
+
+    op.refuseRevocation(503);
+    const refused = await failure(client.revoke(tokens.accessToken, 'access_token'));
+    expect(refused.code).toBe('revocation_failed');
+    expect(refused.message).not.toContain(tokens.accessToken);
+
+    const { revocation_endpoint: _none, ...withoutRevocation } = op.metadata;
+    const bare = createOidcClient(config, { fetch: op.fetch, serverMetadata: withoutRevocation });
+    expect((await failure(bare.revoke(tokens.accessToken, 'access_token'))).code).toBe(
+      'revocation_failed',
+    );
+  });
+
   it('builds the end-session URL with the ID token hint and the registered post-logout redirect', async () => {
     const url = await client.endSessionUrl('the-id-token');
     expect(url.origin + url.pathname).toBe('https://op.test/end_session');

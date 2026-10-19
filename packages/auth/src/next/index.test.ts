@@ -328,6 +328,48 @@ describe('createNextAuth', () => {
     expect(noSession.headers.get('location')).toBe(`${APP}/`);
   });
 
+  it('logout revokes the refresh token and then the access token at the provider', async () => {
+    const { sessionCookie, sessionId } = await loggedIn();
+    const session = (await store.get(sessionId)) as Session;
+    const response = await auth.logout(
+      new Request(`${APP}/auth/logout`, {
+        method: 'POST',
+        headers: { cookie: cookieHeader(sessionCookie), origin: APP },
+        body: new URLSearchParams({ csrf_token: auth.csrfTokenOf(session) }),
+      }),
+    );
+    expect(response.status).toBe(303);
+    expect(op.revocations).toEqual([
+      { token: session.refreshToken, tokenTypeHint: 'refresh_token' },
+      { token: session.accessToken, tokenTypeHint: 'access_token' },
+    ]);
+    expect(op.refreshTokens.has(session.refreshToken as string)).toBe(false);
+    expect(events).toEqual([]);
+  });
+
+  it('logout still ends the session when the revocation endpoint fails, and logs it without the tokens', async () => {
+    const { sessionCookie, sessionId } = await loggedIn();
+    const session = (await store.get(sessionId)) as Session;
+    op.refuseRevocation(503);
+    const response = await auth.logout(
+      new Request(`${APP}/auth/logout`, {
+        method: 'POST',
+        headers: { cookie: cookieHeader(sessionCookie), origin: APP },
+        body: new URLSearchParams({ csrf_token: auth.csrfTokenOf(session) }),
+      }),
+    );
+    expect(response.status).toBe(303);
+    expect(new URL(response.headers.get('location') as string).pathname).toBe('/end_session');
+    expect(setCookies(response).get('dashboard_web_session')).toMatch(/Max-Age=0/i);
+    await expect(store.get(sessionId)).resolves.toBeUndefined();
+    expect(op.revocations).toEqual([]);
+    expect(events).toEqual(['auth.revocation_failed', 'auth.revocation_failed']);
+    expect(records.map((r) => r.tokenTypeHint)).toEqual(['refresh_token', 'access_token']);
+    const logged = JSON.stringify(records);
+    expect(logged).not.toContain(session.refreshToken);
+    expect(logged).not.toContain(session.accessToken);
+  });
+
   it('derives the synchronizer token from the session with the app’s secret', async () => {
     const { sessionId } = await loggedIn();
     const session = (await store.get(sessionId)) as Session;

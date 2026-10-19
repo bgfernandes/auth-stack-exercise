@@ -1,9 +1,10 @@
 /**
  * An in-process OpenID Provider for the unit tests (`@auth-stack/auth/testing`): served to `openid-client`
- * through its `customFetch` hook, so no socket and no interception library. Discovery, JWKS, and the token
- * endpoint (code exchange with PKCE, refresh with rotation) behave like Zitadel's as far as the package relies
- * on them; the browser leg of the flow is `authorize()`, which plays the user logging in and returns the callback
- * URL. Knobs force the failure paths: a wrong nonce, a tampered issuer, a refused refresh.
+ * through its `customFetch` hook, so no socket and no interception library. Discovery, JWKS, the token
+ * endpoint (code exchange with PKCE, refresh with rotation), and the revocation endpoint (RFC 7009) behave like
+ * Zitadel's as far as the package relies on them; the browser leg of the flow is `authorize()`, which plays the
+ * user logging in and returns the callback URL. Knobs force the failure paths: a wrong nonce, a tampered issuer,
+ * a refused refresh, a revocation endpoint that is down.
  */
 import { createHash, randomBytes } from 'node:crypto';
 
@@ -57,10 +58,14 @@ export interface FakeOp {
   deny(authorizationUrl: URL, error?: string): URL;
   /** Applies to the next ID token the OP issues. */
   tamperNextIdToken(overrides: IdTokenOverrides): void;
-  /** Every refresh token currently valid; rotation removes the one used. */
+  /** Every refresh token currently valid; rotation removes the one used, as does its revocation. */
   readonly refreshTokens: Set<string>;
   /** How many token requests the OP has served, by grant. */
   readonly grants: { authorization_code: number; refresh_token: number };
+  /** Every revocation request served (RFC 7009 §2.1), in order, with the `token_type_hint` it carried. */
+  readonly revocations: { token: string; tokenTypeHint: string | null }[];
+  /** Every revocation request from now on is answered with `status` (RFC 7009 §2.2.1: a server error). */
+  refuseRevocation(status?: number): void;
   /** Signs arbitrary claims with the OP's key (tickets 15 and 18 build bearer and logout tokens with it); `typ` goes in the header. */
   sign(claims: Record<string, unknown>, header?: { typ?: string }): Promise<string>;
 }
@@ -95,6 +100,7 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
     authorization_endpoint: `${issuer}/authorize`,
     token_endpoint: `${issuer}/token`,
     jwks_uri: `${issuer}/jwks`,
+    revocation_endpoint: `${issuer}/revoke`,
     end_session_endpoint: `${issuer}/end_session`,
     response_types_supported: ['code'],
     code_challenge_methods_supported: ['S256'],
@@ -105,6 +111,8 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
   const codes = new Map<string, PendingCode>();
   const refreshTokens = new Map<string, FakeUser>();
   const grants = { authorization_code: 0, refresh_token: 0 };
+  const revocations: { token: string; tokenTypeHint: string | null }[] = [];
+  let revocationStatus: number | undefined;
   let tamper: IdTokenOverrides | undefined;
 
   const sign = (claims: Record<string, unknown>, header: { typ?: string } = {}): Promise<string> =>
@@ -148,11 +156,15 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
     });
   }
 
-  async function token(request: { body?: unknown }): Promise<Response> {
+  function formOf(request: { body?: unknown }): URLSearchParams {
     const body = request.body;
-    const form = new URLSearchParams(
+    return new URLSearchParams(
       typeof body === 'string' ? body : body instanceof URLSearchParams ? body.toString() : '',
     );
+  }
+
+  async function token(request: { body?: unknown }): Promise<Response> {
+    const form = formOf(request);
     if (form.get('client_id') !== clientId) return json({ error: 'invalid_client' }, 401);
     const grantType = form.get('grant_type');
     if (grantType === 'authorization_code') {
@@ -180,12 +192,25 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
     return json({ error: 'unsupported_grant_type' }, 400);
   }
 
+  /** RFC 7009 §2: the client's own authentication, then `200` whether or not the token was known (§2.2). */
+  function revoke(request: { body?: unknown }): Response {
+    const form = formOf(request);
+    if (form.get('client_id') !== clientId) return json({ error: 'invalid_client' }, 401);
+    const token = form.get('token');
+    if (!token) return json({ error: 'invalid_request' }, 400);
+    if (revocationStatus !== undefined) return json({ error: 'server_error' }, revocationStatus);
+    revocations.push({ token, tokenTypeHint: form.get('token_type_hint') });
+    refreshTokens.delete(token);
+    return new Response(null, { status: 200 });
+  }
+
   const fetch: FakeFetch = async (url, request) => {
     const { pathname } = new URL(url);
     if (!url.startsWith(issuer)) return new Response('not the OP', { status: 502 });
     if (pathname === '/.well-known/openid-configuration') return json(metadata);
     if (pathname === '/jwks') return json({ keys: [jwk] });
     if (pathname === '/token' && request.method === 'POST') return token(request);
+    if (pathname === '/revoke' && request.method === 'POST') return revoke(request);
     return new Response('not found', { status: 404 });
   };
 
@@ -225,6 +250,10 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
       return new Set(refreshTokens.keys());
     },
     grants,
+    revocations,
+    refuseRevocation(status = 503) {
+      revocationStatus = status;
+    },
     sign,
   };
 }
