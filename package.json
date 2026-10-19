@@ -13,6 +13,7 @@
     "test": "jest --selectProjects unit",
     "test:integration": "jest --selectProjects integration --passWithNoTests",
     "test:e2e": "pnpm run test:e2e:dashboard-web && pnpm run test:e2e:tenancy-web",
+    "test:e2e:tilt": "E2E_DEV_SERVER=1 pnpm run test:e2e",
     "test:e2e:dashboard-web": "playwright test --config apps/dashboard-web/playwright.config.ts",
     "test:e2e:tenancy-web": "playwright test --config apps/tenancy-web/playwright.config.ts",
     "authz:zed": "docker compose run --rm zed",
