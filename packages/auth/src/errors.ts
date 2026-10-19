@@ -18,6 +18,12 @@ export type AuthErrorCode =
   | 'exchange_failed'
   /** The token response or the ID token failed validation (`iss`, `aud`, `exp`, signature, missing claims). */
   | 'token_invalid'
+  /**
+   * The ID token's `auth_time` is older than the `max_age` the authorization request asked for (OpenID Connect
+   * Core 1.0 §3.1.2.1): the OP did not re-authenticate, and a session created from it would be past its
+   * absolute limit at birth, which would send the browser straight back to the login.
+   */
+  | 'stale_authentication'
   /** The refresh token was refused or the refresh response failed validation. */
   | 'refresh_failed'
   /** The revocation endpoint refused a token, could not be reached, or the issuer publishes none (RFC 7009). */

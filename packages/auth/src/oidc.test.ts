@@ -57,6 +57,65 @@ describe('createOidcClient', () => {
     expect(again.stash.nonce).not.toBe(stash.nonce);
   });
 
+  it('asks for max_age, the absolute session limit by default, and gets a re-authentication for an old login', async () => {
+    const { url } = await client.beginLogin();
+    expect(url.searchParams.get('max_age')).toBe('28800');
+    const short = createOidcClient(
+      { ...config, maxAgeSeconds: 600 },
+      { fetch: op.fetch, serverMetadata: op.metadata },
+    );
+    const login = await short.beginLogin();
+    expect(login.url.searchParams.get('max_age')).toBe('600');
+    // Alice authenticated at the OP an hour ago; the OP re-authenticates her, so auth_time is now.
+    const before = Date.now();
+    const stale = { ...alice, authTime: Math.floor(Date.now() / 1000) - 3_600 };
+    const { claims } = await short.completeLogin(op.authorize(login.url, stale), login.stash);
+    expect(claims.authTime).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000);
+    // Within max_age, the authentication stands as it was.
+    const recent = { ...alice, authTime: Math.floor(Date.now() / 1000) - 500 };
+    const again = await short.beginLogin();
+    const kept = await short.completeLogin(op.authorize(again.url, recent), again.stash);
+    expect(kept.claims.authTime).toBe(recent.authTime * 1000);
+  });
+
+  it('refuses an authentication older than max_age from an OP that ignores it, and an ID token without auth_time', async () => {
+    const lax = await createFakeOp({
+      clientId: CLIENT_ID,
+      projectId: 'project-1',
+      ignoresMaxAge: true,
+    });
+    const short = createOidcClient(
+      { ...config, maxAgeSeconds: 600 },
+      { fetch: lax.fetch, serverMetadata: lax.metadata },
+    );
+    const seconds = () => Math.floor(Date.now() / 1000);
+    // Beyond the clock tolerance: the library's own auth_time check refuses it.
+    const old = await short.beginLogin();
+    const refused = await failure(
+      short.completeLogin(
+        lax.authorize(old.url, { ...alice, authTime: seconds() - 700 }),
+        old.stash,
+      ),
+    );
+    expect(refused.code).toBe('stale_authentication');
+    // Inside the tolerance but past max_age all the same: the session would be born past its absolute limit.
+    const edge = await short.beginLogin();
+    const alsoRefused = await failure(
+      short.completeLogin(
+        lax.authorize(edge.url, { ...alice, authTime: seconds() - 610 }),
+        edge.stash,
+      ),
+    );
+    expect(alsoRefused.code).toBe('stale_authentication');
+    // OpenID Connect Core 1.0 §3.1.2.1: with max_age requested, auth_time is required.
+    const missing = await short.beginLogin();
+    lax.tamperNextIdToken({ auth_time: undefined });
+    const noAuthTime = await failure(
+      short.completeLogin(lax.authorize(missing.url, alice), missing.stash),
+    );
+    expect(noAuthTime.code).toBe('token_invalid');
+  });
+
   it('completes a login: tokens, expiry, and the claims the session keeps', async () => {
     const { url, stash } = await client.beginLogin();
     const before = Date.now();

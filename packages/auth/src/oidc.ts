@@ -10,9 +10,9 @@ import * as oidc from 'openid-client';
 
 import { CLOCK_TOLERANCE_SECONDS } from './bearer';
 import { AuthError } from './errors';
+import { DEFAULT_SESSION_LIMITS, type LogoutTokenClaims } from './session';
 import { STASH_LIFETIME_SECONDS, type LoginStash } from './stash';
 
-import type { LogoutTokenClaims } from './session';
 import type { JWTPayload, JWTVerifyGetKey } from 'jose';
 
 export type OidcFetch = NonNullable<oidc.Configuration[typeof oidc.customFetch]>;
@@ -28,6 +28,15 @@ export interface OidcClientConfig {
   postLogoutRedirectUri: string;
   /** Defaults to `openid profile email offline_access`. */
   scope?: string;
+  /**
+   * The `max_age` of every authorization request (OpenID Connect Core 1.0 §3.1.2.1) and the bound on the ID
+   * token's `auth_time` at the callback: the OP must re-authenticate a user whose last authentication is older,
+   * and a token that is older anyway fails the login with `stale_authentication`. The session store's absolute
+   * limit by default (`DEFAULT_SESSION_LIMITS.absoluteSeconds`, 8 hours), and it must stay equal to the store's,
+   * since the store anchors that limit to `auth_time`: a larger value here lets a login create a session that is
+   * already past its absolute limit, and the browser loops between the app and the OP.
+   */
+  maxAgeSeconds?: number;
 }
 
 export interface OidcClientOptions {
@@ -187,11 +196,18 @@ function loginError(error: unknown): AuthError {
       cause: error,
     });
   }
-  if (error instanceof oidc.ClientError && error.code === 'OAUTH_JWT_CLAIM_COMPARISON_FAILED') {
+  if (error instanceof oidc.ClientError) {
     // The library's own error names the claim (its cause carries `{ claim, expected, claims }`).
     const inner = error.cause as { cause?: { claim?: unknown } } | undefined;
-    if (inner?.cause?.claim === 'nonce') {
+    if (error.code === 'OAUTH_JWT_CLAIM_COMPARISON_FAILED' && inner?.cause?.claim === 'nonce') {
       return new AuthError('nonce_mismatch', 'ID token nonce mismatch', { cause: error });
+    }
+    if (error.code === 'OAUTH_JWT_TIMESTAMP_CHECK_FAILED' && inner?.cause?.claim === 'auth_time') {
+      return new AuthError(
+        'stale_authentication',
+        "the ID token's auth_time is older than the requested max_age",
+        { cause: error },
+      );
     }
   }
   return new AuthError('token_invalid', 'token response failed validation', { cause: error });
@@ -230,6 +246,7 @@ export function createOidcClient(
 ): OidcClient {
   const now = options.now ?? Date.now;
   const scope = config.scope ?? DEFAULT_SCOPE;
+  const maxAgeSeconds = config.maxAgeSeconds ?? DEFAULT_SESSION_LIMITS.absoluteSeconds;
   const configuration = () => configure(config, options);
 
   // The issuer's JWKS, from discovery, fetched and cached by jose; through the same `fetch` as everything else.
@@ -264,6 +281,7 @@ export function createOidcClient(
         code_challenge_method: 'S256',
         state: stash.state,
         nonce: stash.nonce,
+        max_age: String(maxAgeSeconds),
       });
       return { url, stash };
     },
@@ -283,13 +301,32 @@ export function createOidcClient(
           expectedState: stash.state,
           expectedNonce: stash.nonce,
           idTokenExpected: true,
+          // `max_age` was requested, so `auth_time` is required and checked against it (with the clock
+          // tolerance) by the library, see loginError; the exact check follows, on this clock.
+          maxAge: maxAgeSeconds,
         });
       } catch (error) {
         throw loginError(error);
       }
       const claims = response.claims();
       if (!claims) throw new AuthError('token_invalid', 'token response carries no ID token');
-      return { tokens: tokenSet(response, now()), claims: identityClaims(claims) };
+      const identity = identityClaims(claims);
+      if (identity.authTime === undefined) {
+        throw new AuthError(
+          'token_invalid',
+          'ID token carries no auth_time although max_age was requested',
+        );
+      }
+      // A session anchored to this authentication would be past its absolute limit already (the store counts
+      // the limit from `auth_time`), and the next login would get the same `auth_time` again from an OP that
+      // ignored `max_age`: fail the login instead of starting that loop.
+      if (identity.authTime + maxAgeSeconds * 1000 <= now()) {
+        throw new AuthError(
+          'stale_authentication',
+          `the ID token's auth_time is older than the requested max_age of ${maxAgeSeconds} s`,
+        );
+      }
+      return { tokens: tokenSet(response, now()), claims: identity };
     },
 
     async refresh(refreshToken) {

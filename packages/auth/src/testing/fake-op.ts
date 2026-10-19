@@ -30,6 +30,12 @@ export interface FakeUser {
   name?: string;
   sid?: string;
   amr?: string[];
+  /**
+   * When the user authenticated at the OP, in seconds since the epoch; five seconds before the token by default.
+   * An authorization request whose `max_age` has elapsed since then re-authenticates the user (OpenID Connect
+   * Core 1.0 §3.1.2.1), so the ID token's `auth_time` is the token's time, unless the OP `ignoresMaxAge`.
+   */
+  authTime?: number;
 }
 
 export interface FakeOpOptions {
@@ -38,6 +44,8 @@ export interface FakeOpOptions {
   /** A second audience, like Zitadel's project ID; `azp` names the client then. */
   projectId?: string;
   accessTokenSeconds?: number;
+  /** An OP that does not honour `max_age`: the ID token keeps the user's `authTime` however old it is. */
+  ignoresMaxAge?: boolean;
 }
 
 export interface IdTokenOverrides {
@@ -46,6 +54,8 @@ export interface IdTokenOverrides {
   aud?: string | string[];
   /** Seconds since the epoch; forces an expired token. */
   exp?: number;
+  /** Seconds since the epoch; `undefined` drops the claim. */
+  auth_time?: number | undefined;
 }
 
 export interface FakeOp {
@@ -82,6 +92,8 @@ interface PendingCode {
   nonce: string | undefined;
   codeChallenge: string | undefined;
   redirectUri: string;
+  /** The request's `max_age`, in seconds, when it carried one. */
+  maxAge: number | undefined;
 }
 
 function s256(verifier: string): string {
@@ -143,8 +155,14 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
     return new SignJWT(claims).setProtectedHeader({ alg, kid, ...rest }).sign(key.privateKey);
   };
 
-  async function idToken(user: FakeUser, nonce: string | undefined): Promise<string> {
+  async function idToken(
+    user: FakeUser,
+    nonce: string | undefined,
+    maxAge: number | undefined,
+  ): Promise<string> {
     const now = Math.floor(Date.now() / 1000);
+    let authTime = user.authTime ?? now - 5;
+    if (maxAge !== undefined && now - authTime > maxAge && !options.ignoresMaxAge) authTime = now;
     const claims: Record<string, unknown> = {
       iss: issuer,
       sub: user.sub,
@@ -152,7 +170,7 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
       ...(projectId ? { azp: clientId } : {}),
       iat: now,
       exp: now + accessTokenSeconds,
-      auth_time: now - 5,
+      auth_time: authTime,
       amr: user.amr ?? ['pwd'],
       ...(nonce ? { nonce } : {}),
       ...(user.sid ? { sid: user.sid } : {}),
@@ -166,7 +184,11 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
     return sign(claims);
   }
 
-  async function tokenResponse(user: FakeUser, nonce: string | undefined): Promise<Response> {
+  async function tokenResponse(
+    user: FakeUser,
+    nonce: string | undefined,
+    maxAge: number | undefined,
+  ): Promise<Response> {
     const refreshToken = randomBytes(16).toString('base64url');
     refreshTokens.set(refreshToken, user);
     return json({
@@ -174,7 +196,7 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
       token_type: 'Bearer',
       expires_in: accessTokenSeconds,
       refresh_token: refreshToken,
-      id_token: await idToken(user, nonce),
+      id_token: await idToken(user, nonce, maxAge),
       scope: 'openid profile email offline_access',
     });
   }
@@ -201,7 +223,7 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
       if (pending.codeChallenge && (!verifier || s256(verifier) !== pending.codeChallenge)) {
         return json({ error: 'invalid_grant', error_description: 'PKCE verification failed' }, 400);
       }
-      return tokenResponse(pending.user, pending.nonce);
+      return tokenResponse(pending.user, pending.nonce, pending.maxAge);
     }
     if (grantType === 'refresh_token') {
       grants.refresh_token += 1;
@@ -210,7 +232,7 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
       if (!user)
         return json({ error: 'invalid_grant', error_description: 'unknown refresh token' }, 400);
       refreshTokens.delete(used);
-      return tokenResponse(user, undefined);
+      return tokenResponse(user, undefined, undefined);
     }
     return json({ error: 'unsupported_grant_type' }, 400);
   }
@@ -246,11 +268,13 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
       const redirectUri = params.get('redirect_uri');
       if (!redirectUri) throw new Error('authorization request without redirect_uri');
       const code = randomBytes(12).toString('base64url');
+      const maxAge = params.get('max_age');
       codes.set(code, {
         user,
         nonce: params.get('nonce') ?? undefined,
         codeChallenge: params.get('code_challenge') ?? undefined,
         redirectUri,
+        maxAge: maxAge === null ? undefined : Number(maxAge),
       });
       const callback = new URL(redirectUri);
       callback.searchParams.set('code', code);

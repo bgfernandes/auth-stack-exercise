@@ -143,6 +143,42 @@ describe('createNextAuth', () => {
     await expect(store.listByUser('alice')).resolves.toEqual([]);
   });
 
+  it('callback fails a login whose authentication is older than the session limit, rather than looping', async () => {
+    const lax = await createFakeOp({ clientId: 'dashboard-web', ignoresMaxAge: true });
+    const stale = createNextAuth({
+      options: { ...options, oidc: { ...options.oidc, maxAgeSeconds: 600 } },
+      store,
+      client: createOidcClient(
+        { ...options.oidc, maxAgeSeconds: 600 },
+        { fetch: lax.fetch, serverMetadata: lax.metadata },
+      ),
+      logger: {
+        warn: (event, fields) => {
+          events.push(event);
+          records.push(fields ?? {});
+        },
+      },
+    });
+    const login = await stale.login();
+    expect(new URL(login.headers.get('location') as string).searchParams.get('max_age')).toBe(
+      '600',
+    );
+    const stash = setCookies(login).get('dashboard_web_session_login') as string;
+    const callback = lax.authorize(new URL(login.headers.get('location') as string), {
+      ...alice,
+      authTime: Math.floor(Date.now() / 1000) - 3_600,
+    });
+    const response = await stale.callback(
+      new Request(callback, { headers: { cookie: cookieHeader(stash) } }),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe('Login failed. Please try again.');
+    expect(setCookies(response).has('dashboard_web_session')).toBe(false);
+    await expect(store.listByUser('alice')).resolves.toEqual([]);
+    expect(events).toEqual(['auth.login_failed']);
+    expect(records[0]?.errorCode).toBe('stale_authentication');
+  });
+
   /** The binding again, with a hook; the OP and the store are the ones of this test. */
   function withHook(onLogin: (session: Session) => Promise<string | void>): NextAuth {
     return createNextAuth({
