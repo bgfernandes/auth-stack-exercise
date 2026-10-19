@@ -4,7 +4,8 @@
  * one call each: `GET /auth/login` → `login()`, `GET /auth/callback` → `callback(request)`, `POST /auth/logout`
  * → `logout(request)`, `POST /auth/backchannel-logout` → `backchannelLogout(request)`. Nothing here decides
  * anything the core does not; it only moves cookies, and runs the host's `onLogin` hook (§4.4 step 4,
- * just-in-time provisioning) between the session's creation and the redirect.
+ * just-in-time provisioning) between the session's creation and the redirect. `securityHeaders(request)` is
+ * for `proxy.ts`: the headers of §9 on every response, with the nonce Next.js stamps on its own scripts.
  */
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
@@ -14,6 +15,7 @@ import { handleBackchannelLogout } from '../backchannel-logout';
 import { assertSameOrigin, cookieAttributes, readCookie, type CookieAttributes } from '../cookies';
 import { CSRF_FIELD, csrfTokenOf, verifyCsrfToken } from '../csrf';
 import { AuthError } from '../errors';
+import { newNonce, webSecurityHeaders } from '../headers';
 import { createOidcClient, type OidcClient } from '../oidc';
 import { redact, type AuthLogger } from '../redact';
 import { sessionFromLogin, type Session, type SessionStore } from '../session';
@@ -43,6 +45,16 @@ export interface NextAuthOptions {
   loginFailed?: (code: AuthError['code']) => NextResponse;
   logger?: AuthLogger;
   now?: () => number;
+  /** Relaxes the policy for `next dev` (§9); `NODE_ENV === 'development'` by default. */
+  development?: boolean;
+}
+
+/** What `securityHeaders(request)` gives `proxy.ts`. */
+export interface SecuredResponses {
+  /** Continues to the page, the policy on the request as well, so Next.js stamps the nonce on its own scripts. */
+  next(): NextResponse;
+  /** Sets the headers on any other response of the proxy (a redirect to the login). */
+  apply<T extends NextResponse>(response: T): T;
 }
 
 export interface NextAuth {
@@ -65,6 +77,8 @@ export interface NextAuth {
   verifyCsrfToken(session: Pick<Session, 'id'>, presented: unknown): boolean;
   /** The token of the session behind `cookies()`, for pages; undefined without a live session. */
   csrfToken(): Promise<string | undefined>;
+  /** For `proxy.ts`: the security headers of one response (§9), a fresh nonce in its policy. */
+  securityHeaders(request: Request): SecuredResponses;
   getAccessToken: AccessTokenProvider['getAccessToken'];
 }
 
@@ -85,6 +99,7 @@ export function createNextAuth(init: NextAuthOptions): NextAuth {
     maxAge: STASH_LIFETIME_SECONDS,
   });
   const afterLoginUrl = new URL(init.afterLoginPath ?? '/', options.appUrl);
+  const development = init.development ?? process.env.NODE_ENV === 'development';
 
   /** A landing path the hook returned, resolved as `afterLoginPath` is; one that lands elsewhere is refused. */
   function landingUrl(path: string): URL {
@@ -229,6 +244,30 @@ export function createNextAuth(init: NextAuthOptions): NextAuth {
     async csrfToken() {
       const session = await this.currentSession();
       return session && csrfTokenOf(session, options.sessionSecret);
+    },
+
+    securityHeaders(request) {
+      const headers = webSecurityHeaders({
+        appUrl: options.appUrl,
+        issuer: options.oidc.issuer,
+        nonce: newNonce(),
+        development,
+      });
+      const apply = <T extends NextResponse>(response: T): T => {
+        for (const [name, value] of Object.entries(headers)) response.headers.set(name, value);
+        return response;
+      };
+      return {
+        next() {
+          const requestHeaders = new Headers(request.headers);
+          requestHeaders.set(
+            'content-security-policy',
+            headers['Content-Security-Policy'] as string,
+          );
+          return apply(NextResponse.next({ request: { headers: requestHeaders } }));
+        },
+        apply,
+      };
     },
 
     getAccessToken: tokens.getAccessToken,

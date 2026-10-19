@@ -1,5 +1,6 @@
 /** The Next.js binding with plain `Request`s: the cookies it sets and the responses of each route helper. */
 import { beforeEach, describe, expect, it } from '@jest/globals';
+import { NextResponse } from 'next/server';
 
 import { csrfTokenOf } from '../csrf';
 import { createOidcClient } from '../oidc';
@@ -49,6 +50,7 @@ describe('createNextAuth', () => {
       store,
       client: createOidcClient(options.oidc, { fetch: op.fetch, serverMetadata: op.metadata }),
       afterLoginPath: '/dashboard',
+      development: false,
       logger: {
         warn: (event, fields) => {
           events.push(event);
@@ -334,6 +336,34 @@ describe('createNextAuth', () => {
     expect(auth.verifyCsrfToken(session, token)).toBe(true);
     expect(auth.verifyCsrfToken({ id: 'another' }, token)).toBe(false);
     expect(auth.verifyCsrfToken(session, undefined)).toBe(false);
+  });
+
+  it('securityHeaders sets the headers of §9 on every response, the policy on the request too, a nonce each time', () => {
+    const request = new Request(`${APP}/dashboard`, { headers: { accept: 'text/html' } });
+    const first = auth.securityHeaders(request);
+    const next = first.next();
+    const policy = next.headers.get('content-security-policy') as string;
+    const nonce = /'nonce-([^']+)'/.exec(policy)?.[1] as string;
+    expect(policy).toBe(
+      `default-src 'self'; script-src 'self' 'nonce-${nonce}' 'strict-dynamic'; style-src 'self' 'nonce-${nonce}'; img-src 'self'; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self' https://op.test; frame-ancestors 'none'; upgrade-insecure-requests`,
+    );
+    expect(next.headers.get('strict-transport-security')).toBe(
+      'max-age=31536000; includeSubDomains',
+    );
+    expect(next.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(next.headers.get('referrer-policy')).toBe('same-origin');
+    expect(next.headers.get('x-frame-options')).toBe('DENY');
+    // How `NextResponse.next({ request })` carries a request header to the page: Next.js reads the nonce there.
+    expect(next.headers.get('x-middleware-request-content-security-policy')).toBe(policy);
+    expect(next.headers.get('x-middleware-request-accept')).toBe('text/html');
+
+    const redirect = first.apply(NextResponse.redirect(`${APP}/auth/login`, 307));
+    expect(redirect.status).toBe(307);
+    expect(redirect.headers.get('content-security-policy')).toBe(policy);
+    expect(redirect.headers.has('x-middleware-request-content-security-policy')).toBe(false);
+
+    const second = auth.securityHeaders(request).next().headers.get('content-security-policy');
+    expect(second).not.toBe(policy);
   });
 
   it('backchannelLogout removes the session the IdP names, with no origin check and no cookie', async () => {

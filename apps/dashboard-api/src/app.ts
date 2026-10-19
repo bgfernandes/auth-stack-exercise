@@ -20,7 +20,12 @@ import {
   type Principal,
   type ScopeResolver,
 } from '@auth-stack/auth';
-import { apiServerOptions, bearerPlugin, echoRequestId } from '@auth-stack/auth/fastify';
+import {
+  apiSecurityHeaders,
+  apiServerOptions,
+  bearerPlugin,
+  echoRequestId,
+} from '@auth-stack/auth/fastify';
 import { minimizeLatency } from '@auth-stack/authz';
 import {
   isDocumentsError,
@@ -79,6 +84,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     ),
   );
   echoRequestId(app);
+  apiSecurityHeaders(app);
   await app.register(bearerPlugin, { verifier: deps.verifier, scopes: deps.scopes });
 
   app.setErrorHandler((error: unknown, request, reply) => {

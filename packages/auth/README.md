@@ -40,6 +40,7 @@ export const auth = createNextAuth({ options, store, afterLoginPath: '/dashboard
 // app/auth/backchannel-logout/route.ts   export const POST = (request: Request) => auth.backchannelLogout(request);
 // a server component           const session = await auth.currentSession();
 // proxy.ts or a route handler  const session = await auth.sessionFromRequest(request);
+// proxy.ts                      const secured = auth.securityHeaders(request); return secured.next(); // or secured.apply(redirect)
 // calling an API               const token = await auth.getAccessToken(session); // undefined: send to login
 ```
 
@@ -72,6 +73,10 @@ The third CSRF layer of §9, after the session cookie's `SameSite=Lax` and `asse
 // a page                       <input type="hidden" name={CSRF_FIELD} value={await auth.csrfToken()} />
 // a form's route handler       if (!auth.verifyCsrfToken(session, form.get(CSRF_FIELD))) return new Response('Forbidden', { status: 403 });
 ```
+
+## Security headers (both kinds of app)
+
+The headers of §9 come from one place, so the two web apps and the two APIs cannot drift. `webSecurityHeaders({ appUrl, issuer, nonce, development })` returns a web app's set: a `Content-Security-Policy` that allows no inline script or style but the ones carrying `nonce` (`script-src 'self' 'nonce-…' 'strict-dynamic'`, `style-src 'self' 'nonce-…'`, `default-src 'self'`, `img-src`, `font-src`, and `connect-src` `'self'`, `object-src 'none'`, `base-uri 'none'`, `frame-ancestors 'none'`, and `form-action 'self'` plus the issuer's origin, because the logout form is answered with a redirect to the end-session endpoint and Chromium applies the directive to that redirect), `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `X-Frame-Options: DENY`, and, only when `appUrl` is `https`, as `Secure` on the cookie is, `Strict-Transport-Security` and `upgrade-insecure-requests`, which would break a plain-HTTP localhost; `development` adds `'unsafe-eval'` for scripts and replaces the styles' nonce with `'unsafe-inline'`, what Next.js's guide says `next dev` needs (a nonce beside `'unsafe-inline'` would disable it). `newNonce()` is 128 random bits. The Next.js binding does it per request for `proxy.ts`: `auth.securityHeaders(request)` mints the nonce and gives `next()`, which continues to the page with the policy on the request as well, where Next.js reads the nonce and stamps it on its own scripts, and `apply(response)` for any other response of the proxy; `development` is an option of `createNextAuth`, `NODE_ENV === 'development'` by default. The APIs register `apiSecurityHeaders(fastify)` from `@auth-stack/auth/fastify`, an `onSend` hook setting `API_SECURITY_HEADERS` on every response, errors included: `default-src 'none'; frame-ancestors 'none'`, `nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, `Cache-Control: no-store`; no HSTS, since no browser reaches an API and TLS terminates at the edge.
 
 ## Bearer verification and the scope gate (APIs)
 
@@ -121,6 +126,6 @@ The `SessionStore` contract (`src/session-store.contract.ts`) runs against both 
 ## Checks
 
 ```sh
-pnpm test packages/auth      # unit tests: the client, the bearer verifier, and the logout-token sink against the fake OP, the memory store, the Next.js and Fastify bindings
+pnpm test packages/auth      # unit tests: the client, the bearer verifier, and the logout-token sink against the fake OP, the memory store, the synchronizer token, the headers, the Next.js and Fastify bindings
 pnpm test:integration        # the Redis store, and the sink over it, against the compose Redis; reads REDIS_URL from the environment or the root .env
 ```
