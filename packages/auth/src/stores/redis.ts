@@ -7,6 +7,7 @@
  * prefix.
  */
 import {
+  absoluteExpiresAt,
   isExpired,
   newSessionId,
   remainingSeconds,
@@ -173,7 +174,7 @@ export function createRedisSessionStore(
         id: newSessionId(),
         createdAt,
         lastSeenAt: createdAt,
-        absoluteExpiresAt: createdAt + limits.absoluteSeconds * 1000,
+        absoluteExpiresAt: absoluteExpiresAt(input, createdAt, limits),
       };
       const keys = [sessionKey(session.id), `${userPrefix}${session.sub}`];
       if (session.sid !== undefined) keys.push(`${sidPrefix}${session.sid}`);

@@ -39,7 +39,10 @@ export type SessionPatch = Partial<
 export interface SessionLimits {
   /** A session unused for this long is gone: `get` refuses it and the Redis key expires. */
   idleSeconds: number;
-  /** A session older than this is gone whatever its activity. */
+  /**
+   * A session older than this is gone whatever its activity; counted from the authentication the ID token
+   * attests (`authTime`) when that is earlier than the session's creation, see `absoluteExpiresAt`.
+   */
   absoluteSeconds: number;
 }
 
@@ -85,6 +88,20 @@ export function resolveLimits(limits: Partial<SessionLimits> | undefined): Sessi
 /** 256 random bits, URL-safe. */
 export function newSessionId(): string {
   return randomBytes(32).toString('base64url');
+}
+
+/**
+ * When the absolute limit falls: `absoluteSeconds` from the earlier of the session's creation and the
+ * authentication the ID token attests (`auth_time`, OpenID Connect Core 1.0 §2). A second app signed into through
+ * SSO hours after the IdP login therefore shares the window of that login rather than opening a fresh one; a
+ * token without `auth_time`, or one claiming a time after the creation, anchors at the creation.
+ */
+export function absoluteExpiresAt(
+  session: Pick<NewSession, 'authTime'>,
+  createdAt: number,
+  limits: SessionLimits,
+): number {
+  return Math.min(createdAt, session.authTime ?? createdAt) + limits.absoluteSeconds * 1000;
 }
 
 export function isExpired(session: Session, limits: SessionLimits, now: number): boolean {

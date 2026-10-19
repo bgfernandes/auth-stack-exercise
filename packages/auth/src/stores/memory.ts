@@ -3,6 +3,7 @@
  * adapter, including that `touch` and `update` write only to an existing session; nothing persists.
  */
 import {
+  absoluteExpiresAt,
   isExpired,
   newSessionId,
   resolveLimits,
@@ -47,7 +48,7 @@ export function createMemorySessionStore(options: SessionStoreOptions = {}): Ses
         id: newSessionId(),
         createdAt,
         lastSeenAt: createdAt,
-        absoluteExpiresAt: createdAt + limits.absoluteSeconds * 1000,
+        absoluteExpiresAt: absoluteExpiresAt(input, createdAt, limits),
       };
       sessions.set(session.id, session);
       return Promise.resolve({ ...session });

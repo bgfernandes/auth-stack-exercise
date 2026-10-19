@@ -68,6 +68,7 @@ export {
 } from './oidc';
 export { redact, type AuthLogger } from './redact';
 export {
+  absoluteExpiresAt,
   DEFAULT_SESSION_LIMITS,
   isExpired,
   newSessionId,

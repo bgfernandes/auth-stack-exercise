@@ -54,7 +54,8 @@ export function describeSessionStoreContract(
         ...session(),
         createdAt: BASE,
         lastSeenAt: BASE,
-        absoluteExpiresAt: BASE + 600_000,
+        // The absolute limit counts from the authentication time, 5 s before the creation here.
+        absoluteExpiresAt: BASE - 5_000 + 600_000,
       });
       await expect(store.get(created.id)).resolves.toEqual(created);
       await expect(store.get('unknown')).resolves.toBeUndefined();
@@ -74,6 +75,27 @@ export function describeSessionStoreContract(
       expect(got).toEqual(created);
       expect(got).not.toHaveProperty('sid');
       expect(got).not.toHaveProperty('refreshToken');
+      // Without an authentication time the absolute limit counts from the creation.
+      expect(created.absoluteExpiresAt).toBe(BASE + 600_000);
+    });
+
+    it('anchors the absolute limit to an authentication time older than the creation, never later', async () => {
+      // An app signed into 100 s after the IdP login shares that login's window.
+      const { id } = await store.create(session({ authTime: BASE - 100_000 }));
+      const got = await store.get(id);
+      expect(got?.absoluteExpiresAt).toBe(BASE - 100_000 + 600_000);
+      for (let elapsed = 0; elapsed < 500_000; elapsed += 50_000) {
+        await expect(store.touch(id)).resolves.toBe(true);
+        clock.now += 50_000;
+      }
+      // Touched 50 s ago and created 500 s ago, but authenticated 600 s ago.
+      await expect(store.get(id)).resolves.toBeUndefined();
+      await expect(store.touch(id)).resolves.toBe(false);
+
+      // A token claiming an authentication after the creation (clock skew) does not extend the window.
+      clock.now = BASE;
+      const later = await store.create(session({ authTime: BASE + 100_000 }));
+      expect(later.absoluteExpiresAt).toBe(BASE + 600_000);
     });
 
     it('expires an untouched session at the idle limit', async () => {
