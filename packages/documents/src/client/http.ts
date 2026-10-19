@@ -27,8 +27,15 @@ import type { UserContext } from '@auth-stack/tenancy/client';
 
 /** The calls a BFF makes into the documents domain (§6.5), each on behalf of the user. */
 export interface DocumentsClient {
-  /** Every document the user may view, with `canEdit` and `canShare` decided (the dashboard); the API picks the consistency. */
-  listVisibleDocuments(user: UserContext): Promise<VisibleDocument[]>;
+  /**
+   * Every document the user may view, with `canEdit` and `canShare` decided (the dashboard). The API picks the
+   * consistency: the cached snapshot, or, with `freshAs`, at least as fresh as the token stored on that row, so
+   * the user who just wrote the row reads their own write (§7.3); an ID that is no row is ignored.
+   */
+  listVisibleDocuments(
+    user: UserContext,
+    options?: { freshAs?: string },
+  ): Promise<VisibleDocument[]>;
   /** The document's direct shares (§6.8), for a caller who may share it; `forbidden` (403) for an editor or viewer, `not_found` (404) otherwise. */
   getDocumentShares(user: UserContext, id: string): Promise<DocumentShares>;
   /** The row for the edit form; `forbidden` (403) when the user may only view it, `not_found` (404) otherwise. */
@@ -129,8 +136,9 @@ export function createHttpDocumentsClient(options: HttpDocumentsClientOptions): 
   const documentPath = (id: string) => `/documents/${encodeURIComponent(id)}`;
 
   return {
-    async listVisibleDocuments(user) {
-      const body = await call(user, 'GET', '/documents');
+    async listVisibleDocuments(user, options = {}) {
+      const query = options.freshAs ? `?fresh_as=${encodeURIComponent(options.freshAs)}` : '';
+      const body = await call(user, 'GET', `/documents${query}`);
       return documentsWire.parse(body).documents.map(fromVisibleDocumentWire);
     },
 
