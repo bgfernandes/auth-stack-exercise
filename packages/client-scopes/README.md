@@ -1,6 +1,8 @@
 # `@auth-stack/client-scopes`
 
-> **⚠️ This package is a workaround for a vendor limitation, not the intended design.** Client authority (which scopes an application was granted, RFC 6749 §3.3) belongs in the authorization server: the provider defines the scopes, shows the consent screen, and puts the granted `scope` in the access token, and the API reads it from there. Zitadel does none of that, so this project stores client-to-scope grants in SpiceDB and resolves them by the token's `client_id`. The package exists so that the APIs enforce a scope gate from their first version and never need a retrofit when external clients arrive ([`docs/README.md`](../../docs/README.md) §6.7), and it is kept apart from `@auth-stack/authz` so that it can be deleted as a unit.
+> **⚠️ This package is a workaround for a vendor limitation, not the intended design.** Client authority (which scopes an application was granted, RFC 6749 §3.3) belongs in the authorization server: the provider defines the scopes, shows the consent screen, and puts the granted `scope` in the access token, and the API reads it from there. Zitadel does none of that, so this project stores client-to-scope grants in SpiceDB and resolves them by the token's `client_id`.
+>
+> The package exists so that the APIs enforce a scope gate from their first version and never need a retrofit when external clients arrive ([`docs/README.md`](../../docs/README.md) §6.7), and it is kept apart from `@auth-stack/authz` so that it can be deleted as a unit.
 
 ## What it holds
 
