@@ -650,6 +650,8 @@ Found while building ticket 20: nothing backs up a logout token that never arriv
 
 **Acceptance criteria:** with `dashboard-web`'s sink route answering `404` (the state before ticket 18), a logout on `tenancy-web` still ends `dashboard-web`'s session within the interval; the ticket 20 spec unchanged, since the sink stays the first line.
 
+> **2026-10-19:** The observation that Zitadel keeps honouring a refresh token after the session that issued it ended is tracked upstream as [zitadel/zitadel#12637](https://github.com/zitadel/zitadel/issues/12637) (open enhancement, reported on 4.17.1 through 4.19.4, no maintainer response at the time of writing): `DELETE /v2/sessions/{id}` makes introspection report the access token inactive, yet the refresh grant still succeeds until idle or absolute expiry; commenters cite RFC 9700 §4.14.2 and CWE-613, and the workarounds listed there (track the session-to-token link in the application, deactivate the user or the organization) are the ones this ticket's re-validation replaces. Revoking the refresh token at logout (ticket 14's fix) covers the app-initiated case; this ticket covers the ones the app never sees.
+
 **Status:** Open.
 
 ### Ticket 8a — Re-read the session's claims after a token refresh (1.5 h)
@@ -657,6 +659,18 @@ Found while building ticket 20: nothing backs up a logout token that never arriv
 `refresh()` stores the new tokens but neither `sid`, `auth_time`, nor `amr` from the refreshed ID token: `SessionPatch` admits no claims and the Redis `UPDATE` script cannot move a session between `sid:` index sets. If the provider rotates `sid` on re-authentication (not established for Zitadel; ticket 20a), the session is orphaned from back-channel logout. Extend `SessionPatch` with the claims, make the `UPDATE` script `SREM`/`SADD` the `sid:` index when `sid` changes, and add a contract test. Also pin `id_token_signed_response_alg: 'RS256'` in the client metadata, next to the clock tolerance.
 
 **Status:** Open (found 2026-10-19 by the OIDC checklist review).
+
+### Ticket 8c — Treat a refused refresh as the end of the session (Zitadel answers `invalid_request`, not `invalid_grant`) (0.5 h)
+
+**Read first:** `docs/README.md` §4.4 step 7; `packages/auth/src/access-token.ts` (`refresh()`); the revocation spec of ticket 14 (`apps/dashboard-web/e2e/revocation.spec.ts`).
+
+**Description:** `refresh()` ends the session (deletes it, returns `undefined`, the BFF redirects to login) only when the token endpoint answers `invalid_grant`, the code RFC 6749 §5.2 prescribes for a revoked, expired, or otherwise invalid refresh token; any other refusal rethrows `refresh_failed`, which a BFF turns into a 500. Zitadel never answers `invalid_grant` for a refresh refusal, so against this provider a stale session ends in an error page instead of a login. Found on 2026-10-19 while proving revocation end to end (the spec pins Zitadel's actual body).
+
+What Zitadel does, from its source at v4.19.4 (verified 2026-10-19, `internal/api/oidc/error.go`, `internal/api/oidc/token_refresh.go`, `internal/command/oidc_session_model.go`): every refusal of a refresh grant is a Zitadel-internal error, `Errors.OIDCSession.RefreshTokenInvalid` from `CheckRefreshToken` (session not active, i.e. revoked or ended: `OIDCS-s3hjk`; the presented token is not the session's current one, i.e. rotated or reused: `OIDCS-28ubl`; absolute or idle expiry passed: `OIDCS-3jt2w`) or `Errors.User.RefreshToken.Invalid` for a token that never existed or cannot be parsed. `oidcError()` then maps any internal error with an HTTP status below 500 to `invalid_request` and puts the internal message in `error_description`; the `zitadel/oidc` library's `DefaultToServerError` produces `invalid_grant` only for its own JWT-validation errors, which a refresh refusal never raises. So `invalid_request` is Zitadel's systematic answer for the whole family, not a special case, and no setting changes it. No upstream issue was found about the code itself; the related open enhancement [zitadel/zitadel#12637](https://github.com/zitadel/zitadel/issues/12637) (refresh tokens still minted after `DELETE /v2/sessions`, reported on 4.17 to 4.19.4) is ticket 20a's concern. A third-party report that Zitadel answers a rotated token with `invalid_grant` is contradicted by the source above and by the observed body.
+
+The fix, in `refresh()`: treat as "session over" any `invalid_grant`, and any `invalid_request` whose `error_description` is `Errors.OIDCSession.RefreshTokenInvalid` or `Errors.User.RefreshToken.Invalid` (a `ProviderQuirks` entry in the client configuration, so the vendor strings live in one place and a provider that follows the RFC needs none); keep every other error as `refresh_failed`, since a network or server error must not log the user out. The safer variant, ending the session on any 4xx from the token endpoint, loses the distinction between "your session ended" and "the provider rejected our request" and is not taken. Test with the fake OP answering each shape; the end-to-end suite gains a case that ends the IdP session from the console (`DELETE /v2/sessions/{id}`, ticket 18's path), waits past the access-token lifetime, and expects the next dashboard request to land on the login rather than an error page.
+
+**Status:** Open (found 2026-10-19).
 
 ### Ticket 8b — A refresh lock across instances (1 h)
 
