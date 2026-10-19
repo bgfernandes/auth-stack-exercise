@@ -64,6 +64,15 @@ Failures are `AuthError`s with a `code`: `no_login_in_progress`, `login_expired`
 
 `getAccessToken(session)` returns the stored token while it has more than a minute left, otherwise refreshes through the refresh token and writes the rotated pair back with `update`. Concurrent calls for one session share one refresh; a refused refresh re-reads the session in case another process refreshed first, and on `invalid_grant` deletes the session and returns `undefined`, which the caller turns into a login redirect.
 
+## Forms: the synchronizer token (BFFs)
+
+The third CSRF layer of §9, after the session cookie's `SameSite=Lax` and `assertSameOrigin(request, appUrl)` (`Origin`, falling back to `Sec-Fetch-Site`): every form of a BFF carries a hidden field named `CSRF_FIELD` (`csrf_token`) whose value is `csrfTokenOf(session, sessionSecret)`, the HMAC-SHA256 of the session ID keyed with `SESSION_SECRET`, `base64url`; a handler verifies the posted value with `verifyCsrfToken(session, sessionSecret, presented)`, constant-time, false for anything that is not the session's token and never a throw. The token is derived, not stored: nothing is added to the session, it rotates with the session, and a page only ever shows an HMAC, never the ID. The Next.js binding carries the secret: `auth.csrfTokenOf(session)`, `auth.verifyCsrfToken(session, presented)`, and `auth.csrfToken()` for a page, the token of the session behind `cookies()` or `undefined` without one.
+
+```ts
+// a page                       <input type="hidden" name={CSRF_FIELD} value={await auth.csrfToken()} />
+// a form's route handler       if (!auth.verifyCsrfToken(session, form.get(CSRF_FIELD))) return new Response('Forbidden', { status: 403 });
+```
+
 ## Bearer verification and the scope gate (APIs)
 
 ```ts

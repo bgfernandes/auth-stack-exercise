@@ -1,6 +1,7 @@
 /** The Next.js binding with plain `Request`s: the cookies it sets and the responses of each route helper. */
 import { beforeEach, describe, expect, it } from '@jest/globals';
 
+import { csrfTokenOf } from '../csrf';
 import { createOidcClient } from '../oidc';
 import { type Session, type SessionStore } from '../session';
 import { createMemorySessionStore } from '../stores/memory';
@@ -288,6 +289,16 @@ describe('createNextAuth', () => {
       new Request(`${APP}/auth/logout`, { method: 'POST', headers: { origin: APP } }),
     );
     expect(noSession.headers.get('location')).toBe(`${APP}/`);
+  });
+
+  it('derives the synchronizer token from the session with the app’s secret', async () => {
+    const { sessionId } = await loggedIn();
+    const session = (await store.get(sessionId)) as Session;
+    const token = auth.csrfTokenOf(session);
+    expect(token).toBe(csrfTokenOf(session, options.sessionSecret));
+    expect(auth.verifyCsrfToken(session, token)).toBe(true);
+    expect(auth.verifyCsrfToken({ id: 'another' }, token)).toBe(false);
+    expect(auth.verifyCsrfToken(session, undefined)).toBe(false);
   });
 
   it('backchannelLogout removes the session the IdP names, with no origin check and no cookie', async () => {

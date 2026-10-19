@@ -12,6 +12,7 @@ import { NextResponse } from 'next/server';
 import { createAccessTokenProvider, type AccessTokenProvider } from '../access-token';
 import { handleBackchannelLogout } from '../backchannel-logout';
 import { assertSameOrigin, cookieAttributes, readCookie, type CookieAttributes } from '../cookies';
+import { csrfTokenOf, verifyCsrfToken } from '../csrf';
 import { AuthError } from '../errors';
 import { createOidcClient, type OidcClient } from '../oidc';
 import { redact, type AuthLogger } from '../redact';
@@ -58,6 +59,12 @@ export interface NextAuth {
   sessionFromRequest(request: Request): Promise<Session | undefined>;
   /** The live session behind `cookies()` (server components, server actions), marked seen; undefined otherwise. */
   currentSession(): Promise<Session | undefined>;
+  /** The synchronizer token of the session (§9, "CSRF"), for the hidden `CSRF_FIELD` of every form. */
+  csrfTokenOf(session: Pick<Session, 'id'>): string;
+  /** Whether a form's `CSRF_FIELD` value is the session's token; never throws. */
+  verifyCsrfToken(session: Pick<Session, 'id'>, presented: unknown): boolean;
+  /** The token of the session behind `cookies()`, for pages; undefined without a live session. */
+  csrfToken(): Promise<string | undefined>;
   getAccessToken: AccessTokenProvider['getAccessToken'];
 }
 
@@ -192,6 +199,19 @@ export function createNextAuth(init: NextAuthOptions): NextAuth {
 
     async currentSession() {
       return liveSession((await cookies()).get(cookieName)?.value);
+    },
+
+    csrfTokenOf(session) {
+      return csrfTokenOf(session, options.sessionSecret);
+    },
+
+    verifyCsrfToken(session, presented) {
+      return verifyCsrfToken(session, options.sessionSecret, presented);
+    },
+
+    async csrfToken() {
+      const session = await this.currentSession();
+      return session && csrfTokenOf(session, options.sessionSecret);
     },
 
     getAccessToken: tokens.getAccessToken,
