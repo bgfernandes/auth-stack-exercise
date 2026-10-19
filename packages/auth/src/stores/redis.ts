@@ -219,7 +219,10 @@ export function createRedisSessionStore(
     async deleteByLogoutToken({ sid, sub }: LogoutTokenClaims) {
       if (sid !== undefined) {
         const sessions = await liveMembers(`${sidPrefix}${sid}`);
-        return removeAll(sub === undefined ? sessions : sessions.filter((s) => s.sub === sub));
+        if (sessions.length > 0 || sub === undefined) {
+          return removeAll(sub === undefined ? sessions : sessions.filter((s) => s.sub === sub));
+        }
+        // No live session of that IdP session, but the token names the user: every session of theirs goes.
       }
       if (sub !== undefined) return removeAll(await liveMembers(`${userPrefix}${sub}`));
       return 0;

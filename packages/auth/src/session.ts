@@ -66,8 +66,12 @@ export interface SessionStore {
   update(id: string, patch: SessionPatch): Promise<boolean>;
   delete(id: string): Promise<void>;
   /**
-   * Back-channel logout: with `sid`, the sessions of that IdP session (and of that `sub`, when both are given);
-   * with `sub` only, every session of the user. Returns how many were removed.
+   * Back-channel logout. With a `sid` at least one live session carries: the sessions of that IdP session, and
+   * of that `sub` when both are given, so a `sid` belonging to another user's session removes nothing. With a
+   * `sid` no live session carries and a `sub`: every session of the user, since a logout token for an IdP
+   * session this store never saw (a `sid` the ID token did not carry, a session created before the index
+   * existed) must still end the user's sessions rather than be ignored. With `sub` only: every session of the
+   * user. Returns how many were removed.
    */
   deleteByLogoutToken(claims: LogoutTokenClaims): Promise<number>;
   /** Admin revocation: every session of the user. */

@@ -73,9 +73,13 @@ export function createMemorySessionStore(options: SessionStoreOptions = {}): Ses
     },
     deleteByLogoutToken({ sid, sub }: LogoutTokenClaims) {
       if (sid !== undefined) {
-        return Promise.resolve(
-          remove((s) => s.sid === sid && (sub === undefined || s.sub === sub)),
-        );
+        const known = [...sessions.keys()].some((id) => live(id)?.sid === sid);
+        if (known || sub === undefined) {
+          return Promise.resolve(
+            remove((s) => s.sid === sid && (sub === undefined || s.sub === sub)),
+          );
+        }
+        // No live session of that IdP session, but the token names the user: every session of theirs goes.
       }
       return Promise.resolve(sub === undefined ? 0 : remove((s) => s.sub === sub));
     },
