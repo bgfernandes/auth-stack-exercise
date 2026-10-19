@@ -214,7 +214,7 @@ Tickets in their intended order; numbers are stable identifiers, so the order is
 
 ## Further reading
 
-[`docs/README.md`](docs/README.md) for the complete design and its decision log, [`docs/TICKETS.md`](docs/TICKETS.md) for every ticket with its notes, [`docker/README.md`](docker/README.md) for what each container is for, and the package READMEs: [`auth`](packages/auth/README.md), [`authz`](packages/authz/README.md), [`client-scopes`](packages/client-scopes/README.md), [`db-core`](packages/db-core/README.md), [`tenancy`](packages/tenancy/README.md), [`documents`](packages/documents/README.md).
+[`docs/README.md`](docs/README.md) for the complete design and its decision log, [`docs/TICKETS.md`](docs/TICKETS.md) for every ticket with its notes, [`docs/oidc-sso-checklist.md`](docs/oidc-sso-checklist.md) for the OIDC/SSO checklist the 2026-10-19 review of `packages/auth` used, with a preamble on how it was produced, [`docker/README.md`](docker/README.md) for what each container is for, and the package READMEs: [`auth`](packages/auth/README.md), [`authz`](packages/authz/README.md), [`client-scopes`](packages/client-scopes/README.md), [`db-core`](packages/db-core/README.md), [`tenancy`](packages/tenancy/README.md), [`documents`](packages/documents/README.md).
 
 ## How this project was built
 
