@@ -1,11 +1,11 @@
 import { appUrl } from '../../../../lib/auth';
-import { getCurrentUserContext } from '../../../../lib/current-user';
+import { getCurrentUserContext, verifyCsrfToken } from '../../../../lib/current-user';
 import { log } from '../../../../lib/log';
 import { createPolicyHandler } from '../../../../lib/manage-policy';
 import { tenancy } from '../../../../lib/tenancy';
 
 /**
- * The policy form's save (ticket 17): `POST /organizations/:id/policy`, same-origin only (docs/README.md §9),
+ * The policy form's save (ticket 17): `POST /organizations/:id/policy`, same-origin only and with the session's token (docs/README.md §9),
  * sent to `tenancy-api` with the user's token, which enforces `organization#administer` and validates the
  * policy (§9.1), then back to the organization page.
  */
@@ -22,6 +22,7 @@ function handler() {
     tenancy: tenancy(),
     appUrl: appUrl('/').href,
     userFromRequest: () => getCurrentUserContext(),
+    verifyCsrfToken,
     logger: log,
   });
   return cached;

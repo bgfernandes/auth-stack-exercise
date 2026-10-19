@@ -266,6 +266,38 @@ describe('createNextAuth', () => {
     expect(events).toContain('auth.logout_rejected');
   });
 
+  it('logout refuses a form without the session’s token and keeps the session', async () => {
+    const { sessionCookie, sessionId } = await loggedIn();
+    const session = (await store.get(sessionId)) as Session;
+    const logout = (body?: URLSearchParams | string) =>
+      auth.logout(
+        new Request(`${APP}/auth/logout`, {
+          method: 'POST',
+          headers: { cookie: cookieHeader(sessionCookie), origin: APP },
+          ...(body === undefined ? {} : { body }),
+        }),
+      );
+    const noForm = await logout();
+    const noToken = await logout(new URLSearchParams({ other: 'field' }));
+    const wrongToken = await logout(
+      new URLSearchParams({ csrf_token: auth.csrfTokenOf({ id: 'another-session' }) }),
+    );
+    const json = await logout(JSON.stringify({ csrf_token: auth.csrfTokenOf(session) }));
+    for (const response of [noForm, noToken, wrongToken, json]) {
+      expect(response.status).toBe(403);
+      expect(setCookies(response).size).toBe(0);
+    }
+    await expect(store.get(sessionId)).resolves.toBeDefined();
+    expect(events).toEqual(Array<string>(4).fill('auth.logout_rejected'));
+    expect(records.map((r) => r.reason)).toEqual([
+      'form carries no csrf_token',
+      'form carries no csrf_token',
+      "csrf_token is not the session's",
+      'form carries no csrf_token',
+    ]);
+    expect(JSON.stringify(records)).not.toContain(auth.csrfTokenOf(session));
+  });
+
   it('logout deletes the session, clears the cookie, and ends the IdP session', async () => {
     const { sessionCookie, sessionId } = await loggedIn();
     const idToken = (await store.get(sessionId))?.idToken as string;
@@ -273,6 +305,9 @@ describe('createNextAuth', () => {
       new Request(`${APP}/auth/logout`, {
         method: 'POST',
         headers: { cookie: cookieHeader(sessionCookie), origin: APP },
+        body: new URLSearchParams({
+          csrf_token: auth.csrfTokenOf((await store.get(sessionId)) as Session),
+        }),
       }),
     );
     expect(response.status).toBe(303);

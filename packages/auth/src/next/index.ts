@@ -12,7 +12,7 @@ import { NextResponse } from 'next/server';
 import { createAccessTokenProvider, type AccessTokenProvider } from '../access-token';
 import { handleBackchannelLogout } from '../backchannel-logout';
 import { assertSameOrigin, cookieAttributes, readCookie, type CookieAttributes } from '../cookies';
-import { csrfTokenOf, verifyCsrfToken } from '../csrf';
+import { CSRF_FIELD, csrfTokenOf, verifyCsrfToken } from '../csrf';
 import { AuthError } from '../errors';
 import { createOidcClient, type OidcClient } from '../oidc';
 import { redact, type AuthLogger } from '../redact';
@@ -51,7 +51,7 @@ export interface NextAuth {
   login(): Promise<NextResponse>;
   /** Completes a login: the session is created and its cookie set; any failure is the generic failed response. */
   callback(request: Request): Promise<NextResponse>;
-  /** Ends the session and sends the browser to the IdP's end-session endpoint; same-origin requests only. */
+  /** Ends the session and sends the browser to the IdP's end-session endpoint; a same-origin form carrying the session's token only. */
   logout(request: Request): Promise<NextResponse>;
   /** The back-channel logout sink (§4.4 step 6): the IdP's logout token in, the sessions it names gone. */
   backchannelLogout(request: Request): Promise<NextResponse>;
@@ -174,6 +174,23 @@ export function createNextAuth(init: NextAuthOptions): NextAuth {
       }
       const id = readCookie(request.headers.get('cookie'), cookieName);
       const session = id ? await store.get(id) : undefined;
+      // The form's synchronizer token (§9, "CSRF"): a request with a session must carry the session's; one
+      // without a session has nothing to forge and is answered as before, its cookie cleared.
+      if (session) {
+        const presented = await formField(request, CSRF_FIELD);
+        if (!verifyCsrfToken(session, options.sessionSecret, presented)) {
+          logger?.warn(
+            'auth.logout_rejected',
+            redact({
+              errorCode: 'csrf_token_invalid',
+              reason: presented
+                ? `${CSRF_FIELD} is not the session's`
+                : `form carries no ${CSRF_FIELD}`,
+            }),
+          );
+          return new NextResponse('Forbidden', { status: 403 });
+        }
+      }
       if (id) await store.delete(id);
       // The IdP session ends too (§4.4 step 5); without a session of our own there is no ID token to hint with.
       const target = session
@@ -216,4 +233,14 @@ export function createNextAuth(init: NextAuthOptions): NextAuth {
 
     getAccessToken: tokens.getAccessToken,
   };
+}
+
+/** One text field of a posted form; undefined when the request carries no form (a crafted request) or the field. */
+async function formField(request: Request, name: string): Promise<string | undefined> {
+  try {
+    const value = (await request.formData()).get(name);
+    return typeof value === 'string' ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }

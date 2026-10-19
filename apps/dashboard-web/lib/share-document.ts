@@ -1,12 +1,12 @@
 /**
- * The share route's handler (docs/README.md §6.8, §9): a same-origin `POST` of the share form, as the signed-in
- * user, one choice per member (`role:<sub>` is `none`, `viewer`, or `editor`), turned into the set the API
+ * The share route's handler (docs/README.md §6.8, §9): a same-origin `POST` of the share form carrying the
+ * session's synchronizer token, as the signed-in user, one choice per member (`role:<sub>` is `none`, `viewer`, or `editor`), turned into the set the API
  * replaces the document's direct shares with, and answered with a redirect the browser follows or with the
  * status a replayed `curl` reads. The API is the control: the page lists member IDs, but a crafted one is refused
  * there (`not_a_member`), never pre-empted here. Built with its dependencies so the unit tests fake them;
  * `app/documents/[id]/shares/route.ts` binds it to the app.
  */
-import { assertSameOrigin } from '@auth-stack/auth';
+import { assertSameOrigin, CSRF_FIELD } from '@auth-stack/auth';
 import {
   isDocumentsClientError,
   type DocumentsClient,
@@ -23,6 +23,8 @@ export interface DocumentSharerDeps {
   appUrl: string;
   /** The user behind the request's session cookie, with a live access token; undefined when there is none. */
   userFromRequest: (request: Request) => Promise<UserContext | undefined>;
+  /** Whether the posted `csrf_token` is the session's (§9, "CSRF"): the third layer, after the origin check. */
+  verifyCsrfToken: (presented: unknown) => Promise<boolean>;
   logger: Pick<AppLogger, 'info' | 'warn'>;
 }
 
@@ -38,7 +40,7 @@ const FIELD = 'role:';
 const ROLES = new Set(['none', 'viewer', 'editor']);
 
 export function createDocumentSharer(deps: DocumentSharerDeps): DocumentSharer {
-  const { documents, appUrl, userFromRequest, logger } = deps;
+  const { documents, appUrl, userFromRequest, verifyCsrfToken, logger } = deps;
   const redirect = (path: string) => Response.redirect(new URL(path, appUrl), 303);
 
   return async (request, documentId) => {
@@ -55,7 +57,12 @@ export function createDocumentSharer(deps: DocumentSharerDeps): DocumentSharer {
 
     // The form's shape before any lookup (§9): a crafted body answers the same for every ID.
     const form = await formOf(request);
-    const shares = form && sharesOf(form);
+    if (!form) return new Response('Bad Request', { status: 400 });
+    if (!(await verifyCsrfToken(form.get(CSRF_FIELD)))) {
+      logger.warn('document.share_rejected', { reason: 'csrf_token_invalid' });
+      return new Response('Forbidden', { status: 403 });
+    }
+    const shares = sharesOf(form);
     if (!shares) return new Response('Bad Request', { status: 400 });
 
     try {

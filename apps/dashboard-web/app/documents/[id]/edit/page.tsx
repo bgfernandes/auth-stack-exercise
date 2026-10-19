@@ -1,6 +1,9 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 
+import { CSRF_FIELD } from '@auth-stack/auth';
+
+import { getCsrfToken } from '../../../../lib/current-user';
 import { documentForEdit } from '../../../../lib/documents';
 
 interface Props {
@@ -11,7 +14,8 @@ interface Props {
 /**
  * The edit form (docs/README.md §6.5): shown only after `edit` passed at least as fresh as the row's token
  * (§7.3). A user who may only view the document gets the forbidden page; one who may not see it gets the
- * not-found page, so the URL reveals nothing. The form posts to `POST /documents/:id`.
+ * not-found page, so the URL reveals nothing. The form posts to `POST /documents/:id` with the session's
+ * synchronizer token (§9, "CSRF").
  */
 export default async function EditDocumentPage({ params, searchParams }: Props) {
   const { id } = await params;
@@ -21,6 +25,7 @@ export default async function EditDocumentPage({ params, searchParams }: Props) 
   if (result.state === 'forbidden') return <Forbidden />;
   const { document } = result;
   const { error } = await searchParams;
+  const csrfToken = await getCsrfToken();
   return (
     <main>
       <p>
@@ -33,6 +38,7 @@ export default async function EditDocumentPage({ params, searchParams }: Props) 
         </p>
       )}
       <form method="post" action={`/documents/${document.id}`}>
+        <input type="hidden" name={CSRF_FIELD} value={csrfToken} />
         <p>
           <label htmlFor="value1">Value 1</label>
           <input

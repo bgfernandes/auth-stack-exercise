@@ -10,6 +10,9 @@ const alice = { sub: 'alice', accessToken: 'at-secret' };
 
 const setMembership = jest.fn<TenancyClient['setMembership']>();
 const userFromRequest = jest.fn<(request: Request) => Promise<typeof alice | undefined>>();
+/** The session's token, as the page rendered it; the fake verifies the value and nothing else. */
+const TOKEN = 'the-sessions-token';
+const verifyCsrfToken = jest.fn<(presented: unknown) => Promise<boolean>>();
 const events: { level: string; event: string; fields: Record<string, unknown> | undefined }[] = [];
 const logger = {
   info: (event: string, fields?: Record<string, unknown>) => {
@@ -23,13 +26,22 @@ const handle = createMembershipHandler({
   tenancy: { setMembership },
   appUrl: APP_URL,
   userFromRequest,
+  verifyCsrfToken,
   logger,
 });
 
 function post(
-  options: { origin?: string; body?: BodyInit; headers?: Record<string, string> } = {},
+  options: {
+    origin?: string;
+    body?: BodyInit;
+    headers?: Record<string, string>;
+    /** The form's `csrf_token`: the session's unless given, none when null. */
+    token?: string | null;
+  } = {},
 ) {
   const body = options.body ?? new URLSearchParams({ member_id: 'bob', role: 'admin' });
+  if (body instanceof URLSearchParams && options.token !== null)
+    body.set('csrf_token', options.token ?? TOKEN);
   return new Request(`${APP_URL}/organizations/${ACME}/members`, {
     method: 'POST',
     headers: { ...(options.origin ? { origin: options.origin } : {}), ...options.headers },
@@ -40,6 +52,9 @@ function post(
 beforeEach(() => {
   setMembership.mockReset().mockResolvedValue(undefined);
   userFromRequest.mockReset().mockResolvedValue(alice);
+  verifyCsrfToken
+    .mockReset()
+    .mockImplementation((presented) => Promise.resolve(presented === TOKEN));
   events.length = 0;
 });
 
@@ -68,6 +83,19 @@ describe('the members route', () => {
     });
     expect((await handle(wrongRole, ACME)).status).toBe(400);
     expect(setMembership).not.toHaveBeenCalled();
+  });
+
+  it('refuses a form without the session’s token, after the origin and the session, before any call', async () => {
+    const missing = await handle(post({ origin: APP_URL, token: null }), ACME);
+    const wrong = await handle(post({ origin: APP_URL, token: 'another-sessions-token' }), ACME);
+    for (const response of [missing, wrong]) expect(response.status).toBe(403);
+    expect(userFromRequest).toHaveBeenCalledTimes(2);
+    expect(verifyCsrfToken.mock.calls).toEqual([[null], ['another-sessions-token']]);
+    expect(setMembership).not.toHaveBeenCalled();
+    expect(events).toEqual([
+      { level: 'warn', event: 'membership.rejected', fields: { reason: 'csrf_token_invalid' } },
+      { level: 'warn', event: 'membership.rejected', fields: { reason: 'csrf_token_invalid' } },
+    ]);
   });
 
   it('sends the change with the user token and goes back to the page', async () => {

@@ -1,6 +1,9 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 
+import { CSRF_FIELD } from '@auth-stack/auth';
+
+import { getCsrfToken } from '../../../lib/current-user';
 import { organizationView } from '../../../lib/organizations';
 
 import type { Member, OrganizationSummary, Policy } from '@auth-stack/tenancy/client';
@@ -14,6 +17,7 @@ interface Props {
  * One organization (ticket 17): the member list every member sees (docs/README.md §6.8), and, for an
  * administrator, the role buttons next to each row and the policy form (§9.1). The buttons and the form are
  * hints drawn from the caller's own role: the write routes send every change to `tenancy-api`, which decides.
+ * Every form carries the session's synchronizer token (§9, "CSRF").
  * A personal organization (§5.1) shows neither: it has no members to manage and no policy.
  */
 export default async function OrganizationPage({ params, searchParams }: Props) {
@@ -24,6 +28,7 @@ export default async function OrganizationPage({ params, searchParams }: Props) 
   const { organization, members, callerRole } = view;
   const { saved, error } = await searchParams;
   const manages = callerRole === 'admin' && !organization.isPersonal;
+  const csrfToken = manages ? await getCsrfToken() : undefined;
   return (
     <main>
       <p>
@@ -65,6 +70,7 @@ export default async function OrganizationPage({ params, searchParams }: Props) 
                     organizationId={organization.id}
                     member={member}
                     manages={manages}
+                    csrfToken={csrfToken}
                   />
                 ))}
               </tbody>
@@ -76,7 +82,7 @@ export default async function OrganizationPage({ params, searchParams }: Props) 
           <section aria-labelledby="policy">
             <h2 id="policy">Sign-in policy</h2>
             {manages ? (
-              <PolicyForm organization={organization} />
+              <PolicyForm organization={organization} csrfToken={csrfToken} />
             ) : (
               <PolicySummary policy={organization.policy} />
             )}
@@ -91,10 +97,12 @@ function MemberRow({
   organizationId,
   member,
   manages,
+  csrfToken,
 }: {
   organizationId: string;
   member: Member;
   manages: boolean;
+  csrfToken: string | undefined;
 }) {
   return (
     <tr>
@@ -108,6 +116,7 @@ function MemberRow({
             action={`/organizations/${organizationId}/members`}
             className="inline"
           >
+            <input type="hidden" name={CSRF_FIELD} value={csrfToken} />
             <input type="hidden" name="member_id" value={member.sub} />
             {member.role === 'admin' ? (
               <button type="submit" name="role" value="member">
@@ -128,10 +137,17 @@ function MemberRow({
   );
 }
 
-function PolicyForm({ organization }: { organization: OrganizationSummary }) {
+function PolicyForm({
+  organization,
+  csrfToken,
+}: {
+  organization: OrganizationSummary;
+  csrfToken: string | undefined;
+}) {
   const { policy } = organization;
   return (
     <form method="post" action={`/organizations/${organization.id}/policy`}>
+      <input type="hidden" name={CSRF_FIELD} value={csrfToken} />
       <p>
         <label>
           <input type="checkbox" name="require_mfa" defaultChecked={policy.require_mfa === true} />{' '}

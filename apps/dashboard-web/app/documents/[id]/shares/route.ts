@@ -1,11 +1,11 @@
 import { appUrl } from '../../../../lib/auth';
 import { clients } from '../../../../lib/clients';
-import { getCurrentUserContext } from '../../../../lib/current-user';
+import { getCurrentUserContext, verifyCsrfToken } from '../../../../lib/current-user';
 import { log } from '../../../../lib/log';
 import { createDocumentSharer } from '../../../../lib/share-document';
 
 /**
- * Saves the share form (docs/README.md §6.8): `POST /documents/:id/shares`, same-origin only (§9), the set
+ * Saves the share form (docs/README.md §6.8): `POST /documents/:id/shares`, same-origin only and with the session's token (§9), the set
  * replaced by `dashboard-api` at full consistency, then back to the dashboard. A route handler rather than a
  * Server Action, like the save route, so that the enforcement is an endpoint a reviewer can replay with `curl`.
  * The share page lives at `/documents/[id]/share`, one segment apart, as the edit page does from its route.
@@ -23,6 +23,7 @@ function sharer() {
     documents: clients().documents,
     appUrl: appUrl('/').href,
     userFromRequest: () => getCurrentUserContext(),
+    verifyCsrfToken,
     logger: log,
   });
   return cached;

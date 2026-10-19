@@ -1,10 +1,11 @@
 /**
- * What the two write routes share (docs/README.md §9): a same-origin `POST` of a form, as the signed-in user,
+ * What the two write routes share (docs/README.md §9): a same-origin `POST` of a form carrying the session's
+ * synchronizer token, as the signed-in user,
  * answered with a redirect the browser follows or with the status a replayed `curl` reads. Route handlers
  * rather than Server Actions, so that the enforcement is an endpoint a reviewer can replay. The API is the
  * control: a refusal it answers is mapped here, never pre-empted.
  */
-import { assertSameOrigin } from '@auth-stack/auth';
+import { assertSameOrigin, CSRF_FIELD } from '@auth-stack/auth';
 import { isTenancyClientError, type UserContext } from '@auth-stack/tenancy/client';
 
 import { type AppLogger } from './log';
@@ -14,6 +15,8 @@ export interface FormHandlerDeps {
   appUrl: string;
   /** The user behind the request's session cookie, with a live access token; undefined when there is none. */
   userFromRequest: (request: Request) => Promise<UserContext | undefined>;
+  /** Whether the posted `csrf_token` is the session's (§9, "CSRF"): the third layer, after the origin check. */
+  verifyCsrfToken: (presented: unknown) => Promise<boolean>;
   logger: Pick<AppLogger, 'info' | 'warn'>;
 }
 
@@ -39,6 +42,10 @@ export async function acceptForm(
   } catch {
     // Not a form at all (a crafted request): the same answer for every organization, so it leaks nothing.
     return new Response('Bad Request', { status: 400 });
+  }
+  if (!(await deps.verifyCsrfToken(form.get(CSRF_FIELD)))) {
+    deps.logger.warn(rejectedEvent, { reason: 'csrf_token_invalid' });
+    return new Response('Forbidden', { status: 403 });
   }
   return { user, form };
 }
