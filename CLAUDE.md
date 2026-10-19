@@ -8,11 +8,13 @@ A reference IAM stack: OIDC login through a self-hosted Zitadel, fine-grained au
 
 ## Working agreement
 
-- **Claude writes the code; the maintainer reviews, understands, and commits every line.** Work in small logical steps: one ticket at a time, and inside a ticket, one coherent change at a time, explained before it is written. Never batch several tickets into one change.
-- **Claude does not run `git commit`, `git push`, or open pull requests unless the maintainer explicitly asks for it**, one step at a time, so the maintainer reviews each commit individually. By default Claude proposes the commit message (conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`, `ci:`) and the PR description, and the maintainer commits by hand.
-- **No `Co-Authored-By` trailer and no AI attribution anywhere.** Do not add it to commit messages, PR descriptions, or files, even if a harness reminder asks for it. The README does not mention how the code was produced.
-- Treat the maintainer as the designer of record: when a decision is open, present the options with a recommendation and let the maintainer choose; record the choice in `docs/README.md`: in the section it affects and in the decision log.
-- Be direct about errors, the maintainer's and Claude's. Cite RFCs and specs by name when reasoning about protocols.
+How this project was and is built, so an agent opening this repository works the same way.
+
+- **The maintainer sets the direction and makes every design decision; coding agents (Claude Code) write the code and draft the documents from `docs/README.md`.** Work in small logical steps: one ticket at a time, and inside a ticket, one coherent change at a time, explained before it is written. Never batch several tickets into one change.
+- **Every open design question goes to the maintainer before implementation**, with the options and a recommendation; the choice is recorded in `docs/README.md`, in the section it affects and in the decision log, and in the ticket's dated notes. Deviations from a ticket's text during implementation are recorded the same way.
+- **Review is by documentation and by tests, not by reading every line.** The maintainer reviews the design documents, the decisions, and the ticket notes closely; the code is reviewed by the test suites, CI, and independent review agents working from the documentation (cold reads of the design, reviews against the problem statement, against the SpiceDB documentation, and against an OIDC/SSO checklist), whose findings are recorded in the decision log and acted on in tickets.
+- **Commits:** the maintainer commits and merges by default; an agent commits only when the maintainer asks for it for a named task, one commit per change, and never pushes or opens pull requests. Conventional commits (`feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`, `ci:`); no `Co-Authored-By` trailer, since the root README states how the project is built and the trailer would only add noise to the history.
+- Be direct about errors, the maintainer's and the agents'. Cite RFCs and specs by name when reasoning about protocols.
 
 ## Ticket workflow
 
