@@ -5,18 +5,12 @@
  * once, since the row's token postdates the removal, and his dashboard loses the row inside the bound. Payroll
  * ends with no direct share, as the seed left it, whatever happens in between.
  */
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
-import { BASE_URL, dashboardRows, logIn, logOut, readSeed, row, seedPassword } from './stack';
+import { BASE_URL, dashboardShows, logIn, logOut, readSeed, row, seedPassword } from './stack';
 
 const seed = readSeed();
 const payroll = seed.documents.payroll;
-
-/**
- * How long a listing may lag a write (§7.3): one quantization window (five seconds, pinned in compose), the
- * tenth of it SpiceDB may add for cache reuse, and cache propagation.
- */
-const LISTING_LAG_MS = 7_000;
 
 const bobsRows = (payrollAccess?: 'read-only') => [
   ...(payrollAccess ? [row('Acme', 'Finance', 'Payroll', payrollAccess)] : []),
@@ -24,19 +18,6 @@ const bobsRows = (payrollAccess?: 'read-only') => [
   row('Acme', 'Marketing', 'Launch plan', 'edit'),
   row('Personal', 'Personal', 'Welcome', 'edit'),
 ];
-
-/** The dashboard reloaded until it shows `rows`, inside the lag; the last rows seen are what fails. */
-async function dashboardShows(page: Page, rows: ReturnType<typeof row>[], message: string) {
-  await expect
-    .poll(
-      async () => {
-        await page.goto('/dashboard');
-        return dashboardRows(page);
-      },
-      { message, timeout: LISTING_LAG_MS, intervals: [250] },
-    )
-    .toEqual(rows);
-}
 
 test('alice shares Payroll with Bob, who sees it read-only once the listing catches up, then takes it back', async ({
   page,

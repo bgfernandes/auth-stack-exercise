@@ -116,6 +116,33 @@ export async function dashboardRows(page: Page): Promise<DashboardRow[]> {
   return rows;
 }
 
+/**
+ * How long a listing may lag a write (docs/README.md §7.3): one quantization window (five seconds, pinned in
+ * compose), the tenth of it SpiceDB may add for cache reuse, and cache propagation.
+ */
+export const LISTING_LAG_MS = 7_000;
+
+/**
+ * The dashboard reloaded until it shows `rows`, inside the lag; the last rows seen are what fails. A first
+ * login's dashboard may miss the personal workspace created a moment before (§6.4, §7.3; ticket 21a makes that
+ * listing exact), and another user's share or edit reaches a listing with the same lag.
+ */
+export async function dashboardShows(
+  page: Page,
+  rows: DashboardRow[],
+  message = 'the listing did not show the expected rows inside the lag a listing may have',
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        await page.goto('/dashboard');
+        return dashboardRows(page);
+      },
+      { message, timeout: LISTING_LAG_MS, intervals: [250] },
+    )
+    .toEqual(rows);
+}
+
 function after(prefix: string, text: string): string {
   if (!text.startsWith(prefix)) throw new Error(`expected "${prefix}…", got "${text}"`);
   return text.slice(prefix.length);
