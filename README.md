@@ -6,7 +6,7 @@ Users sign up or log in once, see a dashboard of the documents they may view, ed
 
 This file is the whole story at reading length: what the system is, how it is built, how to run and try it, what was traded off or left undone, and what is built versus planned.
 
-The complete design with its reasoning is [`docs/README.md`](docs/README.md), which also describes parts that are planned and not built; the work log with a status per ticket is [`docs/TICKETS.md`](docs/TICKETS.md); each service and package has a `README.md` of its own. Where this file says "§n", it points at a section of `docs/README.md`.
+The complete design with its reasoning is [`docs/README.md`](docs/README.md), which also describes parts that are planned and not built; the work log with a status per ticket is [`docs/TICKETS.md`](docs/TICKETS.md); each service and package has a `README.md` of its own. Every "§n" in this file links to that section of `docs/README.md`.
 
 ## What it does
 
@@ -80,7 +80,7 @@ Logout deletes the session, revokes the refresh and access tokens at Zitadel (ve
 
 SpiceDB answers checks from a cached snapshot that can lag a write by a few seconds. A write to a document runs its permission check at full consistency and stores the returned snapshot token (a ZedToken) with the content, in the same transaction; every read of that document checks "at least as fresh as" that token, so a revocation that preceded a write can never be missed when the write is read.
 
-Listings run from the cache on purpose, so a document shared with you a moment ago may take a few seconds to appear; the page behind the link is exact at once. §7 explains the reasoning and the two designs that were tried and rejected first.
+Listings run from the cache on purpose, so a document shared with you a moment ago may take a few seconds to appear; the page behind the link is exact at once. [§7](docs/README.md#7-consistency-zedtokens-and-the-new-enemy-problem) explains the reasoning and the two designs that were tried and rejected first.
 
 ## Repository structure
 
@@ -110,17 +110,17 @@ docker-compose.yml, Tiltfile, .env (committed development defaults), .github/wor
 
 ## Design decisions
 
-- **An identity provider rather than hand-rolled authentication.** Password storage, recovery, MFA, lockout, and verification are Zitadel's; the apps are OpenID Connect clients. The depth of the authentication work is in the client and session handling, not in a password table. Zitadel over Kratos + Hydra (one binary with a login UI, organizations, external-IdP brokering, a full management API) and over Keycloak (heavier). §2, §4.1.
-- **OIDC for first-party apps, from day one.** A single first-party app does not strictly need OAuth, but an identity layer conceived without token audiences, scopes, and client registration is painful to retrofit when the first machine client or partner integration arrives. §2.
-- **SpiceDB over OpenFGA**, for its consistency model: a snapshot token with four explicit levels, instead of a flag. The project's consistency section is where that choice earns its place. Relationships are the only source of truth for roles; nothing stores a role in Postgres. §6.1, §7.
-- **Tenancy as its own service.** Organizations, users, and policy are needed by every domain, so they live in a higher-order service the domains call, with its own database and its own front-end, rather than in whichever domain happened to need them first. §3.1.
+- **An identity provider rather than hand-rolled authentication.** Password storage, recovery, MFA, lockout, and verification are Zitadel's; the apps are OpenID Connect clients. The depth of the authentication work is in the client and session handling, not in a password table. Zitadel over Kratos + Hydra (one binary with a login UI, organizations, external-IdP brokering, a full management API) and over Keycloak (heavier). [§2](docs/README.md#2-approach-in-one-sentence), [§4.1](docs/README.md#41-why-zitadel).
+- **OIDC for first-party apps, from day one.** A single first-party app does not strictly need OAuth, but an identity layer conceived without token audiences, scopes, and client registration is painful to retrofit when the first machine client or partner integration arrives. [§2](docs/README.md#2-approach-in-one-sentence).
+- **SpiceDB over OpenFGA**, for its consistency model: a snapshot token with four explicit levels, instead of a flag. The project's consistency section is where that choice earns its place. Relationships are the only source of truth for roles; nothing stores a role in Postgres. [§6.1](docs/README.md#61-why-spicedb), [§7](docs/README.md#7-consistency-zedtokens-and-the-new-enemy-problem).
+- **Tenancy as its own service.** Organizations, users, and policy are needed by every domain, so they live in a higher-order service the domains call, with its own database and its own front-end, rather than in whichever domain happened to need them first. [§3.1](docs/README.md#31-components-and-ownership).
 - **Policies enforced by the apps, not the identity provider.** One account can belong to several organizations with different sign-in requirements, and the IdP cannot know at login which one a session will touch (the GitHub organizations model), so a tenant's floors are evaluated when a request touches its resources, with step-up re-authentication as the remedy.
   - This keeps the IdP replaceable; it also costs the ability to block a session before it exists.
-  - Enforcement is planned (ticket 24); storage and the form exist. §9.1.
-- **Scopes enforced from the first version of every API**, so that external clients can be added later without touching the APIs. Zitadel has no custom scopes or consent, so client authority is stored in SpiceDB behind an interface and resolved by the access token's `client_id` claim (RFC 9068; Zitadel's access tokens carry no `azp`); a loud disclaimer marks it as a vendor workaround. §6.7.
-- **Each API validates tokens locally** against the JWKS, with a 10-minute access-token lifetime bounding the window in which a revoked token is still accepted; introspection is the switch for an API that cannot tolerate that window. §4.4.
-- **One hostname per application** (`dashboard.localtest.me`, `tenancy.localtest.me`, `auth.localtest.me`), because browsers scope cookies by host and ignore the port: two apps on `localhost` would overwrite each other's sessions, which would break single sign-on. The identity provider is served over HTTPS because its login keeps its session in a `Secure` cookie. §4.3.
-- **Compose as the reviewer path, Tilt as the developer loop**, and no third way to run the project; the test suites run against whichever is up. Kubernetes is a planned phase. §11.
+  - Enforcement is planned (ticket 24); storage and the form exist. [§9.1](docs/README.md#91-authentication-context-policies-live-in-the-apps).
+- **Scopes enforced from the first version of every API**, so that external clients can be added later without touching the APIs. Zitadel has no custom scopes or consent, so client authority is stored in SpiceDB behind an interface and resolved by the access token's `client_id` claim (RFC 9068; Zitadel's access tokens carry no `azp`); a loud disclaimer marks it as a vendor workaround. [§6.7](docs/README.md#67-client-authority-scopes).
+- **Each API validates tokens locally** against the JWKS, with a 10-minute access-token lifetime bounding the window in which a revoked token is still accepted; introspection is the switch for an API that cannot tolerate that window. [§4.4](docs/README.md#44-login-flow-what-packagesauth-implements).
+- **One hostname per application** (`dashboard.localtest.me`, `tenancy.localtest.me`, `auth.localtest.me`), because browsers scope cookies by host and ignore the port: two apps on `localhost` would overwrite each other's sessions, which would break single sign-on. The identity provider is served over HTTPS because its login keeps its session in a `Secure` cookie. [§4.3](docs/README.md#43-the-issuer-and-host-problem).
+- **Compose as the reviewer path, Tilt as the developer loop**, and no third way to run the project; the test suites run against whichever is up. Kubernetes is a planned phase. [§11](docs/README.md#11-phase-plan).
 
 ## Running it
 
@@ -184,7 +184,7 @@ Things to try: log in as Carol and compare her dashboard with Alice's; log in on
 
 **A forged request:** with a session cookie, the matching `Origin` header, and the session's `csrf_token` (every form carries it as a hidden field), a `curl` POST to `/documents/<id>` on `dashboard-web` answers `303` for a document the user may edit, `403` for one they may only view, `404` for one they may not see, and `403` before any lookup without the token; the same three answers come from `tenancy-web`'s member and policy forms.
 
-Every response of the web apps carries a nonce-based Content Security Policy and the other security headers of §9; every response of the APIs the JSON set. Bootstrap is idempotent: every start re-runs it, a second run creates nothing, and it puts the seeded roles and shares back, so the scenario survives an edit session. The seeded IDs and the users' Zitadel IDs are in `.local/config/seed.json`.
+Every response of the web apps carries a nonce-based Content Security Policy and the other security headers of [§9](docs/README.md#9-security-posture-the-configuration-profile); every response of the APIs the JSON set. Bootstrap is idempotent: every start re-runs it, a second run creates nothing, and it puts the seeded roles and shares back, so the scenario survives an edit session. The seeded IDs and the users' Zitadel IDs are in `.local/config/seed.json`.
 
 ### Tests
 
@@ -209,18 +209,18 @@ Stated in full because the exercise asked for them. Each is deliberate; the reas
 
 **Trade-offs taken on purpose.**
 
-- Development secrets are committed in `.env` (Zitadel master key, admin password, SpiceDB preshared key, session secret, database passwords) so the stack starts with no setup step; every value is labelled insecure and a real deployment injects them from a secret store. The infrastructure ports are published on the loopback interface only. §9.
-- The bootstrap container runs every package's database migrations before seeding, because the apps start after it; the migrations stay owned by their packages, bootstrap only executes them. §3.1.
-- APIs validate access tokens locally, so a token revoked at Zitadel is accepted until it expires, at most 10 minutes; introspection would close the window at a call per request. §4.4.
-- Listings are served from SpiceDB's cached snapshot (`minimize_latency`), so a share or a revocation can take a few seconds to show on a dashboard; content reads are exact per row through the stored snapshot token. A listing right after your own write is exact because the dashboard asks for a listing at least as fresh as the row you wrote. §7.3.
-- All applications share one Zitadel project, so a token issued to one application is valid at every API of the solution; the per-API control is the scope grant, not the audience. The per-resource audience model is described for a provider that supports it. §4.2, §6.6.
-- Zitadel is served over HTTPS with a self-issued development CA, with the browser trust step above; the apps stay on plain HTTP, so their session cookies carry `Secure` only when the app URL is HTTPS and no `__Host-` prefix. §4.3, §9.
+- Development secrets are committed in `.env` (Zitadel master key, admin password, SpiceDB preshared key, session secret, database passwords) so the stack starts with no setup step; every value is labelled insecure and a real deployment injects them from a secret store. The infrastructure ports are published on the loopback interface only. [§9](docs/README.md#9-security-posture-the-configuration-profile).
+- The bootstrap container runs every package's database migrations before seeding, because the apps start after it; the migrations stay owned by their packages, bootstrap only executes them. [§3.1](docs/README.md#31-components-and-ownership).
+- APIs validate access tokens locally, so a token revoked at Zitadel is accepted until it expires, at most 10 minutes; introspection would close the window at a call per request. [§4.4](docs/README.md#44-login-flow-what-packagesauth-implements).
+- Listings are served from SpiceDB's cached snapshot (`minimize_latency`), so a share or a revocation can take a few seconds to show on a dashboard; content reads are exact per row through the stored snapshot token. A listing right after your own write is exact because the dashboard asks for a listing at least as fresh as the row you wrote. [§7.3](docs/README.md#73-the-design-a-token-stored-with-every-piece-of-content-levels-chosen-per-operation).
+- All applications share one Zitadel project, so a token issued to one application is valid at every API of the solution; the per-API control is the scope grant, not the audience. The per-resource audience model is described for a provider that supports it. [§4.2](docs/README.md#42-deployment-shape), [§6.6](docs/README.md#66-cross-domain-access).
+- Zitadel is served over HTTPS with a self-issued development CA, with the browser trust step above; the apps stay on plain HTTP, so their session cookies carry `Secure` only when the app URL is HTTPS and no `__Host-` prefix. [§4.3](docs/README.md#43-the-issuer-and-host-problem), [§9](docs/README.md#9-security-posture-the-configuration-profile).
 - Sessions, including the tokens, are stored in plaintext in an unauthenticated Redis on the development stack. Containers run as root where Zitadel's reference compose does; Traefik reads the Docker socket. All compose-only.
 
 **Vendor workarounds, each labelled in the code.**
 
-- Zitadel has no custom scopes and no consent screen, so client authority (which application may call which API scope) is stored in SpiceDB and resolved by the access token's `client_id` claim (`packages/client-scopes`). It exists so the APIs enforce scopes from their first version; with a provider that emits `scope`, the package is deleted and nothing else changes. §6.7.
-- Zitadel's access tokens carry no `amr`, `auth_time`, or `acr`, so authentication-context policies cannot be enforced at the APIs; the design enforces them at the web app from the ID-token claims it holds in the session. §9.1.
+- Zitadel has no custom scopes and no consent screen, so client authority (which application may call which API scope) is stored in SpiceDB and resolved by the access token's `client_id` claim (`packages/client-scopes`). It exists so the APIs enforce scopes from their first version; with a provider that emits `scope`, the package is deleted and nothing else changes. [§6.7](docs/README.md#67-client-authority-scopes).
+- Zitadel's access tokens carry no `amr`, `auth_time`, or `acr`, so authentication-context policies cannot be enforced at the APIs; the design enforces them at the web app from the ID-token claims it holds in the session. [§9.1](docs/README.md#91-authentication-context-policies-live-in-the-apps).
 - `devMode` is on for the applications because they use plain-HTTP redirect URIs on hosts other than `localhost`; it turns off with an HTTPS app URL.
 
 **Gaps, with the ticket that specifies the work.**
@@ -230,20 +230,20 @@ Stated in full because the exercise asked for them. Each is deliberate; the reas
   - Found by an independent review on 2026-10-19; the design had specified PKCE and never named the client authentication method.
 - **No document creation.** Documents come only from the seeds and from provisioning; the schema has no creation permission below the organization. Ticket 19b.
 - **Sign-in policies are stored, not enforced.** The policy form in `tenancy-web` (require MFA, maximum login age, required identity provider) writes to tenancy; nothing reads it yet, so ticking "require MFA" changes nothing at login. The `requireAuthContext` helper and the step-up flow are ticket 24.
-- **No invitations.** Joining an organization is by seed or by an administrator changing an existing member's role; the uniform-response invitation flow of §6.8 is ticket 17a. Self-registration accepts an unverified email address, so the invitation flow must require a verified email before it matches an invitee by address.
+- **No invitations.** Joining an organization is by seed or by an administrator changing an existing member's role; the uniform-response invitation flow of [§6.8](docs/README.md#68-discovery-and-invitations) is ticket 17a. Self-registration accepts an unverified email address, so the invitation flow must require a verified email before it matches an invitee by address.
 - **A missed back-channel logout is not backed up.** If a logout token never arrives (the app was down), the session lives until its idle or absolute limit, and Zitadel keeps honouring the refresh token after `end_session` (observed); re-validation of the identity-provider session on an interval is ticket 20a.
 - **No audit log of authorization decisions.** Ticket 22.
 - **No rate limits** on the APIs' mutations, the login callback, or the back-channel sink (which does bound its request body). Ticket 23a.
 - **Session claims are not re-read after a token refresh** (`sid`, `auth_time`, `amr`), which matters only if the provider rotates `sid` on re-authentication.
   - The refresh lock is per process, so two instances behind a balancer could race the rotation.
-  - A refresh that Zitadel refuses ends in an error page rather than a login, because Zitadel answers a revoked refresh token with `invalid_request` where RFC 6749 §5.2 prescribes `invalid_grant`, the code the app treats as "session over". Tickets 8a and 8b.
+  - A refresh that Zitadel refuses ends in an error page rather than a login, because Zitadel answers a revoked refresh token with `invalid_request` where RFC 6749 [§5.2](docs/README.md#52-documents-domain-packagesdocuments-database-documents) prescribes `invalid_grant`, the code the app treats as "session over". Tickets 8a and 8b.
 - **No "log out everywhere"** page, although the session store supports it. Ticket 20b.
 - **Provisioning reaches across domains from the web apps** (a first login on either app calls both tenancy and the documents API); the pattern that avoids it is a spike, ticket 10a.
 - The Tilt-based test run is not in CI (ticket 13b); the comments domain, observability, Kubernetes, an API gateway, and brokering a second identity provider are later phases (tickets 26 to 32).
 
 ## What is built and what is planned
 
-Tickets in their intended order of implementation; numbers are stable identifiers, so the order is the list, not the number. The reasoning for the order is §11; each ticket's notes are in `docs/TICKETS.md`.
+Tickets in their intended order of implementation; numbers are stable identifiers, so the order is the list, not the number. The reasoning for the order is [§11](docs/README.md#11-phase-plan); each ticket's notes are in `docs/TICKETS.md`.
 
 ### Phase 0, foundation
 
