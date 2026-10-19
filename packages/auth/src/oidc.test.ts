@@ -107,6 +107,21 @@ describe('createOidcClient', () => {
     }
   });
 
+  it('tolerates 30 s of clock skew on the ID token, as the other verifiers do, and no more', async () => {
+    const seconds = () => Math.floor(Date.now() / 1000);
+    const within = await client.beginLogin();
+    op.tamperNextIdToken({ exp: seconds() - 20 });
+    await expect(
+      client.completeLogin(op.authorize(within.url, alice), within.stash),
+    ).resolves.toBeDefined();
+    const beyond = await client.beginLogin();
+    op.tamperNextIdToken({ exp: seconds() - 60 });
+    const error = await failure(
+      client.completeLogin(op.authorize(beyond.url, alice), beyond.stash),
+    );
+    expect(error.code).toBe('token_invalid');
+  });
+
   it('reports an error response from the authorization endpoint as denied', async () => {
     const { url, stash } = await client.beginLogin();
     const error = await failure(client.completeLogin(op.deny(url), stash));

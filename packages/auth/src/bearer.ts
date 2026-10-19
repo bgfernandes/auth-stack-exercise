@@ -20,13 +20,16 @@ import {
 
 export type JwksFetch = NonNullable<RemoteJWKSetOptions[typeof customFetch]>;
 
+/** Seconds of leeway on the time claims of every token this package verifies: bearer, logout, and ID tokens. */
+export const CLOCK_TOLERANCE_SECONDS = 30;
+
 export interface BearerOptions {
   /** What `iss` must be. */
   issuer: string;
   /** What `aud` must contain: the Zitadel project ID, since every API is an application of the one project. */
   audience: string;
   jwksUrl: string;
-  /** Seconds of leeway on `exp` and `nbf`; 30 by default. */
+  /** Seconds of leeway on `exp` and `nbf`; `CLOCK_TOLERANCE_SECONDS` (30) by default. */
   clockToleranceSeconds?: number;
   /** Replaces `fetch` for the JWKS (the tests' fake OP). */
   fetch?: JwksFetch;
@@ -113,7 +116,7 @@ export function createBearerVerifier(options: BearerOptions): BearerVerifier {
     createRemoteJWKSet(new URL(options.jwksUrl), {
       ...(options.fetch ? { [customFetch]: options.fetch } : {}),
     });
-  const clockTolerance = options.clockToleranceSeconds ?? 30;
+  const clockTolerance = options.clockToleranceSeconds ?? CLOCK_TOLERANCE_SECONDS;
 
   return {
     async verify(authorization) {

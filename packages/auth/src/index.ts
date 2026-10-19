@@ -23,6 +23,7 @@ export {
   assertScopeStrings,
   BearerError,
   bearerOptionsFromEnv,
+  CLOCK_TOLERANCE_SECONDS,
   createBearerVerifier,
   fromScopeClaim,
   requireScopes,

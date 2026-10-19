@@ -8,6 +8,7 @@
 import { createRemoteJWKSet, customFetch, errors as joseErrors, jwtVerify } from 'jose';
 import * as oidc from 'openid-client';
 
+import { CLOCK_TOLERANCE_SECONDS } from './bearer';
 import { AuthError } from './errors';
 import { STASH_LIFETIME_SECONDS, type LoginStash } from './stash';
 
@@ -106,11 +107,14 @@ async function configure(
   options: OidcClientOptions,
 ): Promise<oidc.Configuration> {
   const insecure = config.issuer.startsWith('http://');
+  // The leeway on the ID token's `exp`, `iat`, and `auth_time` is the one the bearer and logout-token verifiers
+  // give, pinned rather than left to the library's default so the three cannot drift apart.
+  const clientMetadata = { [oidc.clockTolerance]: CLOCK_TOLERANCE_SECONDS };
   if (options.serverMetadata) {
     const configuration = new oidc.Configuration(
       options.serverMetadata,
       config.clientId,
-      undefined,
+      clientMetadata,
       oidc.None(),
     );
     if (insecure) oidc.allowInsecureRequests(configuration);
@@ -121,7 +125,7 @@ async function configure(
   let pending = configurations.get(key);
   if (!pending) {
     pending = oidc
-      .discovery(new URL(config.issuer), config.clientId, undefined, oidc.None(), {
+      .discovery(new URL(config.issuer), config.clientId, clientMetadata, oidc.None(), {
         // The issuer is plain http inside compose; the library refuses that unless told otherwise.
         execute: insecure ? [oidc.allowInsecureRequests] : [],
         ...(options.fetch ? { [oidc.customFetch]: options.fetch } : {}),
@@ -219,9 +223,6 @@ function logoutTokenClaims(payload: JWTPayload): LogoutTokenClaims {
   }
   return claims;
 }
-
-/** Seconds of leeway on `exp` and `iat`, as the bearer verifier gives access tokens. */
-const LOGOUT_TOKEN_CLOCK_TOLERANCE_SECONDS = 30;
 
 export function createOidcClient(
   config: OidcClientConfig,
@@ -336,7 +337,7 @@ export function createOidcClient(
           issuer: config.issuer,
           audience: config.clientId,
           requiredClaims: ['iat', 'exp'],
-          clockTolerance: LOGOUT_TOKEN_CLOCK_TOLERANCE_SECONDS,
+          clockTolerance: CLOCK_TOLERANCE_SECONDS,
           currentDate: new Date(now()),
         }));
       } catch (error) {
