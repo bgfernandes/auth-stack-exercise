@@ -215,7 +215,7 @@ Stated in full because the exercise asked for them. Each is deliberate; the reas
 - Listings are served from SpiceDB's cached snapshot (`minimize_latency`), so a share or a revocation can take a few seconds to show on a dashboard; content reads are exact per row through the stored snapshot token. A listing right after your own write is exact because the dashboard asks for a listing at least as fresh as the row you wrote. [§7.3](docs/README.md#73-the-design-a-token-stored-with-every-piece-of-content-levels-chosen-per-operation).
 - All applications share one Zitadel project, so a token issued to one application is valid at every API of the solution; the per-API control is the scope grant, not the audience. The per-resource audience model is described for a provider that supports it. [§4.2](docs/README.md#42-deployment-shape), [§6.6](docs/README.md#66-cross-domain-access).
 - Zitadel is served over HTTPS with a self-issued development CA, with the browser trust step above; the apps stay on plain HTTP, so their session cookies carry `Secure` only when the app URL is HTTPS and no `__Host-` prefix. [§4.3](docs/README.md#43-the-issuer-and-host-problem), [§9](docs/README.md#9-security-posture-the-configuration-profile).
-- Sessions, including the tokens, are stored in plaintext in an unauthenticated Redis on the development stack. Containers run as root where Zitadel's reference compose does; Traefik reads the Docker socket. All compose-only.
+- Redis runs without authentication or TLS on the development stack; containers run as root where Zitadel's reference compose does; Traefik reads the Docker socket. All compose-only: a deployment turns on Redis authentication and TLS and drops the root users.
 
 **Vendor workarounds, each labelled in the code.**
 
@@ -234,6 +234,7 @@ Stated in full because the exercise asked for them. Each is deliberate; the reas
 - **A missed back-channel logout is not backed up.** If a logout token never arrives (the app was down), the session lives until its idle or absolute limit, and Zitadel keeps honouring the refresh token after `end_session` (observed); re-validation of the identity-provider session on an interval is ticket 20a.
 - **No audit log of authorization decisions.** Ticket 22.
 - **No rate limits** on the APIs' mutations, the login callback, or the back-channel sink (which does bound its request body). Ticket 23a.
+- **The session's tokens are stored in plaintext.** The store holds `accessToken`, `refreshToken`, and `idToken` as they are, so whoever can read Redis (a dump, a backup, a replica, an operator) holds every live user's refresh token; Redis authentication and TLS do not change that. The fix is envelope encryption of the token fields inside `packages/auth`, with a dedicated key and a key id for rotation, so a copy of the store alone is useless. Ticket 8d; it pairs with ticket 4a, after which a leaked refresh token also needs the client's credential.
 - **Session claims are not re-read after a token refresh** (`sid`, `auth_time`, `amr`), which matters only if the provider rotates `sid` on re-authentication.
   - The refresh lock is per process, so two instances behind a balancer could race the rotation.
   - A refresh that Zitadel refuses ends in an error page rather than a login, because Zitadel answers a revoked refresh token with `invalid_request` where RFC 6749 [§5.2](docs/README.md#52-documents-domain-packagesdocuments-database-documents) prescribes `invalid_grant`, the code the app treats as "session over". Tickets 8a and 8b.
@@ -305,6 +306,7 @@ Tickets in their intended order of implementation; numbers are stable identifier
 | 24 | Sign-in policies and the step-up flow | Open |
 | 20a | Re-validation of the IdP session, the backstop for a missed logout | Open |
 | 8a | Session claims re-read after a token refresh | Open |
+| 8d | Encrypt the session's tokens at rest | Open |
 | 8b | Refresh lock across instances | Open |
 | 8c | A refused refresh ends the session | Open |
 | 20b | Log out everywhere | Open |

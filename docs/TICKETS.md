@@ -672,6 +672,16 @@ The fix, in `refresh()`: treat as "session over" any `invalid_grant`, and any `i
 
 **Status:** Open (found 2026-10-19).
 
+### Ticket 8d — Encrypt the session's tokens at rest (1.5 h)
+
+**Read first:** `docs/README.md` §4.4 (`SessionStore`), §9 (Session cookie, Secrets); `packages/auth/src/session.ts` and the two stores.
+
+**Description:** The session store writes `accessToken`, `refreshToken`, and `idToken` as plaintext fields, so anyone who can read the store (a Redis dump or backup, a replica, an operator, a leaked `REDIS_URL`) holds every live user's refresh token, and until ticket 4a a refresh token mints access tokens with `client_id` alone. Redis authentication and TLS are deployment settings and do not change this. Encrypt the token fields in `packages/auth` before any store sees them, so the Redis and memory adapters stay unaware: AES-256-GCM with a per-field random nonce, keyed by a dedicated `SESSION_ENCRYPTION_KEY` (32 bytes, base64, distinct from `SESSION_SECRET`, which signs the login stash and the CSRF token), with a key id stored beside the ciphertext and a `SESSION_ENCRYPTION_KEYS` map for rotation (decrypt with any listed key, encrypt with the current one). The session ID stays plaintext (it is the lookup key); `sub`, `sid`, and the claims stay plaintext (the indexes need them; they are not credentials). A session whose key id is no longer known is treated as absent, which logs the user out rather than failing the request. The `.env` gets a labelled development key like the others.
+
+**Tests:** round trip through both stores; a stored value is not the token (the contract test reads the raw hash); rotation (encrypt under key 2, decrypt a value written under key 1); unknown key id yields no session. The README of `packages/auth` and the root README's trade-offs updated.
+
+**Status:** Open (found 2026-10-20 while reviewing the trade-offs list).
+
 ### Ticket 8b — A refresh lock across instances (1 h)
 
 The refresh mutex is per process (`inFlight` in `createAccessTokenProvider()`); two instances of a BFF refreshing the same session can trip the provider's rotation reuse detection. A Redis `SET NX PX` lock keyed by session ID around the refresh, with the re-read fallback kept. Also give `openid-client`'s per-request calls (token, refresh, revocation) a timeout, since logout now makes two of them.
