@@ -23,6 +23,7 @@ const desired: OidcAppConfig = {
   authMethodType: 'OIDC_AUTH_METHOD_TYPE_NONE',
   accessTokenType: 'OIDC_TOKEN_TYPE_JWT',
   idTokenUserinfoAssertion: true,
+  // What `webAppConfig` gives a plain-HTTP app URL; an https one gets `devMode: false`.
   devMode: true,
   backChannelLogoutUri: 'http://dashboard.localtest.me:3000/auth/backchannel-logout',
 };
