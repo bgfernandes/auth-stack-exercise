@@ -2,7 +2,7 @@
 import { test, expect } from '@playwright/test';
 
 import {
-  dashboardShows,
+  dashboardRows,
   editAndRestore,
   logIn,
   logOut,
@@ -19,9 +19,9 @@ test('alice logs in, sees every Acme document editable, edits Payroll, logs out'
 }) => {
   await logIn(page, seed.users.alice.email, seedPassword());
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Welcome, Alice Adams');
-  // Reloaded inside the lag: on a fresh stack this is her first login, and the workspace it created a moment
-  // ago may be missing from the listing for one window (§7.3).
-  await dashboardShows(page, [
+  // Exact at once, also on a fresh stack where this is her first login: the landing names the workspace the
+  // login created, and the listing is at least as fresh as it (§6.4, §7.3).
+  expect(await dashboardRows(page)).toEqual([
     row('Acme', 'Finance', 'Payroll', 'edit'),
     row('Acme', 'Marketing', 'Budget', 'edit'),
     row('Acme', 'Marketing', 'Launch plan', 'edit'),

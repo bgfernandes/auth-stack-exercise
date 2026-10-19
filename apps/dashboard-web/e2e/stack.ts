@@ -124,9 +124,9 @@ export async function dashboardRows(page: Page): Promise<DashboardRow[]> {
 export const LISTING_LAG_MS = 7_000;
 
 /**
- * The dashboard reloaded until it shows `rows`, inside the lag; the last rows seen are what fails. A first
- * login's dashboard may miss the personal workspace created a moment before (§6.4, §7.3; ticket 21a makes that
- * listing exact), and another user's share or edit reaches a listing with the same lag.
+ * The dashboard reloaded until it shows `rows`, inside the lag; the last rows seen are what fails. Another
+ * user's share or edit reaches a listing with the lag of §7.3; the user's own write is exact at once, since the
+ * dashboard they land on names it (§6.4), so only another user's dashboard needs this.
  */
 export async function dashboardShows(
   page: Page,
