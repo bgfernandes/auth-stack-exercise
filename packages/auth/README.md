@@ -2,7 +2,7 @@
 
 The one place OIDC and session details live ([`docs/README.md`](../../docs/README.md) §4.4, §6.7, §9).
 
-For the BFFs: an OIDC client over `openid-client` v6 (authorization code with PKCE `S256`, `state` and `nonce` bound to the login attempt, ID-token validation, refresh, RP-initiated logout), the server-side session and its `SessionStore` with in-memory and Redis adapters, an access-token provider that refreshes on demand, the back-channel logout sink, cookie and same-origin helpers, and `redact` for logs; `@auth-stack/auth/next` binds them to Next.js route handlers.
+For the BFFs: an OIDC client over `openid-client` v6 (authorization code with PKCE `S256`, `state` and `nonce` bound to the login attempt, private-key JWT client authentication at the token and revocation endpoints, ID-token validation, refresh, RP-initiated logout), the server-side session and its `SessionStore` with in-memory and Redis adapters, an access-token provider that refreshes on demand, the back-channel logout sink, cookie and same-origin helpers, and `redact` for logs; `@auth-stack/auth/next` binds them to Next.js route handlers.
 
 For the APIs: bearer verification and the scope gate, bound to Fastify by `@auth-stack/auth/fastify`. The core works on the Fetch API's `Request` and `Response` and depends on neither framework. The authentication-context policy helper is ticket 24.
 
@@ -13,6 +13,7 @@ A BFF: `authOptionsFromEnv(process.env, { app })` reads the contract; every valu
 | Variable | Meaning |
 | --- | --- |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_REDIRECT_URI`, `OIDC_POST_LOGOUT_REDIRECT_URI` | The application bootstrap registered; written to the app's `.local/config/<app>.env` by the bootstrap container |
+| `OIDC_CLIENT_KEY_ID`, `OIDC_CLIENT_KEY` | The client's key for `private_key_jwt` (also from the handoff file): the ID Zitadel issued, named by the assertion's `kid`, and the RSA private key as a PKCS#8 PEM on one base64 line. Required: a BFF is a confidential client, and there is no public-client mode. Decoded and parsed at startup; the error of a bad value never carries it |
 | `APP_URL` | The app's public URL (also from the handoff file): its scheme decides `Secure` on the cookies, its origin is what `assertSameOrigin` expects |
 | `SESSION_SECRET` | Signs the login stash cookie; at least 32 characters (`.env` carries a development value) |
 | `REDIS_URL` | The session store (`redis://redis:6379` inside compose, `localhost` from the host) |
@@ -201,7 +202,7 @@ A relational adapter would be a drop-in with `UPDATE ... WHERE id = $1` as its c
 
 ## Testing
 
-`@auth-stack/auth/testing` is an in-process OpenID Provider served to `openid-client` through its `customFetch` hook: discovery, JWKS, the token endpoint (code exchange with PKCE, refresh with rotation), and the revocation endpoint (RFC 7009; `revocations` records every call, `refuseRevocation()` makes it answer a server error) behave like Zitadel's as far as this package relies on them.
+`@auth-stack/auth/testing` is an in-process OpenID Provider served to `openid-client` through its `customFetch` hook: discovery, JWKS, the token endpoint (code exchange with PKCE, refresh with rotation), and the revocation endpoint (RFC 7009; `revocations` records every call, `refuseRevocation()` makes it answer a server error) behave like Zitadel's as far as this package relies on them. Both endpoints require the client's private-key JWT assertion, verified against the one key the OP holds for the client: `clientKey` is what a client's config carries, `clientAssertions` records every assertion accepted, with the `kid` it named, and a client signing with any other key is refused with `invalid_client`.
 
 `authorize(url, user)` plays the user's login and returns the callback URL; `deny(url)` an error response; `tamperNextIdToken({ nonce | iss | aud | exp | auth_time })` forces the validation failures; a user's `authTime` and the OP's `ignoresMaxAge` option play the `max_age` cases.
 
@@ -209,7 +210,10 @@ A relational adapter would be a drop-in with `UPDATE ... WHERE id = $1` as its c
 
 ```ts
 const op = await createFakeOp({ clientId: 'dashboard-web', projectId: 'project-1' });
-const client = createOidcClient(config, { fetch: op.fetch, serverMetadata: op.metadata });
+const client = createOidcClient(
+  { ...config, clientKey: op.clientKey },
+  { fetch: op.fetch, serverMetadata: op.metadata },
+);
 ```
 
 The `SessionStore` contract (`src/session-store.contract.ts`) runs against both adapters with an injected clock.

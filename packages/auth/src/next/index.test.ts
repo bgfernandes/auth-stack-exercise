@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from '@jest/globals';
 import { NextResponse } from 'next/server';
 
 import { csrfTokenOf } from '../csrf';
+import { type AuthOptions } from '../env';
 import { createOidcClient } from '../oidc';
 import { type Session, type SessionStore } from '../session';
 import { createMemorySessionStore } from '../stores/memory';
@@ -11,7 +12,8 @@ import { createFakeOp, type FakeOp } from '../testing/fake-op';
 import { createNextAuth, type NextAuth } from './index';
 
 const APP = 'https://dashboard.test';
-const options = {
+/** The app's options, but for the client key, which is the fake OP's of each test. */
+const BASE = {
   oidc: {
     issuer: 'https://op.test',
     clientId: 'dashboard-web',
@@ -35,6 +37,7 @@ function cookieHeader(...setCookies: string[]): string {
 
 describe('createNextAuth', () => {
   let op: FakeOp;
+  let options: AuthOptions;
   let store: SessionStore;
   let auth: NextAuth;
   const events: string[] = [];
@@ -44,6 +47,7 @@ describe('createNextAuth', () => {
     events.length = 0;
     records.length = 0;
     op = await createFakeOp({ clientId: 'dashboard-web' });
+    options = { ...BASE, oidc: { ...BASE.oidc, clientKey: op.clientKey } };
     store = createMemorySessionStore();
     auth = createNextAuth({
       options,
@@ -149,7 +153,7 @@ describe('createNextAuth', () => {
       options: { ...options, oidc: { ...options.oidc, maxAgeSeconds: 600 } },
       store,
       client: createOidcClient(
-        { ...options.oidc, maxAgeSeconds: 600 },
+        { ...options.oidc, clientKey: lax.clientKey, maxAgeSeconds: 600 },
         { fetch: lax.fetch, serverMetadata: lax.metadata },
       ),
       logger: {

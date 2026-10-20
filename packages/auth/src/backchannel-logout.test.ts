@@ -54,7 +54,10 @@ describe('verifyLogoutToken', () => {
 
   beforeEach(async () => {
     op = await createFakeOp({ clientId: CLIENT_ID, projectId: 'project-1' });
-    client = createOidcClient(config, { fetch: op.fetch, serverMetadata: op.metadata });
+    client = createOidcClient(
+      { ...config, clientKey: op.clientKey },
+      { fetch: op.fetch, serverMetadata: op.metadata },
+    );
   });
 
   it('returns the sid and sub a valid token names, whichever are present', async () => {
@@ -151,7 +154,10 @@ describe('handleBackchannelLogout', () => {
     events.length = 0;
     records.length = 0;
     op = await createFakeOp({ clientId: CLIENT_ID, projectId: 'project-1' });
-    client = createOidcClient(config, { fetch: op.fetch, serverMetadata: op.metadata });
+    client = createOidcClient(
+      { ...config, clientKey: op.clientKey },
+      { fetch: op.fetch, serverMetadata: op.metadata },
+    );
     store = createMemorySessionStore();
   });
 

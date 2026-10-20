@@ -1,8 +1,10 @@
 /**
- * The env contract of a BFF (docs/TICKETS.md ticket 8): the four `OIDC_*` values bootstrap writes to the app's
- * handoff file, plus the app's own. Read once at startup; a missing or malformed value fails the process rather
- * than the first login.
+ * The env contract of a BFF (docs/TICKETS.md tickets 8 and 4a): the six `OIDC_*` values bootstrap writes to the
+ * app's handoff file, the client key among them, plus the app's own. Read once at startup; a missing or
+ * malformed value fails the process rather than the first login.
  */
+import { createPrivateKey } from 'node:crypto';
+
 import { MIN_SECRET_LENGTH } from './stash';
 
 import type { OidcClientConfig } from './oidc';
@@ -39,6 +41,24 @@ function url(env: NodeJS.ProcessEnv, name: string): string {
   return value;
 }
 
+/**
+ * `OIDC_CLIENT_KEY` is the PKCS#8 PEM of the client's RSA key on one base64 line, the way bootstrap writes it so
+ * a shell can source the file. Decoded and parsed here, so a key that is not one fails the start; the error
+ * names the variable and never carries the value.
+ */
+function clientKeyPem(env: NodeJS.ProcessEnv): string {
+  const pem = Buffer.from(required(env, 'OIDC_CLIENT_KEY'), 'base64').toString('utf8');
+  let type: string | undefined;
+  try {
+    type = createPrivateKey(pem).asymmetricKeyType;
+  } catch {
+    throw new Error('OIDC_CLIENT_KEY is not a base64-encoded PEM private key');
+  }
+  if (type !== 'rsa')
+    throw new Error(`OIDC_CLIENT_KEY is a ${type ?? 'non-RSA'} key; RSA is required`);
+  return pem;
+}
+
 export function authOptionsFromEnv(env: NodeJS.ProcessEnv, options: AuthEnvOptions): AuthOptions {
   const sessionSecret = required(env, 'SESSION_SECRET');
   if (sessionSecret.length < MIN_SECRET_LENGTH) {
@@ -48,6 +68,7 @@ export function authOptionsFromEnv(env: NodeJS.ProcessEnv, options: AuthEnvOptio
     oidc: {
       issuer: url(env, 'OIDC_ISSUER'),
       clientId: required(env, 'OIDC_CLIENT_ID'),
+      clientKey: { kid: required(env, 'OIDC_CLIENT_KEY_ID'), pem: clientKeyPem(env) },
       redirectUri: url(env, 'OIDC_REDIRECT_URI'),
       postLogoutRedirectUri: url(env, 'OIDC_POST_LOGOUT_REDIRECT_URI'),
     },

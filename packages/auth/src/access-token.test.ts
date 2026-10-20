@@ -26,7 +26,10 @@ describe('getAccessToken', () => {
   beforeEach(async () => {
     clock.now = 1_700_000_000_000;
     op = await createFakeOp({ clientId: 'c' });
-    client = createOidcClient(config, { fetch: op.fetch, serverMetadata: op.metadata, now });
+    client = createOidcClient(
+      { ...config, clientKey: op.clientKey },
+      { fetch: op.fetch, serverMetadata: op.metadata, now },
+    );
     store = createMemorySessionStore({ now });
     provider = createAccessTokenProvider({
       client,

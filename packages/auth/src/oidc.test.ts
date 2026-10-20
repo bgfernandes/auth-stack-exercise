@@ -36,7 +36,37 @@ describe('createOidcClient', () => {
 
   beforeEach(async () => {
     op = await createFakeOp({ clientId: CLIENT_ID, projectId: 'project-1' });
-    client = createOidcClient(config, { fetch: op.fetch, serverMetadata: op.metadata });
+    client = createOidcClient(
+      { ...config, clientKey: op.clientKey },
+      { fetch: op.fetch, serverMetadata: op.metadata },
+    );
+  });
+
+  it('authenticates every token and revocation request with a private-key JWT naming its key', async () => {
+    const { url, stash } = await client.beginLogin();
+    const { tokens } = await client.completeLogin(op.authorize(url, alice), stash);
+    const refreshed = await client.refresh(tokens.refreshToken as string);
+    await client.revoke(refreshed.refreshToken as string, 'refresh_token');
+    // The fake OP serves none of the three without a valid assertion, so the calls prove it (as Zitadel does).
+    expect(op.clientAssertions).toEqual([
+      { endpoint: 'token', kid: op.clientKey.kid },
+      { endpoint: 'token', kid: op.clientKey.kid },
+      { endpoint: 'revoke', kid: op.clientKey.kid },
+    ]);
+  });
+
+  it('is refused as invalid_client when it signs with a key the OP does not hold', async () => {
+    const other = await createFakeOp({ clientId: CLIENT_ID, projectId: 'project-1' });
+    const impostor = createOidcClient(
+      { ...config, clientKey: other.clientKey },
+      { fetch: op.fetch, serverMetadata: op.metadata },
+    );
+    const { url, stash } = await impostor.beginLogin();
+    const error = await failure(impostor.completeLogin(op.authorize(url, alice), stash));
+    expect(error.code).toBe('exchange_failed');
+    expect(oauthErrorOf(error)).toBe('invalid_client');
+    expect(op.clientAssertions).toEqual([]);
+    expect(op.grants.authorization_code).toBe(0);
   });
 
   it('builds a PKCE S256 authorization request with fresh state and nonce', async () => {
@@ -61,7 +91,7 @@ describe('createOidcClient', () => {
     const { url } = await client.beginLogin();
     expect(url.searchParams.get('max_age')).toBe('28800');
     const short = createOidcClient(
-      { ...config, maxAgeSeconds: 600 },
+      { ...config, clientKey: op.clientKey, maxAgeSeconds: 600 },
       { fetch: op.fetch, serverMetadata: op.metadata },
     );
     const login = await short.beginLogin();
@@ -85,7 +115,7 @@ describe('createOidcClient', () => {
       ignoresMaxAge: true,
     });
     const short = createOidcClient(
-      { ...config, maxAgeSeconds: 600 },
+      { ...config, clientKey: lax.clientKey, maxAgeSeconds: 600 },
       { fetch: lax.fetch, serverMetadata: lax.metadata },
     );
     const seconds = () => Math.floor(Date.now() / 1000);
@@ -225,7 +255,10 @@ describe('createOidcClient', () => {
     expect(refused.message).not.toContain(tokens.accessToken);
 
     const { revocation_endpoint: _none, ...withoutRevocation } = op.metadata;
-    const bare = createOidcClient(config, { fetch: op.fetch, serverMetadata: withoutRevocation });
+    const bare = createOidcClient(
+      { ...config, clientKey: op.clientKey },
+      { fetch: op.fetch, serverMetadata: withoutRevocation },
+    );
     expect((await failure(bare.revoke(tokens.accessToken, 'access_token'))).code).toBe(
       'revocation_failed',
     );
@@ -246,10 +279,16 @@ describe('createOidcClient', () => {
       if (url.endsWith('/.well-known/openid-configuration')) discoveries += 1;
       return op.fetch(url, request);
     };
-    const discovered = createOidcClient(config, { fetch: counting });
+    const discovered = createOidcClient(
+      { ...config, clientKey: op.clientKey },
+      { fetch: counting },
+    );
     const { url, stash } = await discovered.beginLogin();
     await discovered.completeLogin(op.authorize(url, alice), stash);
-    await createOidcClient(config, { fetch: counting }).beginLogin();
+    await createOidcClient(
+      { ...config, clientKey: op.clientKey },
+      { fetch: counting },
+    ).beginLogin();
     expect(discoveries).toBe(1);
   });
 });
