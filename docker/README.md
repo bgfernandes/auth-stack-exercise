@@ -111,4 +111,6 @@ The first-instance admin is `ZITADEL_ADMIN_USERNAME` in `.env`. Zitadel suffixes
 
 `docker compose --profile apps down -v` removes the volumes, so the next `up` reinitializes Postgres (the init script runs again), Zitadel (a new instance, new PATs), SpiceDB, and Redis from scratch, and bootstrap registers everything again with new IDs and new client keys (`./.local/config/` is overwritten).
 
-Under Tilt, `tilt down` keeps the volumes; `tilt down --delete-volumes` is the equivalent. `./.local/tls/` is a bind mount, so neither removes it and the CA survives a reset; deleting `.local/` makes the next start generate a new CA, which a browser that imported the old one has to import again, and new client keys, the registered ones being removed. A BFF container that was running when its key was replaced holds the old key until it restarts, which `up` does for the apps that depend on bootstrap.
+Under Tilt, `tilt down` keeps the volumes; `tilt down --delete-volumes` is the equivalent. `./.local/tls/` is a bind mount, so neither removes it and the CA survives a reset; deleting `.local/` makes the next start generate a new CA, which a browser that imported the old one has to import again, and new client keys, the registered ones being removed.
+
+A BFF container that was running when its key was replaced holds the old key until it restarts, which `up` does for the apps that depend on bootstrap.

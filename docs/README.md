@@ -141,7 +141,7 @@ flowchart LR
 
 **`apps/dashboard-api`**: the listing, the edit page's read, the content write, the share action, and the personal workspace, each over `packages/documents` with the scope gate of §6.7 in front.
 
-**`packages/auth`**: the OIDC client covers discovery, PKCE, `state`, `nonce`, and token validation; `SessionStore` is an interface with in-memory and Redis adapters; the authentication-context policy helper is ticket 24, not built. It is a framework-agnostic core with thin `next` and `fastify` adapters.
+**`packages/auth`**: the OIDC client covers discovery, PKCE, `state`, `nonce`, token validation, and private-key JWT client authentication; `SessionStore` is an interface with in-memory and Redis adapters; the authentication-context policy helper is ticket 24, not built. It is a framework-agnostic core with thin `next` and `fastify` adapters.
 
 **`packages/client-scopes`**: kept out of `packages/authz` so that it can be deleted as a unit when the provider emits `scope`.
 
@@ -241,10 +241,10 @@ Zitadel's outbound HTTP client denies private and loopback destinations by defau
 
 1. `GET /auth/login` builds an authorization request: `response_type=code`, `scope=openid profile email offline_access`, PKCE `S256` (RFC 7636), fresh `state` and `nonce`, stored in a short-lived, signed, `HttpOnly` cookie; redirect to the authorization endpoint found through discovery.
 2. Zitadel's login UI handles registration, password, MFA, and (later) external IdPs; it redirects back to `GET /auth/callback?code&state`. As configured here, registration preselects a passkey as the method (a password is the other option), sends no verification email, and accepts the address unverified (observed 2026-10-19 with Mailpit empty after six registrations); MFA is offered, not required. The apps therefore treat a self-registered email as unverified (§6.8).
-3. The callback verifies `state`, exchanges the code with `code_verifier`, validates the ID token (`iss`, `aud`, `exp`, `nonce`, signature against JWKS) through `openid-client`, and creates a **server-side session** through the `SessionStore`: session ID, `sub`, `sid`, the tokens, the ID token's `auth_time` and `amr` (the authentication evidence used by §9), idle and absolute expiry.
+3. The callback verifies `state`, exchanges the code with `code_verifier` and the client assertion ("Client type" below), validates the ID token (`iss`, `aud`, `exp`, `nonce`, signature against JWKS) through `openid-client`, and creates a **server-side session** through the `SessionStore`: session ID, `sub`, `sid`, the tokens, the ID token's `auth_time` and `amr` (the authentication evidence used by §9), idle and absolute expiry.
    - The browser gets only an opaque session ID in a cookie: `HttpOnly`, `Secure` (except on plain-HTTP localhost), `SameSite=Lax`, `Path=/`.
 4. Just-in-time provisioning (§6.4) runs on the first login of a `sub`.
-5. `POST /auth/logout`, a same-origin form carrying the session's synchronizer token (§9), deletes the session, revokes the refresh token and then the access token at the `revocation_endpoint` (RFC 7009; a failure is logged without the token and ignored, so logout never fails because revocation did), and redirects to the `end_session_endpoint` with `id_token_hint` and a registered `post_logout_redirect_uri`, so the IdP session ends too.
+5. `POST /auth/logout`, a same-origin form carrying the session's synchronizer token (§9), deletes the session, revokes the refresh token and then the access token at the `revocation_endpoint`, authenticated with the client assertion (RFC 7009; a failure is logged without the token and ignored, so logout never fails because revocation did), and redirects to the `end_session_endpoint` with `id_token_hint` and a registered `post_logout_redirect_uri`, so the IdP session ends too.
 6. `POST /auth/backchannel-logout` receives Zitadel's logout token (OpenID Connect Back-Channel Logout 1.0), posted as a form, server to server.
    - It is validated like an ID token (signature against the JWKS from discovery, `iss`, `aud` containing the client ID, `exp`, and `iat` required), then on what makes it a logout token: `events` with `http://schemas.openid.net/event/backchannel-logout`, a `sid` or `sub`, and no `nonce`, which is also what refuses an ID token replayed here.
    - The sink calls `deleteByLogoutToken({ sid, sub })`, which removes every session matching the claims present, and answers `200` with no body, `400` to a request without a valid token, `500` when the store fails, never a redirect; no cookie and no origin check, since no browser is involved.
@@ -259,6 +259,8 @@ Zitadel's outbound HTTP client denies private and loopback destinations by defau
 A server-side BFF is a confidential client (RFC 6749 §2.1: it runs where users cannot read its credentials), and the BFFs are registered as one, with `OIDC_AUTH_METHOD_TYPE_PRIVATE_KEY_JWT`, the method the API applications already use. PKCE stays: it binds the authorization code to the login attempt that started the flow, client authentication binds every token-endpoint call to the application, and neither replaces the other.
 
 Every call to the token endpoint, the code exchange and every refresh, and every revocation request carries a `client_assertion` (RFC 7523 §2.2; `private_key_jwt` of OpenID Connect Core 1.0 §9): a one-minute RS256 JWT with `iss` and `sub` the client ID, `aud` the issuer, a fresh `jti`, and a `kid` header naming the key. Zitadel requires the `kid` and the issuer as the audience (observed 2026-10-20 on v4.19.4).
+
+The issuer as the sole audience is also what the OAuth working group's revision of RFC 7523 requires: draft-ietf-oauth-rfc7523bis-11 (March 2026) makes the issuer identifier the only valid audience of a client-authentication JWT and forbids the token endpoint URL, so the vendor's check is ahead of the published RFC rather than at odds with it.
 
 RFC 9700 §4.14's tolerance of refresh tokens at public clients no longer has to carry the stack; the rotation and the server-side store remain, and a leaked refresh token is useless without the key.
 
@@ -669,7 +671,7 @@ Decisions are posted asynchronously (buffered, fire-and-forget) to `tenancy-api`
 | --- | --- |
 | Credentials | Never handled by the apps. Zitadel stores password hashes, rate-limits login attempts, and runs lockout, verification, and password-reset flows. The apps never see a password. |
 | Session cookie | Opaque ID to a server-side session in Redis; `HttpOnly`, `SameSite=Lax`, `Secure` outside localhost, no `Domain` attribute. Idle timeout and absolute lifetime enforced in the store. |
-| OIDC client | Authorization code + PKCE `S256`; `state` and `nonce` single-use and bound to the login attempt; exact-match redirect URIs registered in Zitadel; private-key JWT client authentication on every token-endpoint call (RFC 7523, §4.4). Tokens never leave the server. |
+| OIDC client | Authorization code + PKCE `S256`; `state` and `nonce` single-use, bound to the login attempt; exact-match redirect URIs; private-key JWT client authentication on every token-endpoint call (§4.4). Tokens never leave the server. |
 | CSRF | Three layers on the BFFs (the APIs use bearer tokens, not cookies, so cross-site form posts carry no credential there): `SameSite=Lax`, same-origin checks, and a synchronizer token (detail below). |
 | Authorization | Server-side on every read and write path (§6.5); deny by default; `404` for unseen resources, `403` for seen-but-forbidden. |
 | Account enumeration | No endpoint reveals whether an email has an account (§6.8): sharing is keyed by member ID, and joining goes through invitations with a uniform response (planned, ticket 17a). |
@@ -678,7 +680,7 @@ Decisions are posted asynchronously (buffered, fire-and-forget) to `tenancy-api`
 | Input | Validated with a schema (zod) at the route boundary; document values and comment bodies are bounded strings; IDs are opaque. |
 | Headers | Computed in one place, `packages/auth`, for both kinds of app (ticket 23); the web apps' set and the APIs' set are listed below. |
 | Rate limiting | Zitadel on authentication. App-level limits on the callback, the back-channel logout sink, and mutations are ticket 23a and not built; the sink does bound its request body (8 KiB). |
-| Secrets | Development defaults committed on purpose in `.env` (zero-step start, no `.env.example` and no setup step); labelled insecure, every variable commented; Gitleaks in CI from phase 0. The BFFs' client keys are generated, never committed (§4.4). |
+| Secrets | Development defaults committed on purpose in `.env` (zero-step start, no setup step); labelled insecure, every variable commented; Gitleaks in CI from phase 0. The BFFs' client keys are generated, never committed (§4.4). |
 | Logging | Request IDs everywhere; no tokens, session IDs, or passwords in logs. |
 | Dependencies | Lockfile committed; `pnpm audit` in CI is ticket 25 and not yet in the workflow. |
 | Transport | TLS terminates at Traefik for Zitadel, with a certificate from a development CA that the stack generates at first start (§4.2); the apps are plain HTTP on localhost by design. |
@@ -745,7 +747,7 @@ Whether a Zitadel Action can add the claims to access tokens, which would let th
   - nested organizations through `organization#parent` with `parent->administer` arrows;
   - a `platform` root with `super_admin` for operators who must reach every organization;
   - attribute rules through SpiceDB caveats (time windows, IP ranges, plan tiers).
-- **Another application:** `packages/auth` plus one adapter, one OIDC application registered by bootstrap, one `backchannel_logout_uri`; `tenancy-web` (ticket 17) is the proof of how little that takes: its `lib/auth.ts` is `dashboard-web`'s with the app name and the landing path changed, bootstrap registers it from the same `webAppConfig` with a second URL, and its only other dependency is the HTTP `TenancyClient`; `comments-web` (phase 5) repeats it with a new domain.
+- **Another application:** `packages/auth` plus one adapter, one OIDC application registered by bootstrap with one client key, one `backchannel_logout_uri`; `tenancy-web` (ticket 17) is the proof of how little that takes: its `lib/auth.ts` is `dashboard-web`'s with the app name and the landing path changed, bootstrap registers it from the same `webAppConfig` with a second URL, and its only other dependency is the HTTP `TenancyClient`; `comments-web` (phase 5) repeats it with a new domain.
 - **An API gateway:** Traefik ForwardAuth or Envoy `ext_authz` in front of the APIs, verifying bearer tokens and injecting the subject, so individual services stop validating tokens; configuration, not code. It cannot hold tenant policy (§9.1).
 - **Logout propagation:** the back-channel logout sink is already in every BFF (§4.4); at estate scale it becomes one shared session-status service that every BFF queries, with the IdP notifying one endpoint instead of many.
 - **Multi-region:** SpiceDB on CockroachDB or Spanner for a global relationship store with the same ZedToken semantics; the domain databases partitioned by organization; Redis sessions per region with the session ID carrying its region; the IdP replicated with Zitadel's multi-region guidance. Permission checks stay local to the region that holds the relationships, with `at_least_as_fresh` preventing cross-region staleness from becoming a New Enemy.
