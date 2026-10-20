@@ -1,13 +1,18 @@
+import { createPrivateKey, createPublicKey, generateKeyPairSync } from 'node:crypto';
+
 import { describe, expect, it } from '@jest/globals';
 
 import {
   ensureApiApp,
+  ensureAppKey,
   ensureHumanUser,
   ensureOidcApp,
   ensureProject,
   oidcConfigMatches,
+  toPkcs8Pem,
   type ApiApp,
   type ApiAppConfig,
+  type AppKey,
   type NewHumanUser,
   type OidcApp,
   type OidcAppConfig,
@@ -20,7 +25,7 @@ const desired: OidcAppConfig = {
   responseTypes: ['OIDC_RESPONSE_TYPE_CODE'],
   grantTypes: ['OIDC_GRANT_TYPE_AUTHORIZATION_CODE', 'OIDC_GRANT_TYPE_REFRESH_TOKEN'],
   appType: 'OIDC_APP_TYPE_WEB',
-  authMethodType: 'OIDC_AUTH_METHOD_TYPE_NONE',
+  authMethodType: 'OIDC_AUTH_METHOD_TYPE_PRIVATE_KEY_JWT',
   accessTokenType: 'OIDC_TOKEN_TYPE_JWT',
   idTokenUserinfoAssertion: true,
   // What `webAppConfig` gives a plain-HTTP app URL; an https one gets `devMode: false`.
@@ -34,6 +39,7 @@ class FakeZitadel implements ZitadelApi {
   readonly projects = new Map<string, string>();
   readonly apps = new Map<string, OidcApp>();
   readonly apiApps = new Map<string, ApiApp>();
+  readonly keys = new Map<string, { id: string }[]>();
   readonly users = new Map<string, string>();
   private nextId = 1;
 
@@ -88,6 +94,29 @@ class FakeZitadel implements ZitadelApi {
       }
     }
     this.writes.push(`updateApiAppConfig ${appId}`);
+    return Promise.resolve();
+  }
+
+  listAppKeys(projectId: string, appId: string): Promise<{ id: string }[]> {
+    return Promise.resolve([...(this.keys.get(`${projectId}/${appId}`) ?? [])]);
+  }
+
+  addAppKey(projectId: string, appId: string): Promise<AppKey> {
+    const id = this.id();
+    this.keys.set(`${projectId}/${appId}`, [
+      ...(this.keys.get(`${projectId}/${appId}`) ?? []),
+      { id },
+    ]);
+    this.writes.push(`addAppKey ${appId}`);
+    return Promise.resolve({ keyId: id, privateKeyPem: `pem-${id}` });
+  }
+
+  removeAppKey(projectId: string, appId: string, keyId: string): Promise<void> {
+    this.keys.set(
+      `${projectId}/${appId}`,
+      (this.keys.get(`${projectId}/${appId}`) ?? []).filter(({ id }) => id !== keyId),
+    );
+    this.writes.push(`removeAppKey ${appId} ${keyId}`);
     return Promise.resolve();
   }
 
@@ -151,6 +180,82 @@ describe('ensureOidcApp', () => {
   });
 });
 
+describe('ensureAppKey', () => {
+  it('issues a key to an application without one, and keeps it while the app still holds it', async () => {
+    const api = new FakeZitadel();
+    const first = await ensureAppKey(api, 'p1', 'app-1', undefined);
+    expect(first).toEqual({
+      key: { keyId: '1', privateKeyPem: 'pem-1' },
+      action: 'created',
+      removed: 0,
+    });
+    const second = await ensureAppKey(api, 'p1', 'app-1', first.key);
+    expect(second).toEqual({ key: first.key, action: 'unchanged', removed: 0 });
+    expect(api.writes).toEqual(['addAppKey app-1']);
+  });
+
+  it('replaces a held key Zitadel no longer lists, and removes every other key', async () => {
+    // Fresh volumes with .local/ kept: the handoff names a key of the previous instance.
+    const api = new FakeZitadel();
+    await api.addAppKey('p1', 'app-1');
+    await api.addAppKey('p1', 'app-1');
+    api.writes.length = 0;
+    const result = await ensureAppKey(api, 'p1', 'app-1', {
+      keyId: 'gone',
+      privateKeyPem: 'pem-gone',
+    });
+    expect(result).toEqual({
+      key: { keyId: '3', privateKeyPem: 'pem-3' },
+      action: 'created',
+      removed: 2,
+    });
+    expect(await api.listAppKeys('p1', 'app-1')).toEqual([{ id: '3' }]);
+    expect(api.writes).toEqual(['addAppKey app-1', 'removeAppKey app-1 1', 'removeAppKey app-1 2']);
+  });
+
+  it('with no handoff file, issues a new key and removes the ones of earlier runs', async () => {
+    // .local/ deleted with the volumes kept: the registered key's private half is lost.
+    const api = new FakeZitadel();
+    await api.addAppKey('p1', 'app-1');
+    api.writes.length = 0;
+    const result = await ensureAppKey(api, 'p1', 'app-1', undefined);
+    expect(result).toEqual({
+      key: { keyId: '2', privateKeyPem: 'pem-2' },
+      action: 'created',
+      removed: 1,
+    });
+    expect(api.writes).toEqual(['addAppKey app-1', 'removeAppKey app-1 1']);
+  });
+
+  it('keeps a held key and still removes the others', async () => {
+    const api = new FakeZitadel();
+    const held = await api.addAppKey('p1', 'app-1');
+    await api.addAppKey('p1', 'app-1');
+    api.writes.length = 0;
+    const result = await ensureAppKey(api, 'p1', 'app-1', held);
+    expect(result).toEqual({ key: held, action: 'unchanged', removed: 1 });
+    expect(api.writes).toEqual(['removeAppKey app-1 2']);
+  });
+});
+
+describe('toPkcs8Pem', () => {
+  it('converts the PKCS#1 PEM Zitadel issues to a PKCS#8 one of the same key', () => {
+    const { privateKey, publicKey } = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+    });
+    // No PEM header literals here, so the secret scanner has nothing to match: the input is PKCS#1 by its
+    // generation options, and the output is PKCS#8 when exporting it as PKCS#8 again reproduces it.
+    const pkcs8 = toPkcs8Pem(privateKey);
+    expect(pkcs8).not.toBe(privateKey);
+    expect(createPrivateKey(pkcs8).export({ type: 'pkcs8', format: 'pem' })).toBe(pkcs8);
+    expect(createPublicKey(createPrivateKey(pkcs8)).export({ type: 'spki', format: 'pem' })).toBe(
+      publicKey,
+    );
+  });
+});
+
 describe('ensureApiApp', () => {
   const privateKeyJwt: ApiAppConfig = { authMethodType: 'API_AUTH_METHOD_TYPE_PRIVATE_KEY_JWT' };
 
@@ -184,7 +289,7 @@ describe('oidcConfigMatches', () => {
       postLogoutRedirectUris: desired.postLogoutRedirectUris,
       responseTypes: desired.responseTypes,
       grantTypes: [...desired.grantTypes].reverse(),
-      authMethodType: 'OIDC_AUTH_METHOD_TYPE_NONE',
+      authMethodType: 'OIDC_AUTH_METHOD_TYPE_PRIVATE_KEY_JWT',
       accessTokenType: 'OIDC_TOKEN_TYPE_JWT',
       idTokenUserinfoAssertion: true,
       devMode: true,

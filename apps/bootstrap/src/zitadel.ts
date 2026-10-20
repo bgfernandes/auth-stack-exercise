@@ -1,9 +1,10 @@
 /**
  * The slice of Zitadel's API that bootstrap uses, as plain HTTP calls with the bootstrap machine user's PAT
- * (management API v1 for the project and the application, user API v2 for the seeded users), plus the
- * idempotent "ensure" steps on top of it. The steps take the `ZitadelApi` interface so the unit tests run them
- * against an in-memory fake; `ZitadelClient` is the real implementation.
+ * (management API v1 for the project, the applications, and their keys, user API v2 for the seeded users), plus
+ * the idempotent "ensure" steps on top of it. The steps take the `ZitadelApi` interface so the unit tests run
+ * them against an in-memory fake; `ZitadelClient` is the real implementation.
  */
+import { createPrivateKey } from 'node:crypto';
 
 /** The OIDC settings bootstrap manages, in the JSON shape of the management API. */
 export interface OidcAppConfig {
@@ -40,6 +41,17 @@ export interface ApiApp {
   config: Partial<ApiAppConfig>;
 }
 
+/**
+ * A key of an application registered with private-key JWT client authentication (docs/README.md §4.4): the key
+ * ID, which the client assertion names in its `kid` header, and the private key as a PKCS#8 PEM. Zitadel
+ * generates the pair and returns the private half once, in the response that creates the key; it keeps the
+ * public half only, so what bootstrap hands to the app is the one copy.
+ */
+export interface AppKey {
+  keyId: string;
+  privateKeyPem: string;
+}
+
 export interface NewHumanUser {
   username: string;
   email: string;
@@ -57,6 +69,9 @@ export interface ZitadelApi {
   findApiAppByName(projectId: string, name: string): Promise<ApiApp | undefined>;
   createApiApp(projectId: string, name: string, config: ApiAppConfig): Promise<ApiApp>;
   updateApiAppConfig(projectId: string, appId: string, config: ApiAppConfig): Promise<void>;
+  listAppKeys(projectId: string, appId: string): Promise<{ id: string }[]>;
+  addAppKey(projectId: string, appId: string): Promise<AppKey>;
+  removeAppKey(projectId: string, appId: string, keyId: string): Promise<void>;
   findUserByUsername(username: string): Promise<{ id: string } | undefined>;
   createHumanUser(user: NewHumanUser): Promise<{ id: string }>;
 }
@@ -112,6 +127,39 @@ export async function ensureApiApp(
   }
   await api.updateApiAppConfig(projectId, existing.appId, desired);
   return { appId: existing.appId, clientId: existing.clientId, action: 'updated' };
+}
+
+/**
+ * One key per application, the one the app holds: `held` is the key the previous run wrote to the app's handoff
+ * file, kept when Zitadel still lists it. Otherwise (no handoff file, or a key Zitadel no longer has, as after a
+ * `down -v` with `.local/` kept) a new key is issued, and every key but the one the app holds is removed, since
+ * no one has its private half any more. Runs after `ensureOidcApp`: Zitadel refuses a key on an application
+ * whose auth method is not private-key JWT.
+ */
+export async function ensureAppKey(
+  api: ZitadelApi,
+  projectId: string,
+  appId: string,
+  held: AppKey | undefined,
+): Promise<{ key: AppKey; action: EnsureAction; removed: number }> {
+  const registered = await api.listAppKeys(projectId, appId);
+  const kept = held && registered.some(({ id }) => id === held.keyId) ? held : undefined;
+  const key = kept ?? (await api.addAppKey(projectId, appId));
+  let removed = 0;
+  for (const { id } of registered) {
+    if (id === key.keyId) continue;
+    await api.removeAppKey(projectId, appId, id);
+    removed += 1;
+  }
+  return { key, action: kept ? 'unchanged' : 'created', removed };
+}
+
+/**
+ * Zitadel issues the private key as a PKCS#1 PEM (`BEGIN RSA PRIVATE KEY`); the apps import a PKCS#8 one
+ * (`BEGIN PRIVATE KEY`, the form jose and the Web Crypto API read), so it is converted once, here.
+ */
+export function toPkcs8Pem(privateKeyPem: string): string {
+  return createPrivateKey(privateKeyPem).export({ type: 'pkcs8', format: 'pem' }) as string;
 }
 
 export async function ensureHumanUser(
@@ -241,6 +289,41 @@ export class ZitadelClient implements ZitadelApi {
 
   async updateApiAppConfig(projectId: string, appId: string, config: ApiAppConfig): Promise<void> {
     await this.call('PUT', `/management/v1/projects/${projectId}/apps/${appId}/api_config`, config);
+  }
+
+  async listAppKeys(projectId: string, appId: string): Promise<{ id: string }[]> {
+    const body = await this.call<{ result?: { id: string }[] }>(
+      'POST',
+      `/management/v1/projects/${projectId}/apps/${appId}/keys/_search`,
+      {},
+    );
+    return (body.result ?? []).map(({ id }) => ({ id }));
+  }
+
+  async addAppKey(projectId: string, appId: string): Promise<AppKey> {
+    // No expiry (Zitadel's default, the year 9999): a development stack rotates by deleting the handoff file.
+    // `keyDetails` is base64 JSON: `type`, `keyId`, `key` (the PEM), `appId`, `clientId`.
+    const body = await this.call<{ id: string; keyDetails: string }>(
+      'POST',
+      `/management/v1/projects/${projectId}/apps/${appId}/keys`,
+      { type: 'KEY_TYPE_JSON' },
+    );
+    const details = JSON.parse(Buffer.from(body.keyDetails, 'base64').toString('utf8')) as {
+      keyId?: string;
+      key?: string;
+    };
+    if (details.keyId !== body.id || typeof details.key !== 'string') {
+      throw new Error(`app key ${body.id}: the response carries no matching key details`);
+    }
+    return { keyId: body.id, privateKeyPem: toPkcs8Pem(details.key) };
+  }
+
+  async removeAppKey(projectId: string, appId: string, keyId: string): Promise<void> {
+    await this.call(
+      'DELETE',
+      `/management/v1/projects/${projectId}/apps/${appId}/keys/${keyId}`,
+      undefined,
+    );
   }
 
   async findUserByUsername(username: string): Promise<{ id: string } | undefined> {

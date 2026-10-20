@@ -3,15 +3,21 @@
  * one env file per BFF (sourced by the container entrypoint or loaded by Tilt), one for every API, and
  * seed.json with the seeded users' Zitadel IDs and the IDs of the §6.3 scenario, for the end-to-end tests.
  */
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { parseEnv } from 'node:util';
 
 import { type Scenario } from './seed';
+import { type AppKey } from './zitadel';
 
-/** What a BFF's env file is made of: the client ID Zitadel generated and the public URL it was registered with. */
+/**
+ * What a BFF's env file is made of: the client ID Zitadel generated, the public URL it was registered with, and
+ * the key of its private-key JWT client authentication (docs/README.md §4.4), the one copy of the private half.
+ */
 export interface WebApp {
   clientId: string;
   url: string;
+  key: AppKey;
 }
 
 export interface Handoff {
@@ -32,6 +38,10 @@ export function webAppEnv(app: WebApp, handoff: Handoff): Record<string, string>
   return {
     OIDC_ISSUER: handoff.issuer,
     OIDC_CLIENT_ID: app.clientId,
+    // The credential: the key ID the assertion's `kid` names, and the PKCS#8 PEM as one base64 line, since the
+    // file is sourced by a shell. The file is the one place the private key exists outside the app's memory.
+    OIDC_CLIENT_KEY_ID: app.key.keyId,
+    OIDC_CLIENT_KEY: Buffer.from(app.key.privateKeyPem, 'utf8').toString('base64'),
     OIDC_REDIRECT_URI: `${app.url}/auth/callback`,
     OIDC_POST_LOGOUT_REDIRECT_URI: `${app.url}/`,
     // The app's public URL, for packages/auth: cookie attributes and the same-origin check (ticket 8).
@@ -65,6 +75,28 @@ export function renderEnvFile(values: Record<string, string>): string {
     lines.push(`${key}=${value}`);
   }
   return `${lines.join('\n')}\n`;
+}
+
+/**
+ * The key the previous run handed to a BFF, read back from its env file before the file is rewritten, so a key
+ * Zitadel still lists is carried over rather than replaced (`ensureAppKey`). `undefined` when there is no file
+ * or it names no key; any other failure to read the file propagates.
+ */
+export async function readHeldKey(dir: string, app: string): Promise<AppKey | undefined> {
+  let text: string;
+  try {
+    text = await readFile(path.join(dir, `${app}.env`), 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+  const values = parseEnv(text);
+  const keyId = values.OIDC_CLIENT_KEY_ID;
+  const encoded = values.OIDC_CLIENT_KEY;
+  if (!keyId || !encoded) return undefined;
+  const privateKeyPem = Buffer.from(encoded, 'base64').toString('utf8');
+  if (!privateKeyPem.startsWith('-----BEGIN PRIVATE KEY-----')) return undefined;
+  return { keyId, privateKeyPem };
 }
 
 /** Writes the handoff files, each through a temporary file and a rename so a reader never sees a partial file. */

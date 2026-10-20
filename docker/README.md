@@ -41,6 +41,7 @@ It maps each app hostname to the host gateway so it can call the apps' back-chan
 - writes the SpiceDB schema (`packages/authz/schema.zed`, reporting `created`, `unchanged`, or `updated`);
 - applies the `tenancy` and `documents` migrations (`packages/*/migrations`, copied into its image; `TENANCY_DATABASE_URL`, `DOCUMENTS_DATABASE_URL`);
 - then, with `bootstrap.pat`, creates the Zitadel project, the `dashboard-web` and `tenancy-web` applications (reconciling their settings when they differ), and the `tenancy-api` and `dashboard-api` API applications;
+- issues each BFF the one key of its private-key JWT client authentication (ticket 4a): Zitadel generates the pair and returns the private half once, which goes into the app's env file; a run that finds the key of the previous run in that file and still registered keeps it, otherwise it issues a new one, and every other key of the application is removed;
 - grants `dashboard-web` the scopes of both APIs and `tenancy-web` those of `tenancy-api` plus `documents:write` in SpiceDB (`packages/client-scopes`);
 - seeds `alice`, `bob`, `carol` in Zitadel and the Acme scenario of `docs/README.md` §6.3 (the organization and its roles through `packages/tenancy`, the projects, documents, and shares through `packages/documents`, every relationship TOUCHed on each run);
 - and writes the apps' configuration to `/config`.
@@ -49,11 +50,11 @@ It is idempotent. The reviewer path's `up` runs it before the apps, which depend
 
 `dashboard-web`: the back-channel logout sink is the one Zitadel posts to when the IdP session ends (ticket 18); the protected `/dashboard` listing and the edit flow are tickets 9 and 11; every documents operation is an HTTP call to `dashboard-api` with the user's token (ticket 19). Every login provisions the user's personal workspace (ticket 10: `tenancy-api` for the user and the personal organization, then `dashboard-api` for the "Personal" project).
 
-Its entrypoint sources `/config/dashboard-web.env` (OIDC issuer, client ID, redirect URIs, `APP_URL`, `DASHBOARD_API_URL`, `TENANCY_API_URL`) before starting, and `SESSION_SECRET` and `REDIS_URL` come from `.env` through the service's environment. No database and no SpiceDB connection.
+Its entrypoint sources `/config/dashboard-web.env` (OIDC issuer, client ID, client key, redirect URIs, `APP_URL`, `DASHBOARD_API_URL`, `TENANCY_API_URL`) before starting, and `SESSION_SECRET` and `REDIS_URL` come from `.env` through the service's environment. No database and no SpiceDB connection.
 
 `tenancy-web`: the organization page holds the members with role controls for administrators and the sign-in policy form; every read and write is an HTTP call to `tenancy-api` with the user's token, and the login's one documents call (the personal workspace, ticket 19) goes to `dashboard-api`; its sessions in `redis` are under its own prefix and cookie name.
 
-Its entrypoint sources `/config/tenancy-web.env` (OIDC issuer, client ID, redirect URIs, `APP_URL`, `DASHBOARD_API_URL`, `TENANCY_API_URL`) before starting, and `SESSION_SECRET` and `REDIS_URL` come from `.env`. No database and no SpiceDB connection.
+Its entrypoint sources `/config/tenancy-web.env` (OIDC issuer, client ID, client key, redirect URIs, `APP_URL`, `DASHBOARD_API_URL`, `TENANCY_API_URL`) before starting, and `SESSION_SECRET` and `REDIS_URL` come from `.env`. No database and no SpiceDB connection.
 
 `tenancy-api`: one bundled file, its entrypoint sources `/config/apis.env` before starting; `dashboard-web`, `tenancy-web`, and `dashboard-api` depend on it.
 
@@ -100,14 +101,14 @@ The first-instance admin is `ZITADEL_ADMIN_USERNAME` in `.env`. Zitadel suffixes
   - and `traefik.yml` (Traefik's dynamic TLS configuration).
   - Read-write in `tls`, read-only in `proxy`, bootstrap, and every app; the keys are mode 600 and the certificates 644, so an app container, which runs as `node`, reads the CA alone, and a Linux CI runner reads it for `curl --cacert`.
 - Bind mount `./.local/config/` (gitignored), mounted at `/config`: the files the bootstrap container generates:
-  - `dashboard-web.env` and `tenancy-web.env` (per BFF: OIDC issuer, client ID, redirect URIs, `APP_URL`, `DASHBOARD_API_URL`, `TENANCY_API_URL`);
+  - `dashboard-web.env` and `tenancy-web.env` (per BFF: OIDC issuer, client ID, the client key as `OIDC_CLIENT_KEY_ID` and `OIDC_CLIENT_KEY`, a PKCS#8 PEM on one base64 line, redirect URIs, `APP_URL`, `DASHBOARD_API_URL`, `TENANCY_API_URL`); the key line is the one copy of the private key, which Zitadel does not keep;
   - `apis.env` (issuer, project ID as the audience, JWKS URL, userinfo URL; sourced by every API);
   - and `seed.json` (the Zitadel user IDs of the seeded users, the fixed ID of the seeded organization, and those of its projects and documents by their §6.3 labels, for the end-to-end tests).
   - Read-write in `bootstrap`, read-only in every app; a Tilt-run process on the host reads the same directory.
-  - Bootstrap runs as root so it can write the directory on a Linux host, where Docker creates it root-owned on a clean checkout; the files it writes are therefore root-owned there (world-readable, mode 644).
+  - Bootstrap runs as root so it can write the directory on a Linux host, where Docker creates it root-owned on a clean checkout; the files it writes are therefore root-owned there (world-readable, mode 644), the BFFs' env files with their client keys included, since the app containers read them as `node`. A development-stack trade-off, listed in the root README.
 
 ## Resetting
 
-`docker compose --profile apps down -v` removes the volumes, so the next `up` reinitializes Postgres (the init script runs again), Zitadel (a new instance, new PATs), SpiceDB, and Redis from scratch, and bootstrap registers everything again with new IDs (`./.local/config/` is overwritten).
+`docker compose --profile apps down -v` removes the volumes, so the next `up` reinitializes Postgres (the init script runs again), Zitadel (a new instance, new PATs), SpiceDB, and Redis from scratch, and bootstrap registers everything again with new IDs and new client keys (`./.local/config/` is overwritten).
 
-Under Tilt, `tilt down` keeps the volumes; `tilt down --delete-volumes` is the equivalent. `./.local/tls/` is a bind mount, so neither removes it and the CA survives a reset; deleting `.local/` makes the next start generate a new CA, which a browser that imported the old one has to import again.
+Under Tilt, `tilt down` keeps the volumes; `tilt down --delete-volumes` is the equivalent. `./.local/tls/` is a bind mount, so neither removes it and the CA survives a reset; deleting `.local/` makes the next start generate a new CA, which a browser that imported the old one has to import again, and new client keys, the registered ones being removed. A BFF container that was running when its key was replaced holds the old key until it restarts, which `up` does for the apps that depend on bootstrap.
