@@ -72,6 +72,8 @@ Zitadel owns credentials, the identity provider session, and token issuance; the
 
 Authorization code with PKCE (`S256`), `state` and `nonce` kept in a signed, short-lived cookie, the ID token validated by `openid-client`, the session created server-side with the claims the app needs (`sub`, `sid`, `auth_time`, `amr`), and a just-in-time provisioning call that creates the user's record and personal workspace, idempotently, on the first login from any app.
 
+The web apps are confidential clients: the code exchange, every refresh, and the revocation at logout authenticate with a private-key JWT signed with a key Zitadel issued and bootstrap handed over, on top of PKCE. [§4.4](docs/README.md#44-login-flow-what-packagesauth-implements).
+
 The authorization request carries `max_age` equal to the session's absolute lifetime, so a stale identity-provider login is re-authenticated rather than accepted.
 
 Logout deletes the session, revokes the refresh and access tokens at Zitadel (verified end to end: the refresh token is refused afterwards), and ends the Zitadel session too. Zitadel notifies every application of a sign-out through back-channel logout tokens, which each app validates and acts on.
@@ -112,6 +114,7 @@ docker-compose.yml, Tiltfile, .env (committed development defaults), .github/wor
 
 - **An identity provider rather than hand-rolled authentication.** Password storage, recovery, MFA, lockout, and verification are Zitadel's; the apps are OpenID Connect clients. The depth of the authentication work is in the client and session handling, not in a password table. Zitadel over Kratos + Hydra (one binary with a login UI, organizations, external-IdP brokering, a full management API) and over Keycloak (heavier). [§2](docs/README.md#2-approach-in-one-sentence), [§4.1](docs/README.md#41-why-zitadel).
 - **OIDC for first-party apps, from day one.** A single first-party app does not strictly need OAuth, but an identity layer conceived without token audiences, scopes, and client registration is painful to retrofit when the first machine client or partner integration arrives. [§2](docs/README.md#2-approach-in-one-sentence).
+- **The web apps are confidential clients.** A server-side BFF runs where users cannot read its credentials (RFC 6749 §2.1), so it authenticates at the token endpoint with a private-key JWT, the method the APIs use, with PKCE kept: PKCE binds the authorization code to the login attempt, client authentication binds every token-endpoint call to the application. Zitadel issues the key and bootstrap hands it to the app. [§4.4](docs/README.md#44-login-flow-what-packagesauth-implements).
 - **SpiceDB over OpenFGA**, for its consistency model: a snapshot token with four explicit levels, instead of a flag. The project's consistency section is where that choice earns its place. Relationships are the only source of truth for roles; nothing stores a role in Postgres. [§6.1](docs/README.md#61-why-spicedb), [§7](docs/README.md#7-consistency-zedtokens-and-the-new-enemy-problem).
 - **Tenancy as its own service.** Organizations, users, and policy are needed by every domain, so they live in a higher-order service the domains call, with its own database and its own front-end, rather than in whichever domain happened to need them first. [§3.1](docs/README.md#31-components-and-ownership).
 - **Policies enforced by the apps, not the identity provider.** One account can belong to several organizations with different sign-in requirements, and the IdP cannot know at login which one a session will touch (the GitHub organizations model), so a tenant's floors are evaluated when a request touches its resources, with step-up re-authentication as the remedy.
@@ -210,6 +213,7 @@ Stated in full because the exercise asked for them. Each is deliberate; the reas
 **Trade-offs taken on purpose.**
 
 - Development secrets are committed in `.env` (Zitadel master key, admin password, SpiceDB preshared key, session secret, database passwords) so the stack starts with no setup step; every value is labelled insecure and a real deployment injects them from a secret store. The infrastructure ports are published on the loopback interface only. [§9](docs/README.md#9-security-posture-the-configuration-profile).
+- Each web app's OIDC client key (the credential of its private-key JWT client authentication) lives in its generated, gitignored handoff file under `.local/config/`, world-readable because bootstrap writes it as root and the app container reads it as `node`. A deployment hands the key to the app from a secret store instead. [§4.4](docs/README.md#44-login-flow-what-packagesauth-implements).
 - The bootstrap container runs every package's database migrations before seeding, because the apps start after it; the migrations stay owned by their packages, bootstrap only executes them. [§3.1](docs/README.md#31-components-and-ownership).
 - APIs validate access tokens locally, so a token revoked at Zitadel is accepted until it expires, at most 10 minutes; introspection would close the window at a call per request. [§4.4](docs/README.md#44-login-flow-what-packagesauth-implements).
 - Listings are served from SpiceDB's cached snapshot (`minimize_latency`), so a share or a revocation can take a few seconds to show on a dashboard; content reads are exact per row through the stored snapshot token. A listing right after your own write is exact because the dashboard asks for a listing at least as fresh as the row you wrote. [§7.3](docs/README.md#73-the-design-a-token-stored-with-every-piece-of-content-levels-chosen-per-operation).
@@ -225,16 +229,14 @@ Stated in full because the exercise asked for them. Each is deliberate; the reas
 
 **Gaps, with the ticket that specifies the work.**
 
-- **The web apps are registered as public OIDC clients** (PKCE, no client authentication) although a server-side BFF is a confidential client by definition and holds refresh tokens. What protects them today is Zitadel's refresh-token rotation and the server-side session store.
-  - The fix is additive, private-key JWT client authentication with the credential handed over by bootstrap, and is ticket 4a.
-  - Found by an independent review on 2026-10-19; the design had specified PKCE and never named the client authentication method.
 - **No document creation.** Documents come only from the seeds and from provisioning; the schema has no creation permission below the organization. Ticket 19b.
 - **Sign-in policies are stored, not enforced.** The policy form in `tenancy-web` (require MFA, maximum login age, required identity provider) writes to tenancy; nothing reads it yet, so ticking "require MFA" changes nothing at login. The `requireAuthContext` helper and the step-up flow are ticket 24.
 - **No invitations.** Joining an organization is by seed or by an administrator changing an existing member's role; the uniform-response invitation flow of [§6.8](docs/README.md#68-discovery-and-invitations) is ticket 17a. Self-registration accepts an unverified email address, so the invitation flow must require a verified email before it matches an invitee by address.
 - **A missed back-channel logout is not backed up.** If a logout token never arrives (the app was down), the session lives until its idle or absolute limit, and Zitadel keeps honouring the refresh token after `end_session` (observed); re-validation of the identity-provider session on an interval is ticket 20a.
 - **No audit log of authorization decisions.** Ticket 22.
 - **No rate limits** on the APIs' mutations, the login callback, or the back-channel sink (which does bound its request body). Ticket 23a.
-- **The session's tokens are stored in plaintext.** The store holds `accessToken`, `refreshToken`, and `idToken` as they are, so whoever can read Redis (a dump, a backup, a replica, an operator) holds every live user's refresh token; Redis authentication and TLS do not change that. The fix is envelope encryption of the token fields inside `packages/auth`, with a dedicated key and a key id for rotation, so a copy of the store alone is useless. Ticket 8d; it pairs with ticket 4a, after which a leaked refresh token also needs the client's credential.
+- **The session's tokens are stored in plaintext.** The store holds `accessToken`, `refreshToken`, and `idToken` as they are, so whoever can read Redis (a dump, a backup, a replica, an operator) holds every live user's refresh token; Redis authentication and TLS do not change that. The fix is envelope encryption of the token fields inside `packages/auth`, with a dedicated key and a key id for rotation, so a copy of the store alone is useless. Ticket 8d.
+  - Since ticket 4a a leaked refresh token also needs the client's key, which is in the app's handoff file, not in Redis.
 - **Session claims are not re-read after a token refresh** (`sid`, `auth_time`, `amr`), which matters only if the provider rotates `sid` on re-authentication.
   - The refresh lock is per process, so two instances behind a balancer could race the rotation.
   - A refresh that Zitadel refuses ends in an error page rather than a login, because Zitadel answers a revoked refresh token with `invalid_request` where RFC 6749 [§5.2](docs/README.md#52-documents-domain-packagesdocuments-database-documents) prescribes `invalid_grant`, the code the app treats as "session over". Tickets 8a and 8b.
@@ -287,7 +289,7 @@ Tickets in their intended order of implementation; numbers are stable identifier
 | 20 | Single sign-on and sign-out end to end | Done |
 | 19b | Document creation | Open |
 | 17a | Invitations with a uniform response | Open |
-| 4a | Confidential clients: private-key JWT client authentication | Open |
+| 4a | Confidential clients: private-key JWT client authentication | Done |
 
 ### Phase 3, consistency and audit
 

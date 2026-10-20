@@ -2,13 +2,23 @@
  * An in-process OpenID Provider for the unit tests (`@auth-stack/auth/testing`): served to `openid-client`
  * through its `customFetch` hook, so no socket and no interception library. Discovery, JWKS, the token
  * endpoint (code exchange with PKCE, refresh with rotation), and the revocation endpoint (RFC 7009) behave like
- * Zitadel's as far as the package relies on them; the browser leg of the flow is `authorize()`, which plays the
- * user logging in and returns the callback URL. Knobs force the failure paths: a wrong nonce, a tampered issuer,
- * a refused refresh, a revocation endpoint that is down.
+ * Zitadel's as far as the package relies on them, the client's authentication included: the OP holds the public
+ * half of one client key and admits a request to those endpoints only with a valid `private_key_jwt` assertion
+ * naming it; the browser leg of the flow is `authorize()`, which plays the user logging in and returns the
+ * callback URL. Knobs force the failure paths: a wrong nonce, a tampered issuer, a refused refresh, a revocation
+ * endpoint that is down.
  */
 import { createHash, randomBytes } from 'node:crypto';
 
-import { exportJWK, generateKeyPair, SignJWT, type JWK } from 'jose';
+import {
+  errors as joseErrors,
+  exportJWK,
+  exportPKCS8,
+  generateKeyPair,
+  jwtVerify,
+  SignJWT,
+  type JWK,
+} from 'jose';
 
 import type { ServerMetadata } from 'openid-client';
 
@@ -58,10 +68,23 @@ export interface IdTokenOverrides {
   auth_time?: number | undefined;
 }
 
+/** Where a client assertion was presented, and the key it named (Zitadel requires the `kid`). */
+export interface ClientAssertion {
+  endpoint: 'token' | 'revoke';
+  kid: string | undefined;
+}
+
 export interface FakeOp {
   issuer: string;
   metadata: ServerMetadata;
   fetch: FakeFetch;
+  /**
+   * The one key registered for the client, as bootstrap hands it to an app: what a client's config carries as
+   * `clientKey`. A client signing with any other key is refused with `invalid_client`.
+   */
+  clientKey: { kid: string; pem: string };
+  /** Every client assertion the OP accepted, in order; a request without a valid one is not served. */
+  readonly clientAssertions: ClientAssertion[];
   /** The user's login at the OP: records the request, returns the callback URL (`redirect_uri?code&state`). */
   authorize(authorizationUrl: URL, user: FakeUser): URL;
   /** The OP answers the callback with an error instead of a code. */
@@ -111,7 +134,12 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
   const issuer = options.issuer ?? 'https://op.test';
   const { clientId, projectId } = options;
   const accessTokenSeconds = options.accessTokenSeconds ?? 600;
-  const [rsa, ec] = await Promise.all([generateKeyPair('RS256'), generateKeyPair('ES256')]);
+  const [rsa, ec, client] = await Promise.all([
+    generateKeyPair('RS256'),
+    generateKeyPair('ES256'),
+    generateKeyPair('RS256', { extractable: true }),
+  ]);
+  const clientKey = { kid: `${clientId}-key-1`, pem: await exportPKCS8(client.privateKey) };
   const jwk: JWK = {
     ...(await exportJWK(rsa.publicKey)),
     kid: 'test-key',
@@ -135,13 +163,15 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
     response_types_supported: ['code'],
     code_challenge_methods_supported: ['S256'],
     id_token_signing_alg_values_supported: ['RS256'],
-    token_endpoint_auth_methods_supported: ['none'],
+    token_endpoint_auth_methods_supported: ['private_key_jwt'],
+    token_endpoint_auth_signing_alg_values_supported: ['RS256'],
   };
 
   const codes = new Map<string, PendingCode>();
   const refreshTokens = new Map<string, FakeUser>();
   const grants = { authorization_code: 0, refresh_token: 0 };
   const revocations: { token: string; tokenTypeHint: string | null }[] = [];
+  const clientAssertions: ClientAssertion[] = [];
   let revocationStatus: number | undefined;
   let tamper: IdTokenOverrides | undefined;
 
@@ -208,9 +238,49 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
     );
   }
 
+  /**
+   * The client's authentication, as Zitadel checks it (RFC 7523 §3; OpenID Connect Core 1.0 §9): the
+   * `jwt-bearer` assertion type, a signature by the registered key, `iss` and `sub` the client ID, `aud` the
+   * issuer, `exp` and `jti` present, and a `kid` header naming the key. `undefined` when it passes, else the
+   * refusal, `invalid_client` (RFC 6749 §5.2).
+   */
+  async function authenticateClient(
+    form: URLSearchParams,
+    endpoint: ClientAssertion['endpoint'],
+  ): Promise<Response | undefined> {
+    const refused = (description: string) =>
+      json({ error: 'invalid_client', error_description: description }, 401);
+    if (form.get('client_id') !== clientId) return refused('unknown client');
+    if (
+      form.get('client_assertion_type') !== 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+    ) {
+      return refused('empty client assertion');
+    }
+    try {
+      const { protectedHeader } = await jwtVerify(
+        form.get('client_assertion') ?? '',
+        client.publicKey,
+        {
+          algorithms: ['RS256'],
+          issuer: clientId,
+          subject: clientId,
+          audience: issuer,
+          requiredClaims: ['exp', 'jti'],
+        },
+      );
+      if (protectedHeader.kid !== clientKey.kid) return refused('invalid assertion');
+      clientAssertions.push({ endpoint, kid: protectedHeader.kid });
+    } catch (error) {
+      if (error instanceof joseErrors.JOSEError) return refused('invalid assertion');
+      throw error;
+    }
+    return undefined;
+  }
+
   async function token(request: { body?: unknown }): Promise<Response> {
     const form = formOf(request);
-    if (form.get('client_id') !== clientId) return json({ error: 'invalid_client' }, 401);
+    const refused = await authenticateClient(form, 'token');
+    if (refused) return refused;
     const grantType = form.get('grant_type');
     if (grantType === 'authorization_code') {
       grants.authorization_code += 1;
@@ -238,9 +308,10 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
   }
 
   /** RFC 7009 §2: the client's own authentication, then `200` whether or not the token was known (§2.2). */
-  function revoke(request: { body?: unknown }): Response {
+  async function revoke(request: { body?: unknown }): Promise<Response> {
     const form = formOf(request);
-    if (form.get('client_id') !== clientId) return json({ error: 'invalid_client' }, 401);
+    const refused = await authenticateClient(form, 'revoke');
+    if (refused) return refused;
     const token = form.get('token');
     if (!token) return json({ error: 'invalid_request' }, 400);
     if (revocationStatus !== undefined) return json({ error: 'server_error' }, revocationStatus);
@@ -263,6 +334,8 @@ export async function createFakeOp(options: FakeOpOptions): Promise<FakeOp> {
     issuer,
     metadata,
     fetch,
+    clientKey,
+    clientAssertions,
     authorize(authorizationUrl, user) {
       const params = authorizationUrl.searchParams;
       const redirectUri = params.get('redirect_uri');

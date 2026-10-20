@@ -485,7 +485,23 @@ Split from ticket 13a on 2026-10-19. A third stack job in `ci.yml`, proving the 
 
 **Tests:** bootstrap reconciliation (key present, key missing, handoff missing); `packages/auth` with the fake OP verifying the `client_assertion`; the existing end-to-end suites.
 
-**Status:** Open (found 2026-10-19 by the 2026-10-19 review).
+> **2026-10-20 (specified):** Probed on the running stack (Zitadel v4.19.4) before the design questions. `AddAppKeyRequest` has no public-key field (its proto: `project_id`, `app_id`, `type`, `expiration_date`): Zitadel generates the RSA 2048 pair and returns the private half once, as a PKCS#1 PEM inside the base64 `keyDetails` of the creating response, and `GET .../keys/{id}` returns no key material afterwards. So "generate the key pair in bootstrap" became "bootstrap asks Zitadel for one and keeps what it returned".
+>
+> A key cannot be added to an application whose auth method is `NONE` (`COMMAND-Dff54`), and the method flips to `PRIVATE_KEY_JWT` in place, the client ID unchanged. At the token endpoint the assertion needs a `kid` header and `aud` equal to the issuer (the token endpoint URL is refused), and a request without an assertion is refused with `invalid_client` before the grant is looked at.
+>
+> Four choices by the maintainer, each the recommended option: the key lives in the app's existing handoff file (`OIDC_CLIENT_KEY_ID`, `OIDC_CLIENT_KEY`, the PKCS#8 PEM on one base64 line, so the file keeps its shape for the entrypoint and for Tilt) rather than a separate key file; no expiry on the development stack (Zitadel's default), rotation being the removal of the handoff file; the file stays world-readable (bootstrap writes as root, the app container reads as `node`), recorded under the root README's trade-offs; and the key is required by `packages/auth`, with no public-client mode, the revocation suite signing its own assertion and gaining a negative control.
+
+> **2026-10-20 (built):** As specified. Bootstrap: `ensureAppKey` runs after `ensureOidcApp` for each BFF, reads the key of the previous run back from the app's env file (`readHeldKey`), keeps it when Zitadel still lists it, otherwise adds a key (converted to PKCS#8 on receipt, `toPkcs8Pem`), and removes every other key of the application; the log line `application_key` carries the key ID, the action, and the count removed, never the key.
+>
+> `packages/auth`: `OidcClientConfig.clientKey` is required, `configure()` imports it once per client (jose `importPKCS8`, not extractable) into `openid-client`'s `PrivateKeyJwt`, which signs a one-minute RS256 assertion with the `kid` on the code exchange, every refresh, and every revocation; `authOptionsFromEnv` decodes and parses `OIDC_CLIENT_KEY` at startup and refuses a non-RSA or malformed value without repeating it. The fake OP holds one client key, advertises `private_key_jwt`, refuses both endpoints without a valid assertion (signature, `iss`, `sub`, `aud`, `exp`, `jti`, and the `kid`), and records the assertions it accepted.
+>
+> Tests: four reconciliation cases and the PKCS#8 conversion in bootstrap, the handoff read-back, the env contract's key cases, and in the client the three assertions of a login, refresh, and revocation and the `invalid_client` refusal of a wrong key; 265 unit tests. The revocation suite signs its assertion from the handoff key with `node:crypto` and first sends the same refresh without it, which Zitadel refuses with `invalid_client`.
+>
+> Verified on the compose stack over the existing volumes (the upgrade path): `docker compose --profile apps up -d --wait --build` with bootstrap logging both applications `updated` and a key `created` for each, the handoff files carrying the two new lines, both suites green (9 and 2); a second bootstrap run `unchanged` with `removed: 0` for both keys; then the rotation path, `dashboard-web.env` removed and bootstrap re-run, `created` with `removed: 1`, the restarted app logging in and the revocation specs passing under the new key. Then under Tilt on the same volumes (ticket 13a's path): bootstrap `unchanged` for both keys, `pnpm test:integration` 75 passed, `pnpm test:e2e:tilt` 9 and 2 passed. Last, the reviewer's first start, in a throwaway compose project on empty volumes (`docker compose -p 4a-fresh --profile apps up -d --wait --build`): every application and key `created` with `removed: 0`, and both suites green against it (9 and 2).
+>
+> Not done here: the running app containers keep the old key in memory when bootstrap replaces it, so a rotation needs the apps restarted, which the reviewer path's `up` does and `docker/README.md` says.
+
+**Status:** Done (2026-10-20).
 
 ---
 

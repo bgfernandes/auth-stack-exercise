@@ -3,9 +3,18 @@
  * code with PKCE `S256` (RFC 7636), `state` and `nonce` bound to the login attempt through the stash, ID-token
  * validation (`iss`, `aud`, `exp`, `nonce`, signature against JWKS) by the library, refresh through the refresh
  * token, token revocation (RFC 7009) at logout, the RP-initiated logout URL, and the validation of a back-channel
- * logout token against the same JWKS. Discovery runs once per process and issuer.
+ * logout token against the same JWKS. The BFF is a confidential client: every call to the token and revocation
+ * endpoints authenticates with a private-key JWT (RFC 7523 §2.2, `private_key_jwt` of OpenID Connect Core 1.0
+ * §9), a one-minute assertion signed with the key bootstrap handed over, its `kid` naming the key at the OP.
+ * Discovery runs once per process and issuer.
  */
-import { createRemoteJWKSet, customFetch, errors as joseErrors, jwtVerify } from 'jose';
+import {
+  createRemoteJWKSet,
+  customFetch,
+  errors as joseErrors,
+  importPKCS8,
+  jwtVerify,
+} from 'jose';
 import * as oidc from 'openid-client';
 
 import { CLOCK_TOLERANCE_SECONDS } from './bearer';
@@ -20,8 +29,14 @@ export type OidcFetch = NonNullable<oidc.Configuration[typeof oidc.customFetch]>
 export interface OidcClientConfig {
   /** The issuer URL, as discovery and the tokens' `iss` state it. */
   issuer: string;
-  /** A public client (PKCE, no secret), as bootstrap registers the web applications. */
+  /** The client ID bootstrap registered the web application with. */
   clientId: string;
+  /**
+   * The client's own key, for the assertions of `private_key_jwt`: the key ID Zitadel issued, which the
+   * assertion's `kid` header names, and the private key as a PKCS#8 PEM (bootstrap's handoff file, decoded by
+   * `authOptionsFromEnv`). Imported once per client; it never leaves the process in any form.
+   */
+  clientKey: { kid: string; pem: string };
   /** The registered redirect URI; always what the token request carries, never the host the server saw. */
   redirectUri: string;
   /** The registered post-logout redirect URI. */
@@ -85,8 +100,8 @@ export interface OidcClient {
   refresh(refreshToken: string): Promise<TokenSet>;
   /**
    * Revokes a token at the issuer's `revocation_endpoint` (RFC 7009 §2.1), with the client's own authentication
-   * (`client_id` alone for the public clients bootstrap registers). Throws `AuthError('revocation_failed')`,
-   * also when the issuer publishes no revocation endpoint; the server's answer on an unknown token is a success
+   * (the private-key JWT assertion, as at the token endpoint). Throws `AuthError('revocation_failed')`, also
+   * when the issuer publishes no revocation endpoint; the server's answer on an unknown token is a success
    * (§2.2), so a token already gone does not fail.
    */
   revoke(token: string, tokenTypeHint: TokenTypeHint): Promise<void>;
@@ -119,12 +134,17 @@ async function configure(
   // The leeway on the ID token's `exp`, `iat`, and `auth_time` is the one the bearer and logout-token verifiers
   // give, pinned rather than left to the library's default so the three cannot drift apart.
   const clientMetadata = { [oidc.clockTolerance]: CLOCK_TOLERANCE_SECONDS };
+  // RS256, the one algorithm Zitadel accepts for the assertion; the key is not extractable.
+  const clientAuth = oidc.PrivateKeyJwt({
+    key: await importPKCS8(config.clientKey.pem, 'RS256'),
+    kid: config.clientKey.kid,
+  });
   if (options.serverMetadata) {
     const configuration = new oidc.Configuration(
       options.serverMetadata,
       config.clientId,
       clientMetadata,
-      oidc.None(),
+      clientAuth,
     );
     if (insecure) oidc.allowInsecureRequests(configuration);
     if (options.fetch) configuration[oidc.customFetch] = options.fetch;
@@ -134,7 +154,7 @@ async function configure(
   let pending = configurations.get(key);
   if (!pending) {
     pending = oidc
-      .discovery(new URL(config.issuer), config.clientId, clientMetadata, oidc.None(), {
+      .discovery(new URL(config.issuer), config.clientId, clientMetadata, clientAuth, {
         // The issuer is plain http inside compose; the library refuses that unless told otherwise.
         execute: insecure ? [oidc.allowInsecureRequests] : [],
         ...(options.fetch ? { [oidc.customFetch]: options.fetch } : {}),

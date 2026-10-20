@@ -42,6 +42,7 @@ describe('back-channel logout against Redis', () => {
       {
         issuer: op.issuer,
         clientId: CLIENT_ID,
+        clientKey: op.clientKey,
         redirectUri: 'https://app.test/auth/callback',
         postLogoutRedirectUri: 'https://app.test/',
       },

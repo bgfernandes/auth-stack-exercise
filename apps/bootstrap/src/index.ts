@@ -1,7 +1,8 @@
 /**
  * Bootstrap (ticket 4): a one-shot, idempotent configuration of the stack. It writes the SpiceDB schema
  * (ticket 6), runs the service packages' database migrations (ticket 7), creates the single Zitadel project,
- * the dashboard-web and tenancy-web applications, and the tenancy-api and dashboard-api API applications,
+ * the dashboard-web and tenancy-web applications with one client-authentication key each (ticket 4a), and the
+ * tenancy-api and dashboard-api API applications,
  * grants the first-party clients the scopes of the APIs they call (§6.7, tickets 16, 17, and 19a), seeds the users of
  * docs/README.md §6.3 in Zitadel and the
  * Acme scenario in the tenancy and documents databases and SpiceDB (ticket 12), and writes the handoff files
@@ -26,11 +27,12 @@ import { schema as documentsSchema, seedDocuments } from '@auth-stack/documents'
 import { DOCUMENTS_API_SCOPES } from '@auth-stack/documents/client';
 import { schema as tenancySchema, seedOrganization, TENANCY_API_SCOPES } from '@auth-stack/tenancy';
 
-import { writeHandoff, type Handoff } from './handoff';
+import { readHeldKey, writeHandoff, type Handoff, type WebApp } from './handoff';
 import { log, logError } from './log';
 import { ACME, acmeSeeds, SEED_USERS } from './seed';
 import {
   ensureApiApp,
+  ensureAppKey,
   ensureHumanUser,
   ensureOidcApp,
   ensureProject,
@@ -59,8 +61,9 @@ function stripTrailingSlash(url: string): string {
 }
 
 /**
- * A web application (a BFF), PKCE without a secret, JWT access tokens, userinfo claims in the ID token (§4.2,
- * §4.4): the same shape for every BFF, which is the point of the second one (§10, "another application").
+ * A web application (a BFF): a confidential client authenticating with a private-key JWT (RFC 7523; the key is
+ * `ensureAppKey`'s) and PKCE, JWT access tokens, userinfo claims in the ID token (§4.2, §4.4): the same shape
+ * for every BFF, which is the point of the second one (§10, "another application").
  */
 export function webAppConfig(publicUrl: string): OidcAppConfig {
   return {
@@ -69,7 +72,7 @@ export function webAppConfig(publicUrl: string): OidcAppConfig {
     responseTypes: ['OIDC_RESPONSE_TYPE_CODE'],
     grantTypes: ['OIDC_GRANT_TYPE_AUTHORIZATION_CODE', 'OIDC_GRANT_TYPE_REFRESH_TOKEN'],
     appType: 'OIDC_APP_TYPE_WEB',
-    authMethodType: 'OIDC_AUTH_METHOD_TYPE_NONE',
+    authMethodType: 'OIDC_AUTH_METHOD_TYPE_PRIVATE_KEY_JWT',
     accessTokenType: 'OIDC_TOKEN_TYPE_JWT',
     idTokenUserinfoAssertion: true,
     // Allows an http:// redirect URI on a host other than localhost (ticket 3). Only while the app is served
@@ -168,15 +171,23 @@ async function configure(authz: Authz): Promise<void> {
   log('project', { name: PROJECT_NAME, id: project.id, action: project.action });
 
   const webApps = { dashboardWeb: dashboardWebUrl, tenancyWeb: tenancyWebUrl };
-  const clients = {} as Record<keyof typeof webApps, { clientId: string; url: string }>;
-  for (const [key, name] of [
+  const clients = {} as Record<keyof typeof webApps, WebApp>;
+  for (const [app, name] of [
     ['dashboardWeb', DASHBOARD_WEB_APP],
     ['tenancyWeb', TENANCY_WEB_APP],
   ] as const) {
-    const url = webApps[key];
-    const app = await ensureOidcApp(api, project.id, name, webAppConfig(url));
-    log('application', { name, id: app.appId, action: app.action });
-    clients[key] = { clientId: app.clientId, url };
+    const url = webApps[app];
+    const registered = await ensureOidcApp(api, project.id, name, webAppConfig(url));
+    log('application', { name, id: registered.appId, action: registered.action });
+    // The key the app holds comes from the handoff file of the previous run; the file is rewritten below.
+    const { key, action, removed } = await ensureAppKey(
+      api,
+      project.id,
+      registered.appId,
+      await readHeldKey(configDir, name),
+    );
+    log('application_key', { name, keyId: key.keyId, action, removed });
+    clients[app] = { clientId: registered.clientId, url, key };
   }
 
   for (const name of [TENANCY_API_APP, DASHBOARD_API_APP]) {

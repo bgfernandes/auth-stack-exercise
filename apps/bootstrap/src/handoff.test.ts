@@ -1,18 +1,37 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 
-import { apisEnv, renderEnvFile, webAppEnv, writeHandoff, type Handoff } from './handoff';
+import {
+  apisEnv,
+  readHeldKey,
+  renderEnvFile,
+  webAppEnv,
+  writeHandoff,
+  type Handoff,
+} from './handoff';
+
+/** A PKCS#8 PEM in shape only; the newlines are what the base64 line is for. */
+const PEM = '-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----\n';
+const PEM_BASE64 = Buffer.from(PEM).toString('base64');
 
 const handoff: Handoff = {
   issuer: 'https://auth.localtest.me:8443',
   jwksUrl: 'https://auth.localtest.me:8443/oauth/v2/keys',
   userinfoUrl: 'https://auth.localtest.me:8443/oidc/v1/userinfo',
   projectId: '123',
-  dashboardWeb: { clientId: '456', url: 'http://dashboard.localtest.me:3000' },
-  tenancyWeb: { clientId: '457', url: 'http://tenancy.localtest.me:3001' },
+  dashboardWeb: {
+    clientId: '456',
+    url: 'http://dashboard.localtest.me:3000',
+    key: { keyId: '4560', privateKeyPem: PEM },
+  },
+  tenancyWeb: {
+    clientId: '457',
+    url: 'http://tenancy.localtest.me:3001',
+    key: { keyId: '4570', privateKeyPem: PEM },
+  },
   dashboardApiUrl: 'http://dashboard-api:4002',
   tenancyApiUrl: 'http://tenancy-api:4001',
   users: { alice: { id: '789', email: 'alice@example.com' } },
@@ -38,10 +57,12 @@ describe('renderEnvFile', () => {
 });
 
 describe('env files', () => {
-  it("builds each BFF's redirect URIs from its public URL", () => {
+  it("builds each BFF's redirect URIs from its public URL and carries its key as one base64 line", () => {
     expect(webAppEnv(handoff.dashboardWeb, handoff)).toEqual({
       OIDC_ISSUER: 'https://auth.localtest.me:8443',
       OIDC_CLIENT_ID: '456',
+      OIDC_CLIENT_KEY_ID: '4560',
+      OIDC_CLIENT_KEY: PEM_BASE64,
       OIDC_REDIRECT_URI: 'http://dashboard.localtest.me:3000/auth/callback',
       OIDC_POST_LOGOUT_REDIRECT_URI: 'http://dashboard.localtest.me:3000/',
       APP_URL: 'http://dashboard.localtest.me:3000',
@@ -50,6 +71,7 @@ describe('env files', () => {
     });
     expect(webAppEnv(handoff.tenancyWeb, handoff)).toMatchObject({
       OIDC_CLIENT_ID: '457',
+      OIDC_CLIENT_KEY_ID: '4570',
       OIDC_REDIRECT_URI: 'http://tenancy.localtest.me:3001/auth/callback',
       APP_URL: 'http://tenancy.localtest.me:3001',
       DASHBOARD_API_URL: 'http://dashboard-api:4002',
@@ -88,5 +110,22 @@ describe('writeHandoff', () => {
       documents: { budget: { id: 'document-1', name: 'Budget', project: 'marketing' } },
     });
     await expect(readFile(path.join(dir, 'config', 'seed.json.tmp'))).rejects.toThrow();
+  });
+
+  it('writes a key the next run reads back, and no key from a missing or keyless file', async () => {
+    const config = path.join(dir, 'config');
+    expect(await readHeldKey(config, 'dashboard-web')).toBeUndefined();
+    await writeHandoff(config, handoff);
+    expect(await readHeldKey(config, 'dashboard-web')).toEqual({
+      keyId: '4560',
+      privateKeyPem: PEM,
+    });
+    await writeFile(path.join(config, 'tenancy-web.env'), 'OIDC_CLIENT_ID=457\n');
+    expect(await readHeldKey(config, 'tenancy-web')).toBeUndefined();
+    await writeFile(
+      path.join(config, 'tenancy-web.env'),
+      `OIDC_CLIENT_KEY_ID=1\nOIDC_CLIENT_KEY=${Buffer.from('not a pem').toString('base64')}\n`,
+    );
+    expect(await readHeldKey(config, 'tenancy-web')).toBeUndefined();
   });
 });
