@@ -567,6 +567,83 @@ Split from ticket 13a on 2026-10-19. A third stack job in `ci.yml`, proving the 
 
 ---
 
+### Ticket 21b — Project roles from the dashboard: the project share page (2.5 h)
+
+**Read first:** `docs/README.md` §6.2, §6.5, §6.8, §7.3.
+
+**Description:** Project roles (`project#editor`, `project#viewer`) are written only by the seeds; nothing in the apps shows or changes them, and the document share page says so ("Project roles are neither shown nor changed there"). This ticket gives them the same shape the direct document shares have since tickets 19a and 21.
+
+- `packages/documents`: `getProjectRoles(user, projectId)` answers `{ editors, viewers }` (the owner is read-only data on the page, not part of the set; changing ownership is out of scope) for a caller with `project#share`, `403` for one who may view and `404` otherwise (the §6.5 rule).
+  - `setProjectRoles(user, projectId, { editors, viewers })` replaces the two role sets as one atomic SpiceDB write (TOUCH for every listed user, DELETE for every other), every grantee checked as `organization#view` on the owning organization (`400 not_a_member`, §6.8). A user may hold one role at most; a `sub` in both lists is `400 invalid_input`.
+- **Token freshness, an open question for the maintainer.** A project has no `zedtoken` column (§5.2), and §7.3's "revocation is exact per row" holds because every write stores its token with the content it protects. A project role change protects every document of the project.
+  - Option A: the write updates `zedtoken` on every document row of the project in the same transaction (a fan-out bounded by the project's size; §7.4 rejected fan-out on *membership* changes, where the set is every document of the organization).
+  - Option B: store nothing and accept that a revoked project viewer can still pass `at_least_as_fresh(row.zedtoken)` on a document nobody edited since, for one quantization window (§7.1).
+  - Recommendation: A, because it keeps §7.3's claim true for the one write that revokes access to many rows at once, and the New Enemy case 2 test of ticket 21 then proves it without the later edit.
+- `dashboard-api`: `GET /projects/:id/roles` (`documents:read`) and `PUT /projects/:id/roles` (`documents:write`) over the service; `listVisibleDocuments` adds `canShare` per project (one more `project#share` check per listed project in the existing bulk request, `can_share` on the project object of the wire format).
+- `dashboard-web`: the page `/projects/[id]/share`, linked as "Share" beside each project heading of the dashboard when the hint is true; the owning organization's members from `tenancy-api` (`listMembers`), the caller and the owner left out, each with a choice of none, viewer, or editor pre-filled from the read, posting the whole set to the same-origin route `PUT /projects/[id]/roles` behind `assertSameOrigin` and the CSRF token (§9), then back to the dashboard with the `shared` hint of ticket 21a for one of the project's documents.
+- Docs: §6.5 (the two routes, the hint), §6.8 (where project roles are managed), the READMEs of `packages/documents` and `packages/authz` if the helpers change.
+
+**Tests:** the service's integration test (an organization admin and the project owner change roles; a project editor gets `403`, a non-member `404`; a non-member grantee `400`; the token stored on every document of the project if option A); the two routes in `dashboard-api`'s integration test; the BFF handler with the client faked; a Playwright spec in which Alice makes Carol an editor of Marketing and Carol's "Budget" row turns from "Read-only" to "Edit".
+
+**Acceptance criteria:** with the seeded users, Alice opens Marketing's share page, sees Bob as editor and Carol as viewer, demotes Bob to viewer, and Bob's "Budget" row is read-only on his dashboard within the listing's bound (§7.1, Bob not being the writer); Bob cannot open the page (`403`) and Carol cannot reach Finance's (`404`).
+
+**Status:** Open.
+
+---
+
+### Ticket 16a — The organization's name for a user who holds a grant inside it (1.5 h)
+
+**Read first:** `docs/README.md` §6.2, §6.5, §6.6 (the "Read an organization" row), §6.8.
+
+**Description:** A user who holds a project role or a direct document share in an organization without being its member sees the dashboard row, since `document#view` resolves through the project and never through the organization, but the heading reads "not a member": `dashboard-api` fetches the name through `tenancy.getOrganization` with the user's token, tenancy answers `404` on `organization#view`, and the client maps that to a null name.
+
+The project's name is already shown, since it lives in the documents database (§5.2), so the gap is the organization's name alone. Such a user exists after ticket 17c's "keep their grants" path, and today after any removal.
+
+The requirement is that whoever may view something inside the organization may read its name, and that is a permission, so it is expressed in the schema rather than decided by the documents service on tenancy's behalf.
+
+- Schema: `organization` gains `relation project: project` and `permission view_name = view + project->view_name`; `project` gains `relation document: document` and `permission view_name = view + document->view`. The two new relations are the reverse of `project#organization` and `document#project`, written in the same call that writes the forward one (`ensurePersonalProject`, `seedDocuments`, ticket 19b's `createDocument`), with a one-off repair written by bootstrap for existing rows.
+- Tenancy: `getOrganization` checks `organization#view_name` instead of `organization#view` (the name and the policy are the whole object today; if the policy is ever sensitive, it splits here); `listOrganizations` keeps `organization#view`, so `tenancy-web`'s list and its member page stay members-only.
+- What this bends, stated: §6.6's "each service writes only the part of the schema it owns" gains two relationships whose resource is an organization or a project but whose fact (this project is in this organization) the documents domain already owns in the forward direction; and a `view_name` check fans out over the organization's projects and their documents for a non-member, bounded by the organization's size and cached per user and organization for a minute (§6.6).
+- Rejected: resolving the name with the documents API's own service identity (§6.6's "calls with no user"), because it would make the documents API the place that decides who may read a tenancy object; and answering the name to any authenticated caller, because §6.5's `404` for a non-member is the existence rule.
+- Docs: §6.2 (the schema), §6.5 and §6.6 (the row), `packages/authz`'s README; the dashboard keeps its fallback text for a tenancy outage.
+
+**Tests:** `packages/authz`'s schema test for `view_name` through both levels; tenancy's integration test (a project viewer reads the name and is not listed as a member); the documents integration test's §6.3 table gains a non-member grantee whose row carries the organization's name; `pnpm authz:validate`.
+
+**Acceptance criteria:** remove Bob from Acme on `tenancy-web` (today's removal, or ticket 17c's with the grants kept): his Marketing rows still list, now under "Organization: Acme"; `tenancy-web`'s `/organizations` does not list Acme for him. Nothing in the apps puts a removed member back before ticket 17a, so the scenario is restored by a bootstrap re-run (ticket 12).
+
+**Status:** Open.
+
+---
+
+### Ticket 17c — Removing a member: keep or revoke their grants below the organization (3 h)
+
+**Read first:** `docs/README.md` §6.2, §6.5, §6.6, §6.8, §7.3; ticket 21b.
+
+**Description:** `setMembership(…, null)` deletes the organization role relationships and nothing else, so a removed member keeps every project role and direct document share they held (§6.2: nothing below the organization resolves through `organization#member`), and the dashboard goes on listing those documents. Found while exercising the seeded scenario: remove Bob from Acme and his Marketing rows stay.
+
+Membership is required to *receive* a grant (§6.8's member-only picker and `not_a_member` rule) and, by this ticket, not to *keep* one, the shape of GitHub's member-removal dialog (remove from every repository, or keep as an outside collaborator). The administrator decides, informed.
+
+- `dashboard-api`: `GET /organizations/:id/grants/:sub` (`documents:read`), the grants the named user holds in the organization: every project of the organization (`projects.organization_id`) where the caller holds `project#share` (one bulk check), then one `ReadRelationships` for that user's `project#editor|viewer` and `document#editor|viewer` relationships on those projects and their documents, joined to the names.
+  - `DELETE /organizations/:id/grants/:sub` (`documents:write`) deletes them in one atomic write, the same authorization per project, and stores the write's token on every affected document row (the fan-out of ticket 21b's option A, bounded by what the user held).
+  - The caller is the administrator, on their own token (§6.6): an organization admin holds `project#administer`, hence `project#share`, on every project in the organization, so the read reveals only what they could change one project at a time on ticket 21b's pages.
+- `tenancy-web`: "Remove" on the member list leads to a confirmation page `/organizations/[id]/members/[sub]/remove`, which fetches the grants through the HTTP documents client (the BFF holds `documents:read` and `documents:write` for this, next to the `documents:write` of ticket 19) and shows, by project, what the user would still reach after leaving, with the role or share held on each; a checkbox "also remove their access to these projects and documents", on by default; no grants, no checkbox. The form posts to the same-origin route of ticket 17 with `revoke_grants`.
+- **Order and failure, fixed here.** The BFF makes two calls and cannot make them atomic (two services, two schema partitions, §6.6): with `revoke_grants`, first `DELETE …/grants/:sub` on `dashboard-api`, then `PUT /organizations/:id/members` with `null` on `tenancy-api`.
+  - A failure of the first leaves the member in place and the page says so: the administrator retries from a true state. The reverse order would leave, on a failure of the second call, exactly the state this ticket fixes, with no page showing it.
+  - A failure of the second after a successful first leaves a member with no grants, which the member list still shows and the administrator removes again. The one refusal the second call makes by rule, `409 last_admin`, is pre-checked by the confirmation page from the member list it already reads, so the grants of the last administrator are never stripped by a removal that cannot complete.
+  - **Open for the maintainer**, with the recommendation above: alternatively `tenancy-api` makes the documents call itself with the administrator's token (one call from the BFF, the same two writes, the orchestration in the API), or a `member.removed` event the documents domain consumes (atomic for the caller, eventually consistent for the member, and the shape ticket 10a's spike may choose for provisioning; it should not be built before that spike).
+- Rejected: gating `project#view` and `document#view` on `organization->view` in the schema, one line that revokes everything on removal with no cleanup and no choice; it would make a non-member's grants dead data and rule out the "keep" path this ticket exists for.
+- Docs: §6.8 (the removal paragraph rewritten as built), §6.5 (the two routes), §6.6 (one more row in the table: "revoke a user's grants", caller `tenancy-web`, the administrator's token, `project#share` per project), the root README's gap entry removed, the READMEs of `packages/documents` and `packages/tenancy`.
+
+**Tests:** the grants read and delete in `packages/documents`' integration test (an admin sees Bob's editor role and nothing of Finance for a project-owner caller who is not an organization admin; the delete stores tokens; a second delete is a no-op); both routes in `dashboard-api`'s integration test; the BFF's confirmation page and handler with both clients faked (order, the first failure leaving the member, the second failure's state).
+
+A Playwright spec: Alice removes Bob with the checkbox on, Bob's dashboard shows no Acme row within the listing's bound (§7.1); and one with it off, Bob's rows remain under "Organization: Acme" (ticket 16a). Both leave Bob outside Acme and nothing in the apps puts him back before ticket 17a, so they run last in their suite and the scenario is restored by a bootstrap re-run (ticket 12's "roles and shares back"); ticket 17's rule that the suite leaves the scenario as seeded is, for these two, an open question for the maintainer.
+
+**Acceptance criteria:** the confirmation page for Bob lists Marketing (editor) with its three documents and nothing else; with the checkbox on, after removal Bob's dashboard holds "Welcome" alone within the listing's bound and `pnpm authz:zed relationship read project:<marketing>` shows no `user:<bob>`; with it off, Bob still edits "Budget"; the seed, re-run, restores the scenario (ticket 12's "roles and shares back").
+
+**Status:** Open.
+
+---
+
 ## Phase 3 — Consistency and audit (tickets 21 and 21a specified on 2026-10-19; ticket 22 stays a stub until it starts)
 
 ### Ticket 21 — Listings at `minimize_latency`, the New Enemy tests, and sharing from the dashboard (3.5 h)
@@ -593,6 +670,8 @@ The per-row token and the write-path `fully_consistent` checks exist since phase
 > **2026-10-19 (built):** As specified, with what the stack taught on the way. The first run of the New Enemy tests failed the stale assertion: the removal was visible at `minimize_latency` at once. A probe against the compose SpiceDB showed why, and §7.1 now says it: on the Postgres datastore a window's snapshot is the first transaction committed at or after the window's start, and until one lands checks read the head, so a removal that is the first write of its window hides nothing. The tests therefore wait until the fixture is visible at `minimize_latency`, keep away from the boundary by the clock, and make one more write, the anchor, before the removal, so the window's snapshot holds the fixture and predates what the test writes next; a run longer than a second from the anchor fails with a message naming the timing. Eight runs in a row and six more passed, with the stale allow and the stale listing observed every time; the listing and the check converge apart, inside the seven-second bound each, since the max-staleness tenth is taken per call, so both are polled. Case 1 uses the share to Erin as the write that postdates the removal, and asserts that Erin reads at once as well (no false negative on a grant stored on the row). `dashboard-api`'s integration test polls its listings and asserts its per-row reads at once. Sharing: `getDocumentShares` reads `share` and the relationships at `at_least_as_fresh(row.zedtoken)`; `can_share` rides the listing's bulk check as a second item per row; the share page lists the organization's members from `tenancy-api` with the user left out, and its route turns one `role:<sub>` field per member into the set the API replaces, refusing a repeated or unknown choice with `400` before any call and sending `not_a_member` back to the form. The BFF validates the form's shape itself: `documentSharesSchema` lives at the package root with the `@auth-stack/authz` dependency, which a BFF does not have. The share spec runs Bob in a browser context of his own, reloads his dashboard until the share and then the removal reach the listing (inside the bound both times, the spec taking ten to thirteen seconds in all), and asserts his edit page refusing at once after the removal; it restores Payroll's shares in a `finally` through the form's own route. Because it changes what Bob's spec asserts, the `dashboard-web` suite now runs one file at a time everywhere, not only on CI. Verified: lint, Prettier, type-check, 228 unit tests, 74 integration tests, the share spec four times and both suites in CI's order, no token in any app's log, both apps rebuilt in compose for the run.
 
 > **2026-10-19 (CI):** The first CI run failed the three user specs on a fresh stack: there, each user's first login creates the personal workspace a moment before the dashboard renders, and the listing, now at `minimize_latency`, missed the "Welcome" row for one window; locally the seeded users' workspaces existed from earlier sessions, so no local run could show it. Two choices by the maintainer: this ticket makes the three specs reload the dashboard until it shows the expected rows, inside the bound, with the helper the share spec already used (moved to the suite's shared file), and the first-login experience itself, an empty dashboard for a few seconds, is fixed in ticket 21a, which also removes those waits; and a spike on provisioning without cross-domain calls from the BFFs opens phase 5 (ticket 10a), since the login hook's two calls would be copied by every further app. §6.4's last sentence now says what the first dashboard shows, and the root README says it on the `dashboard-web` row.
+
+> **2026-10-23:** Case 2's text says Bob's project role is deleted by "the relationship write tenancy's membership change makes". Tenancy's membership change deletes the organization role relationships only (`setMembership`), never a project role, so the test's removal is a write nothing in the apps makes; the removal that cascades below the organization is ticket 17c, and a project role revoked on its own is ticket 21b. The test stays as it is: the write it needs exists in SpiceDB whatever makes it.
 
 **Status:** Done (2026-10-19).
 

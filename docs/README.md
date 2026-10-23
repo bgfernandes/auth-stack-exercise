@@ -558,7 +558,9 @@ A project role or a direct document share can be granted only to a member of the
 
 The first one is `PUT /documents/:id/shares` of `dashboard-api` (ticket 19a): it replaces the document's direct shares with the set it receives (`editors`, `viewers`, by `sub`), for a caller with `document#share`; every named user is checked as `organization#view` on the owning organization, and a failure answers `400 not_a_member` whether the account exists or not, which keeps the endpoint useless for enumeration.
 
-`dashboard-web`'s share page (`/documents/[id]/share`, ticket 21) is that picker: the owning organization's members from `tenancy-api`, the user left out, each with the direct access they hold on the document, none, viewer, or editor, read through `GET /documents/:id/shares` at the row's token (§7.3), and a form that posts the whole set to the BFF's same-origin route, which `PUT`s it. Project roles are neither shown nor changed there.
+`dashboard-web`'s share page (`/documents/[id]/share`, ticket 21) is that picker: the owning organization's members from `tenancy-api`, the user left out, each with the direct access they hold on the document, none, viewer, or editor, read through `GET /documents/:id/shares` at the row's token (§7.3), and a form that posts the whole set to the BFF's same-origin route, which `PUT`s it.
+
+Project roles are neither shown nor changed there: they are written by the seeds alone until the project share page of ticket 21b, `/projects/[id]/share`, gives them the same picker.
 
 The dashboard offers "Share" on a row where the listing's bulk check allowed `document#share`, a hint like "Edit"; the page and the route check again.
 
@@ -569,6 +571,10 @@ The dashboard offers "Share" on a row where the listing's bulk check allowed `do
 The API refuses a `sub` that holds no role (`400 not_a_member`): a first role comes only from an invitation (below) or the seed, so the route cannot be used to add an account by ID, and the UI has no add-member form. It also refuses to demote or remove the last administrator (`409 last_admin`), so an organization never ends up with nobody who can manage it.
 
 Both rules are decided on the organization's relationships read at full consistency, and the change is one atomic SpiceDB write. A personal organization (§5.1) has no membership to manage (`409 personal_organization`).
+
+Removal deletes the organization role relationships and nothing else: a removed member keeps every project role and direct document share they hold, since nothing below the organization resolves through `organization#member` (§6.2), and their dashboard goes on listing those documents.
+
+Planned, ticket 17c; not built: the administrator sees, before confirming, what the member would still reach and chooses to revoke it or keep it, the shape of GitHub's member-removal dialog. Membership is required to receive a grant, not to keep one. A kept grantee reads the organization's name through ticket 16a.
 
 #### Joining an organization goes through invitations, with a uniform response
 
@@ -872,3 +878,5 @@ The dedicated tenancy service is in from the start because it is part of what th
 > Four choices by the maintainer, each the recommended one (`docs/TICKETS.md`, ticket 4a): the key in the existing env file as a base64 line rather than a separate key file; no expiry on the development stack; the file world-readable, a trade-off now listed in the root README; and the key required by `packages/auth`, which has no public-client mode, with the revocation suite proving a refresh without the assertion is refused.
 >
 > The root README's gap entry for the public clients is removed and ticket 8d's entry now says a leaked refresh token also needs the client's key.
+
+> **2026-10-23 (member removal and project roles):** Found while exercising the seeded scenario: removing Bob from Acme on `tenancy-web` leaves his Marketing rows on the dashboard under "Organization: not a member". The cause is in the schema as designed, not a bug in a write: `setMembership` deletes the organization role only, and `document#view` resolves through the project, never through the organization, so project roles and document shares outlive membership; and the heading is empty because `getOrganization` answers `404` on `organization#view`. Ticket 21's New Enemy case 2 described its removal as "the relationship write tenancy's membership change makes", which no write makes; the ticket carries a note. Three tickets, maintainer's direction: a project share page, since project roles have no UI (21b); the organization's name for whoever holds a grant inside it, as a schema permission `view_name` over reverse relations rather than a decision made by the documents service (16a); and a removal flow that shows the administrator what the member would keep and lets them revoke it or not, membership being required to receive a grant and not to keep one (17c). §6.8 says what removal does today; the root README lists the three gaps.

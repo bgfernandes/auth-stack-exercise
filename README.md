@@ -229,6 +229,9 @@ Stated in full because the exercise asked for them. Each is deliberate; the reas
 
 **Gaps, with the ticket that specifies the work.**
 
+- **Removing a member leaves their grants in place.** Membership removal deletes the organization role only; project roles and direct document shares survive it, so a removed member still lists and edits those documents, under a heading that reads "not a member". The flow that shows the administrator what the member would keep and lets them revoke it is ticket 17c; the heading is ticket 16a.
+- **Project roles have no screen.** `project#editor` and `project#viewer` come from the seeds alone; the document share page changes direct document shares only. Ticket 21b.
+- **A non-member who holds a grant cannot read the organization's name.** The dashboard shows the project's name and "not a member" for the organization, because the name is read through `organization#view`. A `view_name` permission over reverse relations is ticket 16a.
 - **No document creation.** Documents come only from the seeds and from provisioning; the schema has no creation permission below the organization. Ticket 19b.
 - **Sign-in policies are stored, not enforced.** The policy form in `tenancy-web` (require MFA, maximum login age, required identity provider) writes to tenancy; nothing reads it yet, so ticking "require MFA" changes nothing at login. The `requireAuthContext` helper and the step-up flow are ticket 24.
 - **No invitations.** Joining an organization is by seed or by an administrator changing an existing member's role; the uniform-response invitation flow of [§6.8](docs/README.md#68-discovery-and-invitations) is ticket 17a. Self-registration accepts an unverified email address, so the invitation flow must require a verified email before it matches an invitee by address.
@@ -290,6 +293,9 @@ Tickets in their intended order of implementation; numbers are stable identifier
 | 19b | Document creation | Open |
 | 17a | Invitations with a uniform response | Open |
 | 4a | Confidential clients: private-key JWT client authentication | Done |
+| 21b | Project share page: project roles from the dashboard | Open |
+| 16a | The organization's name for a user with a grant inside it | Open |
+| 17c | Removing a member: keep or revoke their grants | Open |
 
 ### Phase 3, consistency and audit
 
