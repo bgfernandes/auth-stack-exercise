@@ -229,12 +229,16 @@ Stated in full because the exercise asked for them. Each is deliberate; the reas
 
 **Gaps, with the ticket that specifies the work.**
 
+- **Removing a member leaves their grants in place.** Membership removal deletes the organization role only; project roles and direct document shares survive it, so a removed member still lists and edits those documents, under a heading that reads "not a member". The flow that shows the administrator what the member would keep and lets them revoke it is ticket 17c; the heading is ticket 16a.
+- **Project roles have no screen.** `project#editor` and `project#viewer` come from the seeds alone; the document share page changes direct document shares only. Ticket 21b.
+- **A non-member who holds a grant cannot read the organization's name.** The dashboard shows the project's name and "not a member" for the organization, because the name is read through `organization#view`. A `view_name` permission over reverse relations is ticket 16a.
 - **No document creation.** Documents come only from the seeds and from provisioning; the schema has no creation permission below the organization. Ticket 19b.
 - **Sign-in policies are stored, not enforced.** The policy form in `tenancy-web` (require MFA, maximum login age, required identity provider) writes to tenancy; nothing reads it yet, so ticking "require MFA" changes nothing at login. The `requireAuthContext` helper and the step-up flow are ticket 24.
 - **No invitations.** Joining an organization is by seed or by an administrator changing an existing member's role; the uniform-response invitation flow of [§6.8](docs/README.md#68-discovery-and-invitations) is ticket 17a. Self-registration accepts an unverified email address, so the invitation flow must require a verified email before it matches an invitee by address.
 - **A missed back-channel logout is not backed up.** If a logout token never arrives (the app was down), the session lives until its idle or absolute limit, and Zitadel keeps honouring the refresh token after `end_session` (observed); re-validation of the identity-provider session on an interval is ticket 20a.
 - **No audit log of authorization decisions.** Ticket 22.
 - **No rate limits** on the APIs' mutations, the login callback, or the back-channel sink (which does bound its request body). Ticket 23a.
+- **The back-channel sink does not revoke the tokens of the sessions it deletes.** The logout route revokes the refresh and access tokens at Zitadel; a session ended by a logout token (an administrator's termination, a sign-out from the other application) keeps its refresh token valid at Zitadel until that token's own expiry, since Zitadel does not revoke an `offline_access` refresh token on logout. Ticket 18a.
 - **The session's tokens are stored in plaintext.** The store holds `accessToken`, `refreshToken`, and `idToken` as they are, so whoever can read Redis (a dump, a backup, a replica, an operator) holds every live user's refresh token; Redis authentication and TLS do not change that. The fix is envelope encryption of the token fields inside `packages/auth`, with a dedicated key and a key id for rotation, so a copy of the store alone is useless. Ticket 8d.
   - Since ticket 4a a leaked refresh token also needs the client's key, which is in the app's handoff file, not in Redis.
 - **Session claims are not re-read after a token refresh** (`sid`, `auth_time`, `amr`), which matters only if the provider rotates `sid` on re-authentication.
@@ -290,6 +294,9 @@ Tickets in their intended order of implementation; numbers are stable identifier
 | 19b | Document creation | Open |
 | 17a | Invitations with a uniform response | Open |
 | 4a | Confidential clients: private-key JWT client authentication | Done |
+| 21b | Project share page: project roles from the dashboard | Open |
+| 16a | The organization's name for a user with a grant inside it | Open |
+| 17c | Removing a member: keep or revoke their grants | Open |
 
 ### Phase 3, consistency and audit
 
@@ -309,6 +316,7 @@ Tickets in their intended order of implementation; numbers are stable identifier
 | 20a | Re-validation of the IdP session, the backstop for a missed logout | Open |
 | 8a | Session claims re-read after a token refresh | Open |
 | 8d | Encrypt the session's tokens at rest | Open |
+| 18a | The back-channel sink revokes the tokens of the sessions it deletes | Open |
 | 8b | Refresh lock across instances | Open |
 | 8c | A refused refresh ends the session | Open |
 | 20b | Log out everywhere | Open |
