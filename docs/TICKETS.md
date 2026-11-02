@@ -777,6 +777,32 @@ The fix, in `refresh()`: treat as "session over" any `invalid_grant`, and any `i
 
 **Status:** Open (found 2026-10-20 while reviewing the trade-offs list).
 
+### Ticket 18a — Revoke the tokens of the sessions the back-channel sink deletes (1 h)
+
+**Read first:** `docs/README.md` §4.4 (steps 5 and 6); OpenID Connect Back-Channel Logout 1.0 §2.7; RFC 7009 §2.1 and §2.2; RFC 9700 §4.14.2; `packages/auth/src/backchannel-logout.ts`, `packages/auth/src/next/index.ts` (`revokeTokens`), the two stores.
+
+**Description:** The logout route deletes the session and then revokes its refresh token and its access token at the `revocation_endpoint` (step 5).
+
+The sink does not: `deleteByLogoutToken` answers a count, the handler logs it, and the tokens the deleted sessions held stay valid at Zitadel, the access token for up to ten minutes and the refresh token for its own lifetime, since Zitadel keeps honouring a refresh token after the IdP session that issued it ended (observed after `end_session`, step 6; to be confirmed for a termination through the session API in this ticket).
+
+That is within the specification: the BFF requests `offline_access` because Zitadel issues refresh tokens only with it, and §2.7 of Back-Channel Logout says refresh tokens issued with `offline_access` "normally SHOULD NOT be revoked" by the OP on logout, while RFC 9700 §4.14.2 leaves revocation on logout a MAY.
+
+The BFF's refresh token exists to serve one browser session and nothing else, so when the session goes the token has no owner and no purpose, and the app is the one party that knows it; the sink is therefore the only place those tokens get revoked after an administrative termination or a sign-out from another application.
+
+- `SessionStore.deleteByLogoutToken` returns what it removed, not how many: `{ deleted: number; tokens: Array<Pick<Session, 'accessToken' | 'refreshToken'>> }`, on both stores, the Redis one from the sessions `removeAll` already reads before deleting, so the read and the delete stay one operation. Alternative, rejected: a `listByLogoutToken` before the delete (two store calls, and a session created between them is deleted but not revoked), or a callback on the store (the store learns about the IdP).
+- `revokeTokens(session)` moves from the `next` binding into the core next to `handleBackchannelLogout`, taking the token pair, refresh token first (a stolen refresh token mints new access tokens; an access token is bounded by its ten minutes), each call best effort and a failure logged as `auth.revocation_failed` with the `token_type_hint` and the reason, never the token (RFC 7009 §2.2: the server answers `200` for a token already gone, so a replayed logout token revokes nothing twice and fails nothing). The logout route and ticket 20b's "log out everywhere" use the same function.
+- The handler's order: delete, then revoke the tokens of every deleted session, then `200`. A store failure still propagates as a `500` (the IdP may retry); a revocation failure never changes the answer, since the sessions are gone. The revocation calls go to the same IdP that posted the token, two per session, inside the request; the per-call timeout is ticket 8b's.
+- With ticket 8d the token fields are decrypted inside the package before revocation; nothing changes here. The log line of the sink gains `revoked` and `revocationFailed` counts.
+- Docs: §4.4 step 6 (the revocation bullet, as built), the root README's Login paragraph and the gap entry below removed, `packages/auth`'s README (`backchannelLogout` and the core function).
+
+**Tests:** the contract test's `deleteByLogoutToken` cases assert the returned tokens on both stores; the handler's unit test over the memory store and the fake OP's `/revoke` asserts the refresh token then the access token presented with the client assertion, a `400` from the OP logged and the answer still `200`, and nothing presented when no session matched; the Redis integration test unchanged but for the return shape.
+
+The end-to-end revocation suite gains one case: sign out on `dashboard-web`, then the refresh token `tenancy-web`'s session held is refused by Zitadel, which is the same assertion the suite makes for the logout route today.
+
+**Acceptance criteria:** after an administrator terminates Alice's IdP session through the session API, both BFFs log `deleted: 1` with `revoked: 2`, and a refresh with either session's refresh token, captured from Redis before the termination, is refused by Zitadel; `pnpm test`, both end-to-end suites, and the revocation suite green.
+
+**Status:** Open (found 2026-11-02 while reading the two logout paths against Back-Channel Logout 1.0 §2.7).
+
 ### Ticket 8b — A refresh lock across instances (1 h)
 
 The refresh mutex is per process (`inFlight` in `createAccessTokenProvider()`); two instances of a BFF refreshing the same session can trip the provider's rotation reuse detection. A Redis `SET NX PX` lock keyed by session ID around the refresh, with the re-read fallback kept. Also give `openid-client`'s per-request calls (token, refresh, revocation) a timeout, since logout now makes two of them.

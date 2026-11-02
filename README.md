@@ -238,6 +238,7 @@ Stated in full because the exercise asked for them. Each is deliberate; the reas
 - **A missed back-channel logout is not backed up.** If a logout token never arrives (the app was down), the session lives until its idle or absolute limit, and Zitadel keeps honouring the refresh token after `end_session` (observed); re-validation of the identity-provider session on an interval is ticket 20a.
 - **No audit log of authorization decisions.** Ticket 22.
 - **No rate limits** on the APIs' mutations, the login callback, or the back-channel sink (which does bound its request body). Ticket 23a.
+- **The back-channel sink does not revoke the tokens of the sessions it deletes.** The logout route revokes the refresh and access tokens at Zitadel; a session ended by a logout token (an administrator's termination, a sign-out from the other application) keeps its refresh token valid at Zitadel until that token's own expiry, since Zitadel does not revoke an `offline_access` refresh token on logout. Ticket 18a.
 - **The session's tokens are stored in plaintext.** The store holds `accessToken`, `refreshToken`, and `idToken` as they are, so whoever can read Redis (a dump, a backup, a replica, an operator) holds every live user's refresh token; Redis authentication and TLS do not change that. The fix is envelope encryption of the token fields inside `packages/auth`, with a dedicated key and a key id for rotation, so a copy of the store alone is useless. Ticket 8d.
   - Since ticket 4a a leaked refresh token also needs the client's key, which is in the app's handoff file, not in Redis.
 - **Session claims are not re-read after a token refresh** (`sid`, `auth_time`, `amr`), which matters only if the provider rotates `sid` on re-authentication.
@@ -315,6 +316,7 @@ Tickets in their intended order of implementation; numbers are stable identifier
 | 20a | Re-validation of the IdP session, the backstop for a missed logout | Open |
 | 8a | Session claims re-read after a token refresh | Open |
 | 8d | Encrypt the session's tokens at rest | Open |
+| 18a | The back-channel sink revokes the tokens of the sessions it deletes | Open |
 | 8b | Refresh lock across instances | Open |
 | 8c | A refused refresh ends the session | Open |
 | 20b | Log out everywhere | Open |
